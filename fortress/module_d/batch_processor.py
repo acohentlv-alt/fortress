@@ -177,12 +177,13 @@ async def run_query(
 
         # --- Enrich (with 5-minute safety cap per wave) ---
         # 50 companies × ~4s each (Maps + curl crawl) = ~200s typical.
-        # 300s gives 50% headroom for slow websites and rate-limit backoff.
+        # Dynamic timeout: 15s per company (covers replacements), minimum 5 min.
+        wave_timeout = max(300, len(wave_companies) * 15)
         t0 = datetime.now(tz=timezone.utc)
         try:
             contacts = await asyncio.wait_for(
                 enrich_fn(wave_companies, on_save=_on_save),
-                timeout=300,  # 5 minutes max per wave
+                timeout=wave_timeout,
             )
         except asyncio.TimeoutError:
             log.error(
@@ -190,7 +191,7 @@ async def run_query(
                 wave=wave_num,
                 query=query_name,
                 companies=len(wave_companies),
-                timeout_seconds=300,
+                timeout_seconds=wave_timeout,
                 saved_before_timeout=len(saved_contacts),
             )
             contacts = saved_contacts  # Use what was already persisted

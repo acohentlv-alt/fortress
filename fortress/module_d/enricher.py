@@ -595,8 +595,14 @@ async def _enrich_one(
         except Exception:
             root_url = maps_website
 
-        # Crawl homepage + /contact (2 pages max)
-        pages_to_crawl = [root_url, f"{root_url}/contact"]
+        # Crawl homepage + French contact/legal pages (most emails are on these)
+        pages_to_crawl = [
+            root_url,
+            f"{root_url}/contact",
+            f"{root_url}/mentions-legales",
+            f"{root_url}/nous-contacter",
+            f"{root_url}/a-propos",
+        ]
         pages_visited = 0
 
         curl_crawl = CurlClient(timeout=8.0, max_retries=1, delay_min=0.3, delay_max=0.5, delay_jitter=0.0)
