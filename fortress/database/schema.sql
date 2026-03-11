@@ -1,0 +1,212 @@
+-- Fortress PostgreSQL Schema
+-- Applied automatically on first docker-compose up via /docker-entrypoint-initdb.d/
+
+-- ---------------------------------------------------------------------------
+-- Companies — master company registry (one row per SIREN)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS companies (
+    siren               VARCHAR(9)      PRIMARY KEY,
+    siret_siege         VARCHAR(14),
+    denomination        TEXT            NOT NULL,
+    naf_code            VARCHAR(10),
+    naf_libelle         TEXT,
+    forme_juridique     TEXT,
+    adresse             TEXT,
+    code_postal         VARCHAR(10),
+    ville               TEXT,
+    departement         VARCHAR(3),
+    region              TEXT,
+    statut              VARCHAR(1)      NOT NULL DEFAULT 'A',   -- A=Actif, C=Cessé
+    date_creation       DATE,
+    tranche_effectif    VARCHAR(10),
+    latitude            NUMERIC(10, 7),
+    longitude           NUMERIC(10, 7),
+    fortress_id         SERIAL,                                 -- permanent unique ID, assigned on first insert
+    created_at          TIMESTAMP       NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_companies_naf        ON companies (naf_code);
+CREATE INDEX IF NOT EXISTS idx_companies_dept       ON companies (departement);
+CREATE INDEX IF NOT EXISTS idx_companies_cp         ON companies (code_postal);
+CREATE INDEX IF NOT EXISTS idx_companies_statut     ON companies (statut);
+CREATE INDEX IF NOT EXISTS idx_companies_fortress   ON companies (fortress_id);
+
+-- Compound indexes for query_interpreter.py (WHERE departement + naf_code + statut)
+CREATE INDEX IF NOT EXISTS idx_companies_dept_naf
+    ON companies (departement, naf_code);
+CREATE INDEX IF NOT EXISTS idx_companies_dept_naf_statut
+    ON companies (departement, naf_code, statut);
+
+-- Reversed compound: naf_code-first for exact NAF filtering + department
+-- Used when users specify a precise NAF code (e.g. 49.41A) via the UI → 21ms vs 7.4s
+CREATE INDEX IF NOT EXISTS idx_companies_naf_statut
+    ON companies (naf_code, statut);
+CREATE INDEX IF NOT EXISTS idx_companies_naf_dept_statut
+    ON companies (naf_code, departement, statut);
+
+-- ---------------------------------------------------------------------------
+-- Contacts — collected contact data (multiple rows per SIREN, one per source)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id              SERIAL          PRIMARY KEY,
+    siren           VARCHAR(9)      NOT NULL REFERENCES companies (siren) ON DELETE CASCADE,
+    phone           VARCHAR(20),
+    email           TEXT,
+    email_type      VARCHAR(20),    -- 'found' | 'synthesized' | 'generic'
+    website         TEXT,
+    source          VARCHAR(30)     NOT NULL,   -- 'website_crawl' | 'google_maps' | 'inpi' | ...
+    social_linkedin TEXT,
+    social_facebook TEXT,
+    social_twitter  TEXT,
+    address         TEXT,
+    rating          NUMERIC(3, 1),
+    review_count    INTEGER,
+    maps_url        TEXT,
+    collected_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+-- Unique per (siren, source) so ON CONFLICT upserts work correctly
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_siren_source ON contacts (siren, source);
+CREATE INDEX IF NOT EXISTS idx_contacts_siren ON contacts (siren);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts (phone);
+
+-- ---------------------------------------------------------------------------
+-- Officers — company directors / officers from INPI
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS officers (
+    id              SERIAL          PRIMARY KEY,
+    siren           VARCHAR(9)      NOT NULL REFERENCES companies (siren) ON DELETE CASCADE,
+    nom             TEXT            NOT NULL,
+    prenom          TEXT,
+    role            TEXT,
+    source          VARCHAR(30)     NOT NULL DEFAULT 'inpi',
+    collected_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+-- Unique per (siren, nom, prenom) — DO NOTHING on duplicate officers
+CREATE UNIQUE INDEX IF NOT EXISTS idx_officers_siren_nom_prenom ON officers (siren, nom, COALESCE(prenom, ''));
+CREATE INDEX IF NOT EXISTS idx_officers_siren ON officers (siren);
+
+-- ---------------------------------------------------------------------------
+-- Query tags — N:N mapping between companies and named queries
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS query_tags (
+    siren           VARCHAR(9)      NOT NULL REFERENCES companies (siren) ON DELETE CASCADE,
+    query_name      TEXT            NOT NULL,
+    tagged_at       TIMESTAMP       NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (siren, query_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_tags_query ON query_tags (query_name);
+
+-- ---------------------------------------------------------------------------
+-- Scrape jobs — one row per user query (tracks waves, triage stats, status)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS scrape_jobs (
+    id                      SERIAL          PRIMARY KEY,
+    query_id                TEXT            NOT NULL,   -- e.g. 'AGRICULTURE_66'
+    query_name              TEXT            NOT NULL,   -- e.g. 'AGRICULTURE 66'
+    status                  VARCHAR(20)     NOT NULL DEFAULT 'new',
+        -- 'new' | 'triage' | 'queued' | 'in_progress' | 'paused' | 'completed' | 'failed'
+    total_companies         INTEGER         DEFAULT 0,
+    triage_black            INTEGER         DEFAULT 0,
+    triage_green            INTEGER         DEFAULT 0,
+    triage_yellow           INTEGER         DEFAULT 0,
+    triage_red              INTEGER         DEFAULT 0,
+    wave_current            INTEGER         DEFAULT 0,
+    wave_total              INTEGER         DEFAULT 0,
+    companies_scraped       INTEGER         DEFAULT 0,
+    companies_failed        INTEGER         DEFAULT 0,
+    lambda_requests_used    INTEGER         DEFAULT 0,
+    batch_number            INT             NOT NULL DEFAULT 1,   -- 1-based batch index
+    batch_offset            INT             NOT NULL DEFAULT 0,   -- SIRENE row offset for this batch
+    filters_json            TEXT,                                 -- JSON-serialized advanced filters from UI
+    batch_size              INTEGER         DEFAULT 0,            -- user-requested company count (stays constant)
+    replaced_count          INTEGER         DEFAULT 0,            -- companies replaced by qualify-or-replace loop
+    created_at              TIMESTAMP       NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_query_id ON scrape_jobs (query_id);
+CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status   ON scrape_jobs (status);
+
+-- ---------------------------------------------------------------------------
+-- Blacklisted SIRENs — companies that must never be scraped
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS blacklisted_sirens (
+    siren       VARCHAR(9)      PRIMARY KEY,
+    reason      TEXT,
+    added_by    VARCHAR(50),
+    added_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Scrape audit — complete action log for all scraping operations
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS scrape_audit (
+    id              SERIAL          PRIMARY KEY,
+    query_id        TEXT            NOT NULL,
+    siren           VARCHAR(9)      NOT NULL,
+    action          VARCHAR(50)     NOT NULL,   -- 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
+    result          VARCHAR(20)     NOT NULL,   -- 'success' | 'fail' | 'blocked' | 'skipped'
+    source_url      TEXT,
+    duration_ms     INTEGER,
+    timestamp       TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_query  ON scrape_audit (query_id);
+CREATE INDEX IF NOT EXISTS idx_audit_siren  ON scrape_audit (siren);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON scrape_audit (action);
+
+-- ---------------------------------------------------------------------------
+-- INPI usage tracker — daily request counter (10K/day limit)
+-- Created by inpi_client.py on first run; mirrored here for DB rebuild safety.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS inpi_usage (
+    usage_date      DATE                     NOT NULL PRIMARY KEY DEFAULT CURRENT_DATE,
+    requests_count  INTEGER                  DEFAULT 0,
+    updated_at      TIMESTAMPTZ              DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Rejected SIRENs — companies tried by the qualify-or-replace pipeline
+-- that had no Maps presence. Skipped on future runs of the same query.
+-- Key: (siren, naf_prefix, departement) so rejection is per query pattern.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS rejected_sirens (
+    siren           VARCHAR(9)      NOT NULL,
+    naf_prefix      VARCHAR(5)      NOT NULL,   -- e.g. '52' for logistique
+    departement     VARCHAR(3)      NOT NULL,   -- e.g. '33'
+    reason          TEXT,                        -- e.g. 'no_maps_data', 'false_positive'
+    rejected_at     TIMESTAMP       NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (siren, naf_prefix, departement)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rejected_naf_dept ON rejected_sirens (naf_prefix, departement);
+
+-- ---------------------------------------------------------------------------
+-- Client SIRENs — companies the client already has in their CRM.
+-- Used by triage to classify as BLUE (skip — client already owns).
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS client_sirens (
+    siren           VARCHAR(9)      PRIMARY KEY,
+    client_id       VARCHAR(50)     NOT NULL DEFAULT 'default',  -- future multi-tenancy
+    source_file     TEXT,                                        -- original CSV filename
+    uploaded_at     TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_sirens_client ON client_sirens (client_id);
+
+-- Add triage_blue column to scrape_jobs if not present
+ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS triage_blue INTEGER DEFAULT 0;

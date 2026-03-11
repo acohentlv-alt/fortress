@@ -1,0 +1,438 @@
+"""Company API routes — search, detail, and on-demand enrichment.
+
+Search is scoped to scraped companies (via query_tags) for performance.
+Detail view retrieves full data including enriched fields:
+  Forme Juridique, Code NAF, Headcount, Dirigeants, Revenue (nullable).
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from fortress.api.db import fetch_all, fetch_one, get_conn
+
+router = APIRouter(prefix="/api/companies", tags=["companies"])
+
+# TTL cooldown for deduplication (seconds): 24 hours
+_DEDUP_TTL_HOURS = 24
+
+
+# ---------------------------------------------------------------------------
+# Enrich endpoint models & constants
+# ---------------------------------------------------------------------------
+
+_VALID_MODULES = {"contact_web", "contact_phone", "financials"}
+
+
+class EnrichRequest(BaseModel):
+    """JSON body for POST /api/companies/{siren}/enrich."""
+    target_modules: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Modules to run: contact_web, contact_phone, financials",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sort helpers (SQL-injection-safe whitelist)
+# ---------------------------------------------------------------------------
+
+_SORT_COLUMNS = {
+    "denomination": "co.denomination",
+    "naf": "co.naf_code",
+    "siren": "co.siren",
+    "ville": "co.ville",
+    "departement": "co.departement",
+}
+
+
+# ---------------------------------------------------------------------------
+# Action 1: On-demand enrichment with deduplication
+# ---------------------------------------------------------------------------
+
+@router.post("/{siren}/enrich", status_code=202)
+async def enrich_company(siren: str, body: EnrichRequest):
+    """Queue targeted enrichment modules for a single company.
+
+    Modules:
+      - contact_web:   Web search + Playwright crawler
+      - contact_phone: PagesJaunes / Directory scraper
+      - financials:    INPI / Recherche Entreprises API
+
+    Deduplication: Checks existing data before queueing.
+    Returns 202 Accepted with which modules were queued.
+    """
+    # Validate company exists (indexed lookup on companies.siren PK)
+    company = await fetch_one(
+        "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
+    )
+    if not company:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Company not found", "siren": siren},
+        )
+
+    # Partition into valid and invalid modules
+    requested = set(body.target_modules)
+    valid = requested & _VALID_MODULES
+    invalid = sorted(requested - _VALID_MODULES)
+
+    if not valid:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "No valid modules provided",
+                "valid_modules": sorted(_VALID_MODULES),
+                "received": body.target_modules,
+            },
+        )
+
+    # ── Deduplication: check what's already enriched ──────────────
+    already_enriched: list[str] = []
+
+    # ── TTL-based recency check: skip if scraped in last 24h ─────
+    recent_scrape = await fetch_one("""
+        SELECT action, timestamp FROM scrape_audit
+        WHERE siren = %s AND result = 'success'
+          AND timestamp > NOW() - INTERVAL '%s hours'
+        ORDER BY timestamp DESC LIMIT 1
+    """ % ('%s', _DEDUP_TTL_HOURS), (siren,))
+
+    if recent_scrape:
+        # If scraped recently with success, skip all modules
+        return {
+            "message": f"Already enriched within the last {_DEDUP_TTL_HOURS}h — cached result",
+            "queued": [],
+            "skipped": sorted(valid),
+            "siren": siren,
+            "cached": True,
+            "last_scrape": recent_scrape.get("timestamp"),
+        }
+
+    if "contact_phone" in valid or "contact_web" in valid:
+        existing_contact = await fetch_one(
+            "SELECT phone, email, website FROM contacts WHERE siren = %s LIMIT 1",
+            (siren,),
+        )
+        if existing_contact:
+            if "contact_phone" in valid and existing_contact.get("phone"):
+                already_enriched.append("contact_phone")
+            if "contact_web" in valid and (
+                existing_contact.get("email") or existing_contact.get("website")
+            ):
+                already_enriched.append("contact_web")
+
+    if "financials" in valid:
+        existing_officer = await fetch_one(
+            "SELECT 1 FROM officers WHERE siren = %s LIMIT 1", (siren,),
+        )
+        if existing_officer:
+            already_enriched.append("financials")
+
+    # Remove already-enriched modules from the queue
+    queued = sorted(valid - set(already_enriched))
+    skipped = sorted(set(already_enriched) | set(invalid))
+
+    if not queued:
+        return {
+            "message": "All requested modules already enriched — nothing to queue",
+            "queued": [],
+            "skipped": skipped,
+            "siren": siren,
+        }
+
+    # ── Background dispatch: create micro scrape_job + spawn runner ─
+    query_id = f"ENRICH_{siren}"
+
+    # Create or reset the micro job (query_id is indexed but not UNIQUE)
+    try:
+        async with get_conn() as conn:
+            existing_job = await conn.execute(
+                "SELECT id FROM scrape_jobs WHERE query_id = %s LIMIT 1",
+                (query_id,),
+            )
+            row = await existing_job.fetchone()
+
+            if row:
+                # Reset existing job to 'queued'
+                await conn.execute(
+                    "UPDATE scrape_jobs SET status = 'queued', updated_at = NOW() WHERE query_id = %s",
+                    (query_id,),
+                )
+            else:
+                # Create new micro job
+                await conn.execute("""
+                    INSERT INTO scrape_jobs
+                        (query_id, query_name, status, batch_number, batch_offset, total_companies)
+                    VALUES (%s, %s, 'queued', 1, 0, 1)
+                """, (query_id, f"enrich {siren}"))
+
+            # Ensure the company is tagged for this micro-job
+            tag_exists = await conn.execute(
+                "SELECT 1 FROM query_tags WHERE siren = %s AND query_name = %s LIMIT 1",
+                (siren, f"enrich {siren}"),
+            )
+            if not await tag_exists.fetchone():
+                await conn.execute(
+                    "INSERT INTO query_tags (siren, query_name, tagged_at) VALUES (%s, %s, NOW())",
+                    (siren, f"enrich {siren}"),
+                )
+
+            await conn.commit()
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to create enrich job: {exc}", "siren": siren},
+        )
+
+    # Spawn runner subprocess — redirect output to log file for crash diagnosis
+    fortress_root = Path(__file__).resolve().parent.parent.parent
+    log_dir = fortress_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{query_id}.log"
+    try:
+        log_fh = open(log_path, "a")
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "fortress.runner", query_id],
+            cwd=str(fortress_root),
+            stdout=log_fh,
+            stderr=log_fh,
+            start_new_session=True,
+        )
+        pid = proc.pid
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to spawn runner: {exc}", "siren": siren},
+        )
+
+    return {
+        "message": f"{len(queued)} module(s) queued for enrichment",
+        "queued": queued,
+        "skipped": skipped,
+        "siren": siren,
+        "denomination": company["denomination"],
+        "query_id": query_id,
+        "pid": pid,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Action 2: Search with NAF code + sorting
+# ---------------------------------------------------------------------------
+
+@router.get("/search")
+async def search_companies(
+    q: str = Query(..., min_length=1, description="Search by name, SIREN, or NAF code"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    sort_by: str = Query("denomination", description="Sort by: denomination, naf, siren, ville, departement"),
+    order: str = Query("asc", description="Sort order: asc or desc"),
+    department: str = Query(None, description="Filter by department code (e.g. 66, 31)"),
+    sector: str = Query(None, description="Filter by sector/query_name (e.g. logistique, agriculture)"),
+):
+    """Search for companies by name, SIREN, or NAF code — scoped to scraped data.
+
+    Supports sorting via sort_by and order parameters.
+    Supports filtering by department and sector.
+    Search string is normalized with UPPER() for case-insensitive matching.
+    NAF code is matched via OR condition alongside denomination.
+    """
+    # Resolve sort clause (whitelist prevents SQL injection)
+    sort_col = _SORT_COLUMNS.get(sort_by, "co.denomination")
+    sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+    sort_clause = f"{sort_col} {sort_dir}"
+
+    clean_q = q.strip().replace(" ", "")
+    if clean_q.isdigit() and len(clean_q) == 9:
+        # Exact SIREN search (indexed on companies.siren PK)
+        rows = await fetch_all(f"""
+            SELECT
+                co.siren, co.denomination, co.naf_code, co.naf_libelle,
+                co.forme_juridique, co.tranche_effectif,
+                co.ville, co.departement, co.statut,
+                ct.phone, ct.email, ct.website
+            FROM query_tags qt
+            JOIN companies co ON co.siren = qt.siren
+            LEFT JOIN LATERAL (
+                SELECT * FROM contacts c2
+                WHERE c2.siren = co.siren
+                ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                          CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                          CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+                LIMIT 1
+            ) ct ON true
+            WHERE co.siren = %s
+            GROUP BY co.siren, co.denomination, co.naf_code, co.naf_libelle,
+                     co.forme_juridique, co.tranche_effectif,
+                     co.ville, co.departement, co.statut,
+                     ct.phone, ct.email, ct.website
+            ORDER BY {sort_clause}
+        """, (clean_q,))
+    else:
+        # Name / NAF code search — indexed via query_tags.siren
+        like_param = f"%{q.strip()}%"
+
+        # Build dynamic WHERE filters
+        where_parts = [
+            "(UPPER(co.denomination) LIKE UPPER(%s) OR co.naf_code ILIKE %s)"
+        ]
+        params: list = [like_param, like_param]
+
+        if department:
+            where_parts.append("co.departement = %s")
+            params.append(department.strip())
+
+        if sector:
+            where_parts.append("UPPER(qt.query_name) LIKE UPPER(%s)")
+            params.append(f"%{sector.strip()}%")
+
+        where_clause = " AND ".join(where_parts)
+        params.append(limit)
+        params.append(offset)
+
+        rows = await fetch_all(f"""
+            SELECT DISTINCT ON (co.siren)
+                co.siren, co.denomination, co.naf_code, co.naf_libelle,
+                co.forme_juridique, co.tranche_effectif,
+                co.ville, co.departement, co.statut,
+                ct.phone, ct.email, ct.website
+            FROM query_tags qt
+            JOIN companies co ON co.siren = qt.siren
+            LEFT JOIN LATERAL (
+                SELECT * FROM contacts c2
+                WHERE c2.siren = co.siren
+                ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                          CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                          CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+                LIMIT 1
+            ) ct ON true
+            WHERE {where_clause}
+            ORDER BY co.siren, co.denomination
+            LIMIT %s OFFSET %s
+        """, tuple(params))
+
+    # Re-sort after DISTINCT ON (which forces its own ORDER BY)
+    if sort_by != "denomination":
+        reverse = order.lower() == "desc"
+        rows.sort(key=lambda r: (r.get(sort_by) or ""), reverse=reverse)
+
+    return {"results": rows, "count": len(rows), "offset": offset, "limit": limit}
+
+# ---------------------------------------------------------------------------
+# Enrich History — dedicated GET endpoint for the timeline UI
+# Must be defined BEFORE the catch-all GET /{siren} route
+# ---------------------------------------------------------------------------
+
+@router.get("/{siren}/enrich-history")
+async def get_enrich_history(siren: str):
+    """Return enrichment audit trail for a single company.
+
+    Queries scrape_audit table (indexed on siren).
+    Used by the frontend's Smart Enrichment Panel timeline.
+    """
+    rows = await fetch_all("""
+        SELECT
+            action, result, source_url, duration_ms, timestamp
+        FROM scrape_audit
+        WHERE siren = %s
+        ORDER BY timestamp DESC
+    """, (siren,))
+    return {"siren": siren, "history": rows, "count": len(rows)}
+
+
+@router.get("/{siren}")
+async def get_company(siren: str):
+    """Full company detail with enriched data, contacts, and officers."""
+    company = await fetch_one("""
+        SELECT
+            co.siren, co.siret_siege, co.denomination,
+            co.naf_code, co.naf_libelle, co.forme_juridique,
+            co.adresse, co.code_postal, co.ville,
+            co.departement, co.region, co.statut,
+            co.date_creation, co.tranche_effectif,
+            co.latitude, co.longitude, co.fortress_id,
+            co.created_at, co.updated_at
+        FROM companies co
+        WHERE co.siren = %s
+    """, (siren,))
+
+    if not company:
+        return JSONResponse(status_code=404, content={"error": "Company not found", "siren": siren})
+
+    # All contacts from different sources
+    contacts = await fetch_all("""
+        SELECT
+            phone, email, email_type, website, source,
+            social_linkedin, social_facebook, social_twitter,
+            rating, review_count, collected_at
+        FROM contacts
+        WHERE siren = %s
+        ORDER BY collected_at DESC
+    """, (siren,))
+
+    # Officers / Dirigeants
+    officers = await fetch_all("""
+        SELECT nom, prenom, role, source
+        FROM officers
+        WHERE siren = %s
+        ORDER BY nom
+    """, (siren,))
+
+    # Merge best contacts
+    merged = _merge_contacts(contacts)
+
+    # Query tags (which jobs found this company)
+    tags = await fetch_all("""
+        SELECT query_name, tagged_at
+        FROM query_tags
+        WHERE siren = %s
+        ORDER BY tagged_at DESC
+    """, (siren,))
+
+    # Enrichment audit trail (which agents enriched this company)
+    enrichment_history = await fetch_all("""
+        SELECT
+            action, result, source_url, duration_ms, timestamp
+        FROM scrape_audit
+        WHERE siren = %s
+        ORDER BY timestamp DESC
+    """, (siren,))
+
+    return {
+        "company": company,
+        "contacts": contacts,
+        "merged_contact": merged,
+        "officers": officers,
+        "query_tags": tags,
+        "enrichment_history": enrichment_history,
+    }
+
+
+def _merge_contacts(contacts: list[dict]) -> dict:
+    """Merge all contact rows into a single best-of dict."""
+    merged = {
+        "phone": None, "email": None, "email_type": None,
+        "website": None, "social_linkedin": None,
+        "social_facebook": None, "social_twitter": None,
+        "rating": None, "review_count": None, "sources": [],
+    }
+    for c in contacts:
+        if c.get("source"):
+            merged["sources"].append(c["source"])
+        for key in ("phone", "email", "website", "social_linkedin",
+                     "social_facebook", "social_twitter"):
+            if merged[key] is None and c.get(key):
+                merged[key] = c[key]
+        if merged["email_type"] is None and c.get("email_type"):
+            merged["email_type"] = c["email_type"]
+        if merged["rating"] is None and c.get("rating"):
+            merged["rating"] = c["rating"]
+            merged["review_count"] = c.get("review_count")
+
+    merged["sources"] = list(set(merged["sources"]))
+    return merged

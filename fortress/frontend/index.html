@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Fortress — B2B Lead Collection Dashboard for the French Market">
+    <title>Fortress — Dashboard</title>
+    <link rel="stylesheet" href="/css/design-system.css">
+    <link rel="stylesheet" href="/css/components.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏰</text></svg>">
+</head>
+
+<body>
+    <div class="app-layout">
+        <!-- ═══════════════ Sidebar ═══════════════ -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <span class="sidebar-brand-icon">🏰</span>
+                <span class="sidebar-brand-text">Fortress</span>
+                <span class="sidebar-brand-badge">v1.0</span>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="sidebar-section-label">Navigation</div>
+
+                <a href="#/" class="nav-item" data-page="dashboard" id="nav-dashboard">
+                    <span class="nav-item-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+
+                <a href="#/search" class="nav-item" data-page="search" id="nav-search">
+                    <span class="nav-item-icon">🔍</span>
+                    <span>Recherche</span>
+                </a>
+
+                <div class="sidebar-section-label">Opérations</div>
+
+                <a href="#/new-batch" class="nav-item" data-page="new-batch" id="nav-new-batch">
+                    <span class="nav-item-icon">🚀</span>
+                    <span>Nouveau Batch</span>
+                </a>
+
+                <a href="#/monitor" class="nav-item" data-page="monitor" id="nav-monitor">
+                    <span class="nav-item-icon">📡</span>
+                    <span>Pipeline Live</span>
+                </a>
+
+                <a href="#/upload" class="nav-item" data-page="upload" id="nav-upload">
+                    <span class="nav-item-icon">📤</span>
+                    <span>Base Client</span>
+                </a>
+
+                <div class="sidebar-section-label">Intelligence</div>
+
+                <a href="#/open-query" class="nav-item" data-page="query" id="nav-query">
+                    <span class="nav-item-icon">💬</span>
+                    <span>Requête Libre</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <span>Fortress v1.0 · Zéro coût</span>
+                <a href="#" id="btn-logout" style="display:none; color:var(--text-muted); font-size:var(--font-xs); cursor:pointer; text-decoration:underline; margin-top:4px">
+                    Déconnexion
+                </a>
+            </div>
+        </aside>
+
+        <!-- ═══════════════ Main Content ═══════════════ -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-search">
+                    <span class="header-search-icon">🔍</span>
+                    <input type="text" id="global-search" placeholder="Rechercher par nom ou SIREN..."
+                        autocomplete="off">
+                </div>
+                <div class="header-right">
+                    <span id="header-running-badge" class="badge badge-warning" style="display:none">
+                        ⏳ Batch en cours
+                    </span>
+                </div>
+            </header>
+
+            <!-- Page content rendered by JS router -->
+            <div id="page-content" class="page-container">
+                <div class="loading">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- JS Modules -->
+    <script type="module" src="/js/app.js"></script>
+</body>
+
+</html>

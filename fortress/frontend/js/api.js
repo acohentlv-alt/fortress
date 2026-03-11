@@ -1,0 +1,273 @@
+/**
+ * Fortress API Client
+ * Wraps all fetch calls to the backend API.
+ *
+ * Response convention:
+ *   - Every response object gets `_status` (HTTP code) and `_ok` (boolean) injected.
+ *   - Consumers can check `result._status === 202` for async jobs, `422` for validation, etc.
+ *   - Use `extractApiError(result)` to get a human-readable error string.
+ */
+
+const API_BASE = '/api';
+
+/**
+ * Get stored API key from localStorage.
+ */
+function getApiKey() {
+    return localStorage.getItem('fortress_api_key') || '';
+}
+
+/**
+ * Core request wrapper.
+ * Returns the JSON body with `_status` and `_ok` fields injected.
+ * Automatically sends X-API-Key header from localStorage.
+ */
+async function request(path, options = {}) {
+    const url = `${API_BASE}${path}`;
+    const apiKey = getApiKey();
+    const headers = { 'Accept': 'application/json', ...options.headers };
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    try {
+        const resp = await fetch(url, {
+            ...options,
+            headers,
+        });
+        let data;
+        try { data = await resp.json(); } catch { data = {}; }
+        // Inject HTTP metadata into the response object
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            data._status = resp.status;
+            data._ok = resp.ok;
+        }
+        if (resp.status === 401) {
+            // API key invalid or missing — clear and reload to show login
+            localStorage.removeItem('fortress_api_key');
+            window.location.reload();
+            return data;
+        }
+        if (!resp.ok) {
+            console.error(`API error: ${resp.status} ${resp.statusText} for ${url}`);
+        }
+        return data;
+    } catch (err) {
+        console.error(`API fetch failed: ${url}`, err);
+        return { _status: 0, _ok: false, error: err.message };
+    }
+}
+
+async function postJSON(path, body) {
+    return request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
+/**
+ * Extract a human-readable error string from an API response.
+ * Handles: Pydantic 422 detail arrays, generic error/message fields, fallback.
+ */
+export function extractApiError(result) {
+    if (!result) return 'Erreur de connexion au serveur';
+
+    // 503 Service Unavailable — maintenance / DB offline
+    if (result._status === 503) {
+        return 'Serveur en maintenance ou base de données hors ligne (Erreur 503).';
+    }
+
+    // FastAPI / Pydantic 422 validation errors
+    if (result.detail && Array.isArray(result.detail)) {
+        return result.detail.map(e => {
+            const loc = (e.loc || []).filter(l => l !== 'body').join(' → ') || 'champ';
+            return `${loc}: ${e.msg}`;
+        }).join('; ');
+    }
+    // Single string detail (e.g. 404 "Not found")
+    if (result.detail && typeof result.detail === 'string') {
+        return result.detail;
+    }
+    // Generic error / message keys
+    if (result.error) return result.error;
+    if (result.message) return result.message;
+
+    return 'Erreur inconnue du serveur';
+}
+
+// ── Dashboard ────────────────────────────────────────────────────
+export async function getDashboardStats() {
+    return await request('/dashboard/stats');
+}
+
+export async function getDashboardStatsByJob() {
+    return await request('/dashboard/stats/by-job');
+}
+
+// ── Departments ──────────────────────────────────────────────────
+export async function getDepartments() {
+    return await request('/departments');
+}
+
+export async function getDepartmentJobs(dept) {
+    return await request(`/departments/${dept}/jobs`);
+}
+
+// ── Jobs ─────────────────────────────────────────────────────────
+export async function getJobs() {
+    return await request('/jobs');
+}
+
+export async function getJob(queryId) {
+    return await request(`/jobs/${encodeURIComponent(queryId)}`);
+}
+
+export async function getJobCompanies(queryId, { page = 1, pageSize = 20, search = '', sort = 'completude' } = {}) {
+    const params = new URLSearchParams({
+        page: page.toString(),
+        page_size: pageSize.toString(),
+        search,
+        sort,
+    });
+    return await request(`/jobs/${encodeURIComponent(queryId)}/companies?${params}`);
+}
+
+export async function getJobQuality(queryId) {
+    return await request(`/jobs/${encodeURIComponent(queryId)}/quality`);
+}
+
+// ── Companies ────────────────────────────────────────────────────
+export async function searchCompanies(query, {
+    limit = 50, offset = 0, sortBy = '', order = '', department = '', sector = '',
+} = {}) {
+    const params = new URLSearchParams({
+        q: query,
+        limit: limit.toString(),
+        offset: offset.toString(),
+    });
+    if (sortBy) params.set('sort_by', sortBy);
+    if (order) params.set('order', order);
+    if (department) params.set('department', department);
+    if (sector) params.set('sector', sector);
+    return await request(`/companies/search?${params}`);
+}
+
+export async function getCompanyEnrichHistory(siren) {
+    return await request(`/companies/${siren}/enrich-history`);
+}
+
+export async function getCompany(siren) {
+    return await request(`/companies/${siren}`);
+}
+
+// ── Enrichment ───────────────────────────────────────────────────
+export async function enrichCompany(siren, targetModules) {
+    return await postJSON(`/companies/${siren}/enrich`, {
+        target_modules: targetModules,
+    });
+}
+
+// ── Batch Execution ──────────────────────────────────────────────
+export async function runBatch({ sector, department, size, mode, city, naf_code }) {
+    const body = {
+        sector,
+        department,
+        size: parseInt(size, 10),
+        mode,
+        city: city || null,
+    };
+    if (naf_code) body.naf_code = naf_code;
+    return await postJSON('/batch/run', body);
+}
+
+// ── Export ────────────────────────────────────────────────────────
+export function getExportUrl(queryId, format = 'csv') {
+    const key = getApiKey();
+    const base = `${API_BASE}/export/${encodeURIComponent(queryId)}/${format}`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+}
+
+export function getMasterExportUrl() {
+    const key = getApiKey();
+    const base = `${API_BASE}/export/master/csv`;
+    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+}
+
+// ── Health Check ─────────────────────────────────────────────────
+export async function checkHealth() {
+    try {
+        const resp = await fetch(`${API_BASE}/health`, {
+            headers: { 'Accept': 'application/json' },
+        });
+        return { ok: resp.ok, status: resp.status };
+    } catch {
+        return { ok: false, status: 0 };
+    }
+}
+
+// ── Client Upload (BLUE triage dedup) ────────────────────────────
+export async function uploadClientCSV(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const headers = {};
+    const apiKey = getApiKey();
+    if (apiKey) headers['X-API-Key'] = apiKey;
+    try {
+        const resp = await fetch(`${API_BASE}/client/upload`, {
+            method: 'POST',
+            headers,
+            body: formData,
+        });
+        let data;
+        try { data = await resp.json(); } catch { data = {}; }
+        if (data && typeof data === 'object') {
+            data._status = resp.status;
+            data._ok = resp.ok;
+        }
+        return data;
+    } catch (err) {
+        return { _status: 0, _ok: false, error: err.message };
+    }
+}
+
+export async function getClientStats() {
+    return await request('/client/stats');
+}
+
+export async function clearClientSirens() {
+    return await request('/client/clear', { method: 'DELETE' });
+}
+
+// ── Auth ──────────────────────────────────────────────────────────
+export async function checkAuthRequired() {
+    try {
+        const resp = await fetch(`${API_BASE}/auth/check`);
+        return await resp.json();
+    } catch {
+        return { auth_required: false };
+    }
+}
+
+export async function loginWithApiKey(apiKey) {
+    try {
+        const resp = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey }),
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'ok') {
+            localStorage.setItem('fortress_api_key', apiKey);
+            return { ok: true };
+        }
+        return { ok: false, error: data.error || 'Clé invalide' };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+}
+
+export function logout() {
+    localStorage.removeItem('fortress_api_key');
+}
+
+export function isLoggedIn() {
+    return !!localStorage.getItem('fortress_api_key');
+}

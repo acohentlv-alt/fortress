@@ -1,0 +1,740 @@
+"""Phase 3 enrichment — wires all data sources into a single callable.
+
+Pipeline per company (reordered based on real-world hit rates):
+
+  1. Google Maps via Playwright (primary, 86% phone hit rate)
+       → phone, website URL, address, rating, reviews, maps_url
+       → Protected by asyncio.Lock (one search at a time)
+
+  2. Website crawl (only if Step 1 found a website URL)
+       → email, social links (LinkedIn, Facebook, 30+ networks)
+       → Uses curl_cffi — company websites have no anti-bot
+
+  Individual operators (sole traders) use a separate path:
+       → Directory phone search (Google → 118712.fr, local.fr, etc.)
+       → Maps fallback if directory search fails
+
+  INPI officer lookup runs separately when credentials are configured.
+  Recherche Entreprises API removed: produces 0 contacts in production.
+
+Source attribution is tracked per company and summarised in a batch-level
+log line: "Sources: google_maps=N, web_search=N, directory=N, none=N"
+
+Usage (from runner / __main__):
+    async with CurlClient() as client:
+        async def enrich_fn(companies):
+            return await enrich_companies(companies, pool=pool, curl_client=client)
+        await run_query(triage, query_name, query_id, enrich_fn, pool)
+
+The `enrich_fn` signature must match:
+    Callable[[list[Company]], Awaitable[list[Contact]]]
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any
+from urllib.parse import urlparse
+
+import structlog
+
+from fortress.config.settings import settings
+from fortress.models import Company, Contact, ContactSource
+from fortress.module_b.contact_parser import _is_valid_french_phone, is_junk_email
+from fortress.module_b.web_search import (
+    _is_individual_operator,
+    is_directory_url,
+)
+from fortress.module_c.curl_client import CurlClient
+
+log = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Maps match validation
+# ---------------------------------------------------------------------------
+
+def _assess_match(
+    maps_result: dict[str, Any],
+    company: Any,
+) -> str:
+    """Assess whether a Maps result is for the correct company.
+
+    Compares the address returned by Maps against the company's known
+    ville and code_postal from SIRENE data.
+
+    Returns:
+        'high'  — Maps address contains expected city or postal code
+        'low'   — Maps returned data but no geographic match
+        'none'  — Maps returned nothing
+    """
+    if not maps_result:
+        return "none"
+
+    maps_address = (maps_result.get("address") or "").lower()
+    if not maps_address:
+        # Maps found something but no address — can't validate
+        return "low" if maps_result.get("phone") else "none"
+
+    # Check postal code match (most precise)
+    if company.code_postal and company.code_postal in maps_address:
+        return "high"
+
+    # Check city name match
+    if company.ville and company.ville.lower() in maps_address:
+        return "high"
+
+    # Check department code in postal prefix (e.g. "33" in "33000")
+    if company.departement:
+        # Look for a 5-digit postal code starting with the dept
+        import re as _re
+        postal_matches = _re.findall(r"\b(\d{5})\b", maps_address)
+        for postal in postal_matches:
+            if postal[:2] == company.departement or (
+                len(company.departement) == 3 and postal[:3] == company.departement
+            ):
+                return "high"
+
+    return "low"
+
+
+# MVP fields used to decide what a YELLOW company still needs.
+# Note: "website" matches the Contact model field name (not "website_url").
+_MVP_FIELDS = ("website", "phone", "email")
+
+# ---------------------------------------------------------------------------
+# Phone digit normalisation (used locally for _best_phone priority sorting)
+# ---------------------------------------------------------------------------
+
+_PHONE_DIGITS_RE = re.compile(r"[\s.\-()]")
+
+# _is_valid_french_phone is imported from contact_parser (moved there to avoid
+# circular imports with web_search.py which also needs it for directory searches).
+
+# ---------------------------------------------------------------------------
+# Email domain-aware selection
+# ---------------------------------------------------------------------------
+
+# Email prefixes in priority order for business contact selection.
+# "contact@" is the gold standard; "info@" is very common; others are valid.
+_PREFERRED_EMAIL_PREFIXES: tuple[str, ...] = (
+    "contact",
+    "info",
+    "commercial",
+    "vente",
+    "ventes",
+    "accueil",
+    "bonjour",
+    "hello",
+    "secretariat",
+    "direction",
+)
+
+
+def _extract_domain(url: str) -> str | None:
+    """Return the registered domain (SLD + TLD) from a URL, or None."""
+    try:
+        netloc = urlparse(url).netloc.lower().lstrip("www.")
+        parts = netloc.split(".")
+        if len(parts) >= 2:
+            return ".".join(parts[-2:])
+        return parts[0] if parts else None
+    except ValueError:
+        return None
+
+
+def _email_domain_matches(email: str, website_url: str | None) -> bool:
+    """Return True if the email domain is plausibly related to the company website.
+
+    'Related' means:
+      - Same registered domain (contact@alyzia.com ↔ www.alyzia.com)
+      - Or one contains the other as a word fragment (g3s-alyzia.com ↔ alyzia.com)
+    """
+    if not website_url:
+        return True  # No website known — can't filter, accept anything non-junk
+
+    website_domain = _extract_domain(website_url)
+    if not website_domain:
+        return True
+
+    _, _, email_domain = email.partition("@")
+    email_sld = _extract_domain("https://" + email_domain)
+    if not email_sld:
+        return False
+
+    if email_sld == website_domain:
+        return True
+
+    # Partial overlap: alyzia-cargo.fr ↔ alyzia.com (share "alyzia")
+    site_root = website_domain.split(".")[0]   # "alyzia"
+    mail_root = email_sld.split(".")[0]         # "alyzia-cargo" → stripped later
+    mail_root_clean = re.sub(r"[^a-z0-9]", "", mail_root)
+    site_root_clean = re.sub(r"[^a-z0-9]", "", site_root)
+    if len(site_root_clean) >= 4 and (
+        site_root_clean in mail_root_clean or mail_root_clean in site_root_clean
+    ):
+        return True
+
+    return False
+
+
+def _best_email(
+    emails: list[str],
+    website_url: str | None,
+    siren: str,
+) -> str | None:
+    """Pick the single best business email from a list.
+
+    Selection strategy (in order):
+      1. Keep only non-junk emails whose domain matches the company website.
+      2. Prefer emails with a preferred prefix (contact@ > info@ > commercial@…).
+      3. Fall back to the first domain-matching email if no preferred prefix found.
+      4. If nothing matches the domain but we have non-junk emails, accept those.
+      5. Return None if the list is empty.
+    """
+    if not emails:
+        return None
+
+    # Step 1: filter by domain match
+    domain_matched: list[str] = [
+        e for e in emails if _email_domain_matches(e, website_url)
+    ]
+    candidates = domain_matched if domain_matched else emails
+
+    # Step 2: pick preferred prefix
+    local_map: dict[str, str] = {}
+    for email in candidates:
+        local = email.split("@")[0]
+        local_map[local] = email
+
+    for prefix in _PREFERRED_EMAIL_PREFIXES:
+        if prefix in local_map:
+            chosen = local_map[prefix]
+            if chosen not in domain_matched:
+                log.debug(
+                    "enricher.email_domain_mismatch_accepted",
+                    email=chosen,
+                    website=website_url,
+                    siren=siren,
+                )
+            return chosen
+
+    # Step 3+4: return first candidate
+    return candidates[0]
+
+
+def _best_phone(phones: list[str], siren: str) -> str | None:
+    """Pick the best phone from a list, preferring landlines over mobiles.
+
+    Priority: 01-05 (geographic landlines) > 06-07 (mobile) > 09 (VoIP).
+    """
+    if not phones:
+        return None
+
+    valid = [p for p in phones if _is_valid_french_phone(p)]
+    if not valid:
+        log.debug("enricher.all_phones_invalid", phones=phones, siren=siren)
+        return None
+
+    def _phone_priority(p: str) -> int:
+        digits = _PHONE_DIGITS_RE.sub("", p)
+        if digits.startswith("+33") and len(digits) == 12:
+            digits = "0" + digits[3:]
+        prefix = digits[:2]
+        if prefix in ("01", "02", "03", "04", "05"):
+            return 0  # Geographic landline — best
+        if prefix in ("06", "07"):
+            return 1  # Mobile
+        if prefix == "09":
+            return 2  # VoIP
+        return 3
+
+    return sorted(valid, key=_phone_priority)[0]
+
+
+async def enrich_companies(
+    companies: list[Company],
+    *,
+    pool: Any,
+    curl_client: CurlClient,
+    maps_scraper: Any | None = None,
+    on_progress: Any | None = None,
+) -> tuple[list[Contact], int]:
+    """Qualify-or-replace enrichment pipeline.
+
+    Every company gets one Maps search. After Maps returns:
+      - QUALIFIED (high confidence match) → keep + crawl website
+      - NOT QUALIFIED (no data or wrong city) → replace with next DB candidate
+
+    This ensures only Maps-confirmed companies appear in the output.
+    Replacements are fetched per-company, not at batch end.
+
+    Args:
+        companies:    Initial candidate list from DB query.
+        pool:         Async psycopg3 connection pool.
+        curl_client:  Shared CurlClient (Chrome TLS impersonation).
+        maps_scraper: PlaywrightMapsScraper instance (required).
+
+    Returns:
+        list[Contact] — one Contact per qualified company.
+    """
+    from collections import deque
+
+    if not companies:
+        return []
+
+    target_count = len(companies)
+    contacts: list[Contact] = []
+    tried_sirens: set[str] = {c.siren for c in companies}
+    candidates: deque[Company] = deque(companies)
+
+    # Reference company for backfill queries (NAF/dept matching)
+    reference_company = companies[0]
+    naf_prefix = (reference_company.naf_code or "")[:2]
+    dept = reference_company.departement or ""
+
+    # Max total companies to try before giving up (prevent infinite loops)
+    max_attempts = target_count * 5
+
+    # ── Pre-load rejected SIRENs for this query pattern ────────────────────
+    # Skip SIRENs that were rejected in previous runs of the same NAF+dept.
+    if naf_prefix and dept:
+        try:
+            async with pool.connection() as conn:
+                rows = await conn.execute(
+                    "SELECT siren FROM rejected_sirens WHERE naf_prefix = %s AND departement = %s",
+                    (naf_prefix, dept),
+                )
+                prev_rejected = {row[0] for row in await rows.fetchall()}
+                if prev_rejected:
+                    # Remove pre-rejected from candidates
+                    candidates = deque(
+                        c for c in candidates if c.siren not in prev_rejected
+                    )
+                    tried_sirens |= prev_rejected
+                    log.info(
+                        "enricher.pre_rejected_loaded",
+                        count=len(prev_rejected),
+                        naf_prefix=naf_prefix,
+                        dept=dept,
+                    )
+        except Exception as exc:
+            log.debug("enricher.pre_rejected_load_error", error=str(exc))
+
+    # ── INPI officer lookup — disabled (no credentials configured) ──────────
+    # INPI client was removed during architecture consolidation (2026-03-11).
+    # To re-enable: implement INPI client, set INPI_USERNAME/INPI_PASSWORD in .env.
+
+    # ── Qualify-or-Replace loop ────────────────────────────────────────────
+    source_counts: Counter[str] = Counter()
+    source_phone: Counter[str] = Counter()
+    source_email: Counter[str] = Counter()
+    replaced_count = 0
+    rejected_batch: list[tuple[str, str]] = []  # (siren, reason) to persist
+
+    while len(contacts) < target_count and candidates and len(tried_sirens) < max_attempts:
+        company = candidates.popleft()
+
+        try:
+            result = await _enrich_one(
+                company,
+                curl_client=curl_client,
+                maps_scraper=maps_scraper,
+            )
+        except Exception as exc:
+            log.warning(
+                "enricher_company_error",
+                siren=company.siren,
+                error=str(exc),
+            )
+            source_counts["error"] += 1
+            # Error → replace this company
+            replacement = await _fetch_replacement_companies(
+                pool, tried_sirens, reference_company, 1,
+            )
+            if replacement:
+                tried_sirens.add(replacement[0].siren)
+                candidates.append(replacement[0])
+            continue
+
+        contact, source_label, match_confidence = result
+        source_counts[source_label] += 1
+
+        # ── Qualification decision ────────────────────────────────────
+        # KEEP: Maps confirmed the company (high confidence) AND found data
+        # REPLACE: Maps found nothing, or wrong city, or no useful data
+        qualified = contact is not None and match_confidence != "none"
+
+        if not qualified:
+            replaced_count += 1
+            reason = "no_maps_data" if match_confidence == "none" else "low_confidence"
+            rejected_batch.append((company.siren, reason))
+            log.info(
+                "enricher.company_replaced",
+                siren=company.siren,
+                denomination=company.denomination,
+                match_confidence=match_confidence,
+                reason=reason,
+                qualified_so_far=len(contacts),
+                target=target_count,
+            )
+            # Fetch 1 replacement
+            replacement = await _fetch_replacement_companies(
+                pool, tried_sirens, reference_company, 1,
+            )
+            if replacement:
+                tried_sirens.add(replacement[0].siren)
+                candidates.append(replacement[0])
+                log.debug(
+                    "enricher.replacement_fetched",
+                    new_siren=replacement[0].siren,
+                    new_name=replacement[0].denomination,
+                )
+            # Notify runner of incremental progress
+            if on_progress:
+                await on_progress(len(tried_sirens), replaced_count)
+            continue
+
+        # ── Qualified → add to output ─────────────────────────────────
+        contacts.append(contact)
+        if contact.phone:
+            source_phone[source_label] += 1
+        if contact.email:
+            source_email[source_label] += 1
+
+        # Notify runner of incremental progress
+        if on_progress:
+            await on_progress(len(tried_sirens), replaced_count)
+
+    # ── Persist rejected SIRENs ────────────────────────────────────────────
+    if rejected_batch and naf_prefix and dept:
+        try:
+            async with pool.connection() as conn:
+                for rej_siren, rej_reason in rejected_batch:
+                    await conn.execute(
+                        """
+                        INSERT INTO rejected_sirens (siren, naf_prefix, departement, reason)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (siren, naf_prefix, departement) DO NOTHING
+                        """,
+                        (rej_siren, naf_prefix, dept, rej_reason),
+                    )
+            log.info(
+                "enricher.rejected_persisted",
+                count=len(rejected_batch),
+                naf_prefix=naf_prefix,
+                dept=dept,
+            )
+        except Exception as exc:
+            log.debug("enricher.rejected_persist_error", error=str(exc))
+
+    # ── Summary stats ─────────────────────────────────────────────────────
+    total_tried = len(tried_sirens)
+    phones_found = sum(source_phone.values())
+    emails_found = sum(source_email.values())
+
+    log.info(
+        "enricher_batch_done",
+        target=target_count,
+        companies_tried=total_tried,
+        contact_count=len(contacts),
+        replaced=replaced_count,
+        phone_hit_rate=f"{phones_found}/{len(contacts)} ({round(100 * phones_found / len(contacts))}%)" if contacts else "0/0",
+        email_hit_rate=f"{emails_found}/{len(contacts)} ({round(100 * emails_found / len(contacts))}%)" if contacts else "0/0",
+        sources=dict(source_counts),
+        phones_by_source=dict(source_phone),
+        emails_by_source=dict(source_email),
+    )
+    return contacts, replaced_count
+
+
+async def _enrich_one(
+    company: Company,
+    *,
+    curl_client: CurlClient,
+    maps_scraper: Any | None = None,
+) -> tuple[Contact | None, str, str]:
+    """Enrich a single company: Maps first, then website crawl.
+
+    Returns:
+        (Contact | None, source_label, match_confidence).
+        match_confidence is 'high', 'low', or 'none'.
+        Returns (None, "none", "none") when no data was found.
+    """
+    siren = company.siren
+    denomination = company.denomination or ""
+
+    # ── Per-company start log ──────────────────────────────────────────────
+    log.info(
+        "enricher.company_start",
+        siren=siren,
+        denomination=denomination,
+        ville=company.ville,
+        departement=company.departement,
+        code_postal=company.code_postal,
+        is_individual=_is_individual_operator(denomination),
+    )
+
+    # ── Step 1: Google Maps (Playwright) ───────────────────────────────────
+    # The primary source: phone, website URL, address, rating, reviews.
+    maps_result: dict[str, Any] = {}
+    maps_phone: str | None = None
+    maps_website: str | None = None
+    match_confidence: str = "none"  # Default: no Maps data
+
+    if maps_scraper is not None:
+        # Build a richer Maps query: "denomination ville" or "denomination code_postal"
+        # Using ville (city name) gives Maps the best geographic context.
+        search_location = company.ville or company.code_postal or company.departement or ""
+        try:
+            maps_result = await maps_scraper.search(
+                denomination,
+                search_location,
+                siren=siren,
+            )
+        except Exception as exc:
+            log.debug(
+                "enricher.maps_error",
+                siren=siren,
+                error=str(exc),
+            )
+            maps_result = {}
+
+        # ── Validate Maps match ───────────────────────────────────────
+        match_confidence = _assess_match(maps_result, company)
+        log.info(
+            "enricher.maps_result",
+            siren=siren,
+            match_confidence=match_confidence,
+            maps_phone=maps_result.get("phone"),
+            maps_website=maps_result.get("website"),
+            maps_address=maps_result.get("address"),
+            maps_rating=maps_result.get("rating"),
+        )
+
+        # If confidence is low, discard phone to prevent false positives
+        # (e.g., 18 companies all getting the same Bordeaux phone number).
+        # Keep address/rating/maps_url if available — they're informational.
+        if match_confidence == "low" and maps_result.get("phone"):
+            log.warning(
+                "enricher.maps_false_positive_filtered",
+                siren=siren,
+                denomination=denomination,
+                maps_address=maps_result.get("address"),
+                expected_ville=company.ville,
+                expected_cp=company.code_postal,
+            )
+            maps_result.pop("phone", None)
+
+        maps_phone = _best_phone(
+            [maps_result["phone"]] if maps_result.get("phone") else [],
+            siren,
+        )
+        raw_website = maps_result.get("website")
+        if raw_website and not is_directory_url(raw_website):
+            # Normalise to base URL
+            try:
+                parsed = urlparse(raw_website)
+                if parsed.scheme and parsed.netloc:
+                    maps_website = f"{parsed.scheme}://{parsed.netloc}"
+                else:
+                    maps_website = raw_website
+            except ValueError:
+                maps_website = raw_website
+    else:
+        log.warning(
+            "enricher.no_maps_scraper",
+            siren=siren,
+            reason="Maps scraper not available — primary data source missing",
+        )
+
+    # ── Step 2: Website crawl via Playwright (same browser as Maps) ─────
+    # Uses the real browser to visit company websites, solving the problem
+    # where curl_cffi gets blocked/timeout on sites that work fine in Chrome.
+    crawl_result: dict[str, Any] = {}
+    best_email: str | None = None
+    social: dict[str, str] = {}
+
+    if maps_website and maps_scraper is not None:
+        try:
+            crawl_result = await maps_scraper.crawl_url(
+                maps_website,
+                siren=siren,
+            )
+        except Exception as exc:
+            log.debug(
+                "enricher_crawl_error",
+                siren=siren,
+                url=maps_website,
+                error=str(exc),
+            )
+
+        raw_emails: list[str] = crawl_result.get("emails", [])
+        clean_emails = [e for e in raw_emails if not is_junk_email(e)]
+        best_email = _best_email(clean_emails, maps_website, siren)
+        social = crawl_result.get("social", {})
+
+        # Crawl may also find phone numbers — merge with Maps phone
+        if not maps_phone:
+            crawl_phones = crawl_result.get("phones", [])
+            maps_phone = _best_phone(crawl_phones, siren)
+
+    # ── Build final contact ────────────────────────────────────────────────
+    maps_rating_raw = maps_result.get("rating")
+    maps_rating = Decimal(str(maps_rating_raw)) if maps_rating_raw is not None else None
+
+    # Only create a Contact if we have at least one useful field
+    has_data = any([
+        maps_phone, best_email, maps_website, maps_rating,
+        maps_result.get("address"), maps_result.get("maps_url"),
+    ])
+
+    if not has_data:
+        log.debug("enricher.no_data_found", siren=siren, denomination=denomination)
+        return (None, "none", match_confidence if maps_scraper else "none")
+
+    # Source attribution: Maps when phone came from Maps, website_crawl when email came from crawl
+    source = ContactSource.GOOGLE_MAPS
+    source_label = "google_maps"
+    if best_email and not maps_result.get("phone"):
+        source = ContactSource.WEBSITE_CRAWL
+        source_label = "web_search"
+
+    log.info(
+        "enricher.company_enriched",
+        siren=siren,
+        has_phone=bool(maps_phone),
+        has_email=bool(best_email),
+        has_website=bool(maps_website),
+        has_rating=bool(maps_rating),
+        source=source_label,
+    )
+
+    return (
+        Contact(
+            siren=siren,
+            phone=maps_phone,
+            email=best_email,
+            website=maps_website,
+            address=maps_result.get("address"),
+            source=source,
+            rating=maps_rating,
+            review_count=maps_result.get("review_count"),
+            maps_url=maps_result.get("maps_url"),
+            social_linkedin=social.get("linkedin"),
+            social_facebook=social.get("facebook"),
+            social_twitter=social.get("twitter"),
+            collected_at=datetime.now(tz=timezone.utc),
+        ),
+        source_label,
+        match_confidence if maps_scraper else "none",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backfill helper
+# ---------------------------------------------------------------------------
+
+async def _fetch_replacement_companies(
+    pool: Any,
+    tried_sirens: set[str],
+    reference_company: Any | None,
+    count: int,
+) -> list[Company]:
+    """Fetch replacement companies from the DB for backfill.
+
+    Finds companies matching the same NAF code prefix + department as the
+    reference company, excluding already-tried SIRENs and [ND] names.
+
+    Args:
+        pool:              Async psycopg3 connection pool.
+        tried_sirens:      Set of SIRENs already attempted.
+        reference_company: A Company from the original batch (for NAF/dept).
+        count:             Number of replacements to fetch.
+
+    Returns:
+        list[Company] — fresh candidates from the DB.
+    """
+    if reference_company is None or count <= 0:
+        return []
+
+    naf = reference_company.naf_code
+    dept = reference_company.departement
+
+    if not naf or not dept:
+        log.debug(
+            "enricher.backfill_skip",
+            reason="no NAF or department on reference company",
+        )
+        return []
+
+    # Use the NAF prefix (first 2 digits) for broad matching
+    naf_prefix = naf[:2] + "%"
+
+    try:
+        async with pool.connection() as conn:
+            import psycopg.rows
+
+            async with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                # Fast random selection: use a counted offset instead of
+                # ORDER BY RANDOM() which sorts the entire filtered heap.
+                # Step 1: get approximate count of candidates
+                await cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM companies
+                    WHERE departement = %s
+                      AND naf_code LIKE %s
+                      AND statut = 'A'
+                      AND denomination != '[ND]'
+                      AND denomination IS NOT NULL
+                      AND siren != ALL(%s)
+                    """,
+                    (dept, naf_prefix, list(tried_sirens)),
+                )
+                count_row = await cur.fetchone()
+                pool_size = count_row["count"] if count_row else 0
+
+                if pool_size == 0:
+                    rows = []
+                else:
+                    # Step 2: pick a random offset within the pool
+                    import random as _random
+                    offset = _random.randint(0, max(0, pool_size - count))
+                    await cur.execute(
+                        """
+                        SELECT siren, denomination, naf_code, departement,
+                               code_postal, ville, adresse, statut
+                        FROM companies
+                        WHERE departement = %s
+                          AND naf_code LIKE %s
+                          AND statut = 'A'
+                          AND denomination != '[ND]'
+                          AND denomination IS NOT NULL
+                          AND siren != ALL(%s)
+                        OFFSET %s
+                        LIMIT %s
+                        """,
+                        (dept, naf_prefix, list(tried_sirens), offset, count),
+                    )
+                    rows = await cur.fetchall()
+
+        return [
+            Company(
+                siren=row["siren"],
+                denomination=row["denomination"],
+                naf_code=row["naf_code"],
+                departement=row["departement"],
+                code_postal=row.get("code_postal"),
+                ville=row.get("ville"),
+                adresse=row.get("adresse"),
+            )
+            for row in rows
+        ]
+    except Exception as exc:
+        log.warning("enricher.backfill_query_error", error=str(exc))
+        return []
+

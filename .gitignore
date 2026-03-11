@@ -1,0 +1,43 @@
+# Data files (large, generated)
+data/
+fortress/data/
+*.parquet
+*.csv.gz
+*.zip
+
+# Root-level CSVs (batch outputs go in fortress/data/outputs/)
+/*.csv
+
+# Maps debug screenshots
+maps_debug_*.png
+maps_v2_*.png
+
+# Docker (removed — using native Postgres)
+docker-compose*.yml
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,71 @@
+[project]
+name = "fortress"
+version = "0.1.0"
+description = "Zero-Cost French B2B Extraction Engine"
+requires-python = ">=3.11"
+dependencies = [
+    # Database
+    "psycopg[binary]>=3.1",
+    "psycopg_pool>=3.2",
+    # Data processing
+    "polars>=1.0",
+    "duckdb>=1.0",
+    # HTTP clients
+    "curl_cffi>=0.14",
+    "httpx[http2]>=0.28",
+    # Browser automation (Google Maps fallback)
+    "nodriver>=0.48",
+    # Models & validation
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    # Fuzzy matching
+    "rapidfuzz>=3.0",
+    # UI
+    "streamlit>=1.30",
+    # Logging
+    "structlog>=24.0",
+    # Utilities
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-mock>=3.0",
+    "pytest-httpserver>=1.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+stealth = [
+    # Camoufox fallback — install separately if needed
+    "camoufox[geoip]>=0.4",
+]
+
+[project.scripts]
+fortress = "fortress.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fortress*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
