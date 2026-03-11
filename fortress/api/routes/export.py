@@ -52,28 +52,35 @@ async def _fetch_export_data(query_id: str) -> list[dict]:
         return []
 
     return await fetch_all("""
+        WITH best_contact AS (
+            SELECT DISTINCT ON (c2.siren)
+                c2.siren,
+                c2.phone, c2.email, c2.website,
+                c2.address, c2.maps_url,
+                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                c2.rating, c2.review_count, c2.source AS contact_source
+            FROM contacts c2
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)
+            ORDER BY c2.siren,
+                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+        )
         SELECT
             co.siren, co.siret_siege, co.denomination,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.statut, co.date_creation,
             co.tranche_effectif,
-            ct.phone, ct.email, ct.website,
-            ct.address, ct.maps_url,
-            ct.social_linkedin, ct.social_facebook, ct.social_twitter,
-            ct.rating, ct.review_count, ct.source AS contact_source
+            bc.phone, bc.email, bc.website,
+            bc.address, bc.maps_url,
+            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+            bc.rating, bc.review_count, bc.contact_source
         FROM (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
-        LEFT JOIN LATERAL (
-            SELECT * FROM contacts c2
-            WHERE c2.siren = co.siren
-            ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-            LIMIT 1
-        ) ct ON true
+        LEFT JOIN best_contact bc ON bc.siren = co.siren
         ORDER BY co.denomination
-    """, (query_id,))
+    """, (query_id, query_id))
 
 
 # ── MASTER EXPORT (must be declared BEFORE parameterised routes) ──
@@ -87,26 +94,33 @@ async def export_master_csv():
     not the full 14.7M SIRENE table.
     """
     rows = await fetch_all("""
+        WITH best_contact AS (
+            SELECT DISTINCT ON (c2.siren)
+                c2.siren,
+                c2.phone, c2.email, c2.website,
+                c2.address, c2.maps_url,
+                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                c2.rating, c2.review_count, c2.source AS contact_source
+            FROM contacts c2
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM query_tags)
+            ORDER BY c2.siren,
+                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+        )
         SELECT
             co.siren, co.siret_siege, co.denomination,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.statut, co.date_creation,
             co.tranche_effectif,
-            ct.phone, ct.email, ct.website,
-            ct.address, ct.maps_url,
-            ct.social_linkedin, ct.social_facebook, ct.social_twitter,
-            ct.rating, ct.review_count, ct.source AS contact_source
+            bc.phone, bc.email, bc.website,
+            bc.address, bc.maps_url,
+            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+            bc.rating, bc.review_count, bc.contact_source
         FROM (SELECT DISTINCT siren FROM query_tags) qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN LATERAL (
-            SELECT * FROM contacts c2
-            WHERE c2.siren = co.siren
-            ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-            LIMIT 1
-        ) ct ON true
+        LEFT JOIN best_contact bc ON bc.siren = co.siren
         ORDER BY co.denomination
     """)
     if not rows:

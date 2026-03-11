@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     db_user: str = "fortress"
     db_password: str = "fortress_dev"
 
+    # CORS — set FRONTEND_URL env var for production
+    frontend_url: str = "http://localhost:8080"
+
     # Auth — set FORTRESS_API_KEY env var to enable API key protection
     api_key: str = ""
 

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import batch, client, companies, dashboard, departments, export, health, jobs, query
+from fortress.api.routes import batch, client, companies, dashboard, departments, export, health, jobs
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -107,10 +107,10 @@ else:
     logger.info("🔓 API key protection DISABLED (set FORTRESS_API_KEY to enable)")
 
 
-# CORS — allow configured origins
+# CORS — restrict to configured frontend origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not settings.api_key else ["*"],
+    allow_origins=[settings.frontend_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,7 +145,6 @@ app.include_router(companies.router)
 app.include_router(export.router)
 app.include_router(batch.router)
 app.include_router(client.router)
-app.include_router(query.router)
 
 # Serve frontend static files
 _frontend_dir = Path(__file__).parent.parent / "frontend"
