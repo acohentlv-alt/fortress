@@ -89,9 +89,10 @@ class TestTransformRow:
     def _base_row(self) -> dict:
         return {
             "siren": "123456789",
-            "siretSiegeSocial": "12345678900010",
+            "nicSiegeUniteLegale": 10,
             "denominationUniteLegale": "ENTREPRISE TEST SA",
-            "raisonSocialleUniteLegale": None,
+            "nomUniteLegale": None,
+            "prenomUsuelUniteLegale": None,
             "activitePrincipaleUniteLegale": "0121Z",
             "libelleActivitePrincipaleUniteLegale": "Culture de la vigne",
             "categorieJuridiqueUniteLegale": "5710",
@@ -115,18 +116,20 @@ class TestTransformRow:
         assert tranche == "11"
         assert statut == "A"
 
-    def test_missing_denomination_falls_back_to_raison_sociale(self) -> None:
+    def test_missing_denomination_falls_back_to_name_fields(self) -> None:
         row = self._base_row()
         row["denominationUniteLegale"] = None
-        row["raisonSocialleUniteLegale"] = "DUPONT JEAN"
+        row["nomUniteLegale"] = "DUPONT"
+        row["prenomUsuelUniteLegale"] = "JEAN"
         result = transform_row(row)
         assert result is not None
-        assert result[2] == "DUPONT JEAN"
+        assert result[2] == "JEAN DUPONT"
 
     def test_missing_both_denomination_uses_siren_placeholder(self) -> None:
         row = self._base_row()
         row["denominationUniteLegale"] = None
-        row["raisonSocialleUniteLegale"] = None
+        row["nomUniteLegale"] = None
+        row["prenomUsuelUniteLegale"] = None
         result = transform_row(row)
         assert result is not None
         assert "123456789" in result[2]

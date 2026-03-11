@@ -77,8 +77,8 @@ class TestDegradedScenario:
         finally:
             db_mod._pool, db_mod._pool_error = saved_pool, saved_err
 
-    def test_data_endpoint_500_when_offline(self, client):
-        """Data endpoints return 500 (not crash) when pool is None."""
+    def test_data_endpoint_503_when_offline(self, client):
+        """Data endpoints return 503 (not crash) when pool is None."""
         from fortress.api import db as db_mod
         saved_pool, saved_err = db_mod._pool, db_mod._pool_error
         try:
@@ -86,7 +86,7 @@ class TestDegradedScenario:
             db_mod._pool_error = "simulated offline"
 
             resp = client.get("/api/companies/search?q=test&limit=1")
-            assert resp.status_code == 500
+            assert resp.status_code == 503
             print(f"   ✅ Data endpoint: HTTP {resp.status_code} (not crash)")
         finally:
             db_mod._pool, db_mod._pool_error = saved_pool, saved_err

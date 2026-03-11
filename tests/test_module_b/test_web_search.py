@@ -2,15 +2,12 @@
 
 Functions confirmed present in web_search.py:
   - find_website_url(client, denomination, city, *, siren=None) -> str | None
-    Tries Google first, then falls back to SearXNG (local instance).
-    Both engines use client.get().
+    Tries Google primary query, then up to 3 fallback queries.
 
   Internal helpers (also tested directly where useful):
   - _extract_google_url(html) -> str | None
-  - _extract_searxng_url(html, denomination) -> str | None
   - _is_useful_url(url) -> bool
   - _is_plausible_match(url, denomination) -> bool
-  - _clean_url(url) -> str
 """
 from __future__ import annotations
 
@@ -20,7 +17,6 @@ import pytest
 
 from fortress.module_b.web_search import (
     _extract_google_url,
-    _extract_searxng_url,
     _is_plausible_match,
     _is_useful_url,
     find_website_url,
@@ -87,23 +83,6 @@ _GOOGLE_HTML_NO_RESULTS = """
 <html><body><p>Aucun résultat trouvé.</p></body></html>
 """
 
-# SearXNG HTML snippet — result with url_header class
-_SEARXNG_HTML_WITH_RESULT = """
-<html>
-<body>
-<div class="result">
-  <a href="https://www.dupont-vins.fr" class="url_header" rel="noreferrer">
-    https://www.dupont-vins.fr
-  </a>
-</div>
-</body>
-</html>
-"""
-
-# SearXNG HTML snippet — no results
-_SEARXNG_HTML_NO_RESULTS = """
-<html><body><p>No results.</p></body></html>
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -148,35 +127,35 @@ async def test_find_website_url_google_direct_href(mock_curl_client):
 
 
 @pytest.mark.asyncio
-async def test_find_website_url_google_blocked_falls_back_to_searxng(mock_curl_client):
-    """When Google returns 429 (blocked), falls back to SearXNG."""
+async def test_find_website_url_google_blocked_tries_fallbacks(mock_curl_client):
+    """When primary Google returns 429, fallback queries are attempted."""
     mock_curl_client.get = AsyncMock(side_effect=[
-        _make_response(429, "Too Many Requests"),  # Google
-        _make_response(200, _SEARXNG_HTML_WITH_RESULT),  # SearXNG
+        _make_response(429, "Too Many Requests"),  # primary Google
+        _make_response(200, _GOOGLE_HTML_WITH_RESULT),  # fallback 1: Google
     ])
 
     result = await find_website_url(
         mock_curl_client,
-        denomination="Dupont Vins SARL",
+        denomination="Dupont Domaine SARL",
         city="Maury",
     )
 
     assert result is not None
-    assert "dupont-vins.fr" in result
+    assert "dupont-domaine.fr" in result
     assert mock_curl_client.get.call_count == 2
 
 
 @pytest.mark.asyncio
-async def test_find_website_url_google_403_falls_back_to_searxng(mock_curl_client):
-    """When Google returns 403 (blocked), falls back to SearXNG."""
+async def test_find_website_url_google_403_tries_fallbacks(mock_curl_client):
+    """When primary Google returns 403, fallback queries are attempted."""
     mock_curl_client.get = AsyncMock(side_effect=[
-        _make_response(403, "Forbidden"),  # Google
-        _make_response(200, _SEARXNG_HTML_WITH_RESULT),  # SearXNG
+        _make_response(403, "Forbidden"),  # primary Google
+        _make_response(200, _GOOGLE_HTML_WITH_RESULT),  # fallback 1
     ])
 
     result = await find_website_url(
         mock_curl_client,
-        denomination="Dupont Vins SARL",
+        denomination="Dupont Domaine SARL",
         city="Maury",
     )
 
@@ -190,14 +169,10 @@ async def test_find_website_url_filters_aggregators(mock_curl_client):
     Fallback queries are also tried but return nothing — result is None.
     """
     _empty = _make_response(200, _GOOGLE_HTML_NO_RESULTS)
-    _empty_searxng = _make_response(200, _SEARXNG_HTML_NO_RESULTS)
     mock_curl_client.get = AsyncMock(side_effect=[
-        _make_response(200, _GOOGLE_HTML_ONLY_AGGREGATORS),  # primary: Google (aggregators filtered)
-        _make_response(200, _SEARXNG_HTML_NO_RESULTS),       # primary: SearXNG → nothing
-        _empty,                                               # fallback 1: Google → nothing
-        _empty_searxng,                                       # fallback 1: SearXNG → nothing
-        _empty,                                               # fallback 2: Google → nothing
-        _empty_searxng,                                       # fallback 2: SearXNG → nothing
+        _make_response(200, _GOOGLE_HTML_ONLY_AGGREGATORS),  # primary: aggregators filtered
+        _empty,                                               # fallback 1: nothing
+        _empty,                                               # fallback 2: nothing
     ])
 
     result = await find_website_url(
@@ -206,22 +181,17 @@ async def test_find_website_url_filters_aggregators(mock_curl_client):
         city="Perpignan",
     )
 
-    # All queries returned nothing — result is None
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_find_website_url_no_results(mock_curl_client):
-    """Both search engines return empty results for all queries — returns None."""
+    """All Google queries return empty results — returns None."""
     _empty = _make_response(200, _GOOGLE_HTML_NO_RESULTS)
-    _empty_searxng = _make_response(200, _SEARXNG_HTML_NO_RESULTS)
     mock_curl_client.get = AsyncMock(side_effect=[
-        _empty,        # primary: Google → nothing
-        _empty_searxng,  # primary: SearXNG → nothing
-        _empty,        # fallback 1: Google → nothing
-        _empty_searxng,  # fallback 1: SearXNG → nothing
-        _empty,        # fallback 2: Google → nothing
-        _empty_searxng,  # fallback 2: SearXNG → nothing
+        _empty,  # primary Google
+        _empty,  # fallback 1
+        _empty,  # fallback 2
     ])
 
     result = await find_website_url(
@@ -234,20 +204,19 @@ async def test_find_website_url_no_results(mock_curl_client):
 
 
 @pytest.mark.asyncio
-async def test_find_website_url_google_non200_falls_back(mock_curl_client):
-    """Google 500 error causes fallback to SearXNG."""
+async def test_find_website_url_google_non200_tries_fallback(mock_curl_client):
+    """Google 500 error on primary causes fallback queries to be tried."""
     mock_curl_client.get = AsyncMock(side_effect=[
-        _make_response(500, "Server Error"),  # Google
-        _make_response(200, _SEARXNG_HTML_WITH_RESULT),  # SearXNG
+        _make_response(500, "Server Error"),  # primary Google
+        _make_response(200, _GOOGLE_HTML_WITH_RESULT),  # fallback 1
     ])
 
     result = await find_website_url(
         mock_curl_client,
-        denomination="Dupont Vins SARL",
+        denomination="Dupont Domaine SARL",
         city="Maury",
     )
 
-    # SearXNG result is returned
     assert result is not None
 
 
@@ -270,22 +239,21 @@ async def test_find_website_url_passes_siren_to_logger(mock_curl_client):
 
 
 @pytest.mark.asyncio
-async def test_find_website_url_curl_client_error_falls_back(mock_curl_client):
-    """CurlClientError from Google causes SearXNG fallback (not a crash)."""
+async def test_find_website_url_curl_client_error_tries_fallback(mock_curl_client):
+    """CurlClientError from primary Google triggers fallback queries (not a crash)."""
     from fortress.module_c.curl_client import CurlClientError
 
     mock_curl_client.get = AsyncMock(side_effect=[
-        CurlClientError("https://google.com/search", 429),  # Google raises
-        _make_response(200, _SEARXNG_HTML_WITH_RESULT),  # SearXNG succeeds
+        CurlClientError("https://google.com/search", 429),  # primary raises
+        _make_response(200, _GOOGLE_HTML_WITH_RESULT),  # fallback 1 succeeds
     ])
 
     result = await find_website_url(
         mock_curl_client,
-        denomination="Dupont Vins SARL",
+        denomination="Dupont Domaine SARL",
         city="Maury",
     )
 
-    # Should fall back to SearXNG and return a result
     assert result is not None
 
 
@@ -315,23 +283,6 @@ def test_extract_google_url_none_when_empty():
 def test_extract_google_url_skips_aggregators():
     """Filters out societe.com and pappers.fr."""
     result = _extract_google_url(_GOOGLE_HTML_ONLY_AGGREGATORS)
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
-# _extract_searxng_url — unit tests for the SearXNG HTML parser
-# ---------------------------------------------------------------------------
-
-
-def test_extract_searxng_url_success():
-    """Parses SearXNG url_header class link."""
-    result = _extract_searxng_url(_SEARXNG_HTML_WITH_RESULT, "Dupont Vins SARL")
-    assert result == "https://www.dupont-vins.fr"
-
-
-def test_extract_searxng_url_none_when_empty():
-    """Returns None when no url_header links found."""
-    result = _extract_searxng_url(_SEARXNG_HTML_NO_RESULTS, "Entreprise Test")
     assert result is None
 
 
