@@ -37,6 +37,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+import time
 from urllib.parse import urlparse
 
 import structlog
@@ -263,6 +264,7 @@ async def enrich_companies(
     maps_scraper: Any | None = None,
     on_progress: Any | None = None,
     on_save: Any | None = None,
+    query_id: str = "",
 ) -> tuple[list[Contact], int]:
     """Qualify-or-replace enrichment pipeline.
 
@@ -329,6 +331,24 @@ async def enrich_companies(
     # INPI client was removed during architecture consolidation (2026-03-11).
     # To re-enable: implement INPI client, set INPI_USERNAME/INPI_PASSWORD in .env.
 
+    # ── Pre-fetch replacement pool (one bulk query instead of per-company) ──
+    replacement_pool: deque[Company] = deque()
+    if naf_prefix and dept:
+        try:
+            prefetch_count = target_count * 3  # 3× safety margin
+            bulk_replacements = await _fetch_replacement_companies(
+                pool, tried_sirens, reference_company, prefetch_count,
+            )
+            replacement_pool = deque(bulk_replacements)
+            log.info(
+                "enricher.replacement_pool_prefetched",
+                count=len(replacement_pool),
+                naf_prefix=naf_prefix,
+                dept=dept,
+            )
+        except Exception as exc:
+            log.debug("enricher.replacement_pool_error", error=str(exc))
+
     # ── Qualify-or-Replace loop ────────────────────────────────────────────
     source_counts: Counter[str] = Counter()
     source_phone: Counter[str] = Counter()
@@ -338,6 +358,7 @@ async def enrich_companies(
 
     while len(contacts) < target_count and candidates and len(tried_sirens) < max_attempts:
         company = candidates.popleft()
+        _t0 = time.monotonic()
 
         try:
             result = await _enrich_one(
@@ -352,13 +373,16 @@ async def enrich_companies(
                 error=str(exc),
             )
             source_counts["error"] += 1
-            # Error → replace this company
-            replacement = await _fetch_replacement_companies(
-                pool, tried_sirens, reference_company, 1,
+            # Error → replace from pre-fetched pool
+            if replacement_pool:
+                repl = replacement_pool.popleft()
+                tried_sirens.add(repl.siren)
+                candidates.append(repl)
+            # Log for admin
+            await _log_enrichment(
+                pool, query_id, company, "failed", None, None, None, 0, None,
+                int((time.monotonic() - _t0) * 1000),
             )
-            if replacement:
-                tried_sirens.add(replacement[0].siren)
-                candidates.append(replacement[0])
             continue
 
         contact, source_label, match_confidence = result
@@ -382,21 +406,24 @@ async def enrich_companies(
                 qualified_so_far=len(contacts),
                 target=target_count,
             )
-            # Fetch 1 replacement
-            replacement = await _fetch_replacement_companies(
-                pool, tried_sirens, reference_company, 1,
-            )
-            if replacement:
-                tried_sirens.add(replacement[0].siren)
-                candidates.append(replacement[0])
+            # Pop replacement from pre-fetched pool (instant, no DB query)
+            if replacement_pool:
+                repl = replacement_pool.popleft()
+                tried_sirens.add(repl.siren)
+                candidates.append(repl)
                 log.debug(
                     "enricher.replacement_fetched",
-                    new_siren=replacement[0].siren,
-                    new_name=replacement[0].denomination,
+                    new_siren=repl.siren,
+                    new_name=repl.denomination,
                 )
             # Notify runner of incremental progress
             if on_progress:
                 await on_progress(len(tried_sirens), replaced_count)
+            # Log for admin
+            await _log_enrichment(
+                pool, query_id, company, "replaced", match_confidence, None, None, 0, reason,
+                int((time.monotonic() - _t0) * 1000),
+            )
             continue
 
         # ── Qualified → add to output + persist immediately ───────────
@@ -421,6 +448,14 @@ async def enrich_companies(
         # Notify runner of incremental progress
         if on_progress:
             await on_progress(len(tried_sirens), replaced_count)
+
+        # Log for admin
+        await _log_enrichment(
+            pool, query_id, company, "qualified", match_confidence,
+            contact.phone, contact.website,
+            1 if contact.email else 0, None,
+            int((time.monotonic() - _t0) * 1000),
+        )
 
     # ── Persist rejected SIRENs ────────────────────────────────────────────
     if rejected_batch and naf_prefix and dept:
@@ -651,24 +686,9 @@ async def _enrich_one(
                 pages=pages_visited,
             )
 
-        # ── Fallback: Playwright (ONLY if curl got nothing AND it wasn't DNS/SSL) ─
-        if not curl_success and not curl_infra_failure and maps_scraper is not None:
-            try:
-                crawl_result = await maps_scraper.crawl_url(
-                    maps_website,
-                    siren=siren,
-                )
-                log.debug(
-                    "enricher.playwright_crawl_fallback",
-                    siren=siren, url=maps_website,
-                    emails=len(crawl_result.get("emails", [])),
-                )
-            except Exception as exc:
-                log.debug(
-                    "enricher.playwright_crawl_error",
-                    siren=siren, url=maps_website,
-                    error=str(exc),
-                )
+        # Playwright website crawl fallback removed (2026-03-11).
+        # curl_cffi handles 99%+ of company websites; Playwright fallback
+        # added ~10-15s per attempt with <1% data gain.
 
         raw_emails: list[str] = crawl_result.get("emails", [])
         clean_emails = [e for e in raw_emails if not is_junk_email(e)]
@@ -735,6 +755,36 @@ async def _enrich_one(
 # ---------------------------------------------------------------------------
 # Backfill helper
 # ---------------------------------------------------------------------------
+
+async def _log_enrichment(
+    pool: Any,
+    query_id: str,
+    company: Any,
+    outcome: str,
+    maps_method: str | None,
+    maps_phone: str | None,
+    maps_website: str | None,
+    emails_found: int,
+    replace_reason: str | None,
+    time_ms: int,
+) -> None:
+    """Insert one row into enrichment_log (admin diagnostic, non-blocking)."""
+    try:
+        async with pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO enrichment_log
+                   (query_id, siren, denomination, outcome, maps_method,
+                    maps_phone, maps_website, crawl_method, emails_found,
+                    replace_reason, time_ms)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (query_id, company.siren, company.denomination, outcome,
+                 maps_method, maps_phone, maps_website, None, emails_found,
+                 replace_reason, time_ms),
+            )
+            await conn.commit()
+    except Exception:
+        pass  # Non-blocking — never crash the pipeline for logging
+
 
 async def _fetch_replacement_companies(
     pool: Any,

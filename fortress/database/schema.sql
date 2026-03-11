@@ -210,3 +210,26 @@ CREATE INDEX IF NOT EXISTS idx_client_sirens_client ON client_sirens (client_id)
 
 -- Add triage_blue column to scrape_jobs if not present
 ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS triage_blue INTEGER DEFAULT 0;
+
+-- ---------------------------------------------------------------------------
+-- Enrichment log — per-company outcome tracking (admin diagnostic tool)
+-- Records what happened to every company the engine processed.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS enrichment_log (
+    id              SERIAL          PRIMARY KEY,
+    query_id        VARCHAR(100)    NOT NULL,
+    siren           VARCHAR(9)      NOT NULL,
+    denomination    TEXT,
+    outcome         VARCHAR(20)     NOT NULL,       -- qualified, replaced, failed
+    maps_method     VARCHAR(30),                    -- direct_hit, click_result, no_result, geographic, false_positive
+    maps_phone      TEXT,
+    maps_website    TEXT,
+    crawl_method    VARCHAR(30),                    -- curl, skipped, infra_error
+    emails_found    INT             DEFAULT 0,
+    replace_reason  VARCHAR(30),                    -- no_maps_data, low_confidence, null
+    time_ms         INT,
+    created_at      TIMESTAMPTZ     DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_enrichment_log_query ON enrichment_log(query_id);

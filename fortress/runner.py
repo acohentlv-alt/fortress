@@ -394,6 +394,7 @@ async def run(query_id: str) -> None:
                                 maps_scraper=maps_scraper,
                                 on_progress=_on_progress,
                                 on_save=on_save,
+                                query_id=query_id,
                             )
                             wave_counter += 1
                             total_replaced = replaced
