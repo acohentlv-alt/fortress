@@ -138,9 +138,15 @@ class CurlClient:
         self,
         timeout: float | None = None,
         max_retries: int | None = None,
+        delay_min: float | None = None,
+        delay_max: float | None = None,
+        delay_jitter: float | None = None,
     ) -> None:
         self._timeout = timeout or float(settings.request_timeout)
         self._max_retries = max_retries if max_retries is not None else settings.max_retries
+        self._delay_min = delay_min if delay_min is not None else settings.delay_between_requests_min
+        self._delay_max = delay_max if delay_max is not None else settings.delay_between_requests_max
+        self._delay_jitter = delay_jitter if delay_jitter is not None else settings.delay_jitter
         self._session: AsyncSession | None = None
         self._last_request_at: float = 0.0
 
@@ -176,11 +182,7 @@ class CurlClient:
 
     async def _enforce_rate_limit(self) -> None:
         """Sleep if the minimum inter-request delay has not yet elapsed."""
-        min_delay = settings.delay_between_requests_min
-        max_delay = settings.delay_between_requests_max
-        jitter = settings.delay_jitter
-
-        desired_delay = random.uniform(min_delay, max_delay) + random.uniform(0, jitter)
+        desired_delay = random.uniform(self._delay_min, self._delay_max) + random.uniform(0, self._delay_jitter)
         elapsed = time.monotonic() - self._last_request_at
         sleep_for = desired_delay - elapsed
         if sleep_for > 0:

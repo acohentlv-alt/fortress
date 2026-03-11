@@ -38,13 +38,14 @@ from fortress.module_d.deduplicator import (
 )
 from fortress.module_d.seen_set import SeenSet
 from fortress.module_e import card_formatter as cf
-from fortress.module_e import master_file as mf
+
 from fortress.module_e import query_file as qf
 
 log = structlog.get_logger(__name__)
 
-# Type alias for the pluggable enrichment function
-EnrichFn = Callable[[list[Company]], Awaitable[list[Contact]]]
+# Type alias for the pluggable enrichment function.
+# The enrich_fn now accepts an on_save callback for per-company DB persistence.
+EnrichFn = Callable[..., Awaitable[list[Contact]]]
 
 
 async def run_query(
@@ -55,8 +56,8 @@ async def run_query(
     pool: Any,  # psycopg_pool.AsyncConnectionPool
     *,
     wave_size: int = 50,
-    delay_min: float = 30.0,
-    delay_max: float = 90.0,
+    delay_min: float = 5.0,
+    delay_max: float = 15.0,
     resume: bool = True,
 ) -> None:
     """Execute the full pipeline for one query.
@@ -138,11 +139,49 @@ async def run_query(
             query=query_name,
         )
 
+        # --- Per-company save callback ---
+        # Each company+contact is persisted to DB the instant enrichment
+        # qualifies it.  This eliminates the "data vaporization" bug where
+        # a wave timeout discarded an entire batch of already-scraped data.
+        saved_contacts: list[Contact] = []
+        saved_companies: set[str] = set()  # SIRENs already upserted via on_save
+
+        async def _on_save(company: Company, contact: Contact) -> None:
+            """Persist one company+contact immediately after qualification."""
+            async with pool.connection() as save_conn:
+                await upsert_company(save_conn, company)
+                await bulk_tag_query(save_conn, [company.siren], query_name)
+                await upsert_contact(save_conn, contact)
+                await log_audit(
+                    save_conn,
+                    query_id=query_id,
+                    siren=contact.siren,
+                    action=_source_to_action(contact.source.value),
+                    result="success",
+                    source_url=contact.website,
+                    duration_ms=None,
+                )
+                # Tag replacement companies (SIREN differs from wave list)
+                if company.siren not in {co.siren for co in wave_companies}:
+                    await bulk_tag_query(save_conn, [company.siren], query_name)
+            saved_contacts.append(contact)
+            saved_companies.add(company.siren)
+            seen_set.mark_seen(company.model_dump())
+            log.debug(
+                "batch.company_saved",
+                siren=company.siren,
+                wave=wave_num,
+                saved_so_far=len(saved_contacts),
+                query=query_name,
+            )
+
         # --- Enrich (with 5-minute safety cap per wave) ---
+        # 50 companies × ~4s each (Maps + curl crawl) = ~200s typical.
+        # 300s gives 50% headroom for slow websites and rate-limit backoff.
         t0 = datetime.now(tz=timezone.utc)
         try:
             contacts = await asyncio.wait_for(
-                enrich_fn(wave_companies),
+                enrich_fn(wave_companies, on_save=_on_save),
                 timeout=300,  # 5 minutes max per wave
             )
         except asyncio.TimeoutError:
@@ -152,49 +191,24 @@ async def run_query(
                 query=query_name,
                 companies=len(wave_companies),
                 timeout_seconds=300,
+                saved_before_timeout=len(saved_contacts),
             )
-            contacts = []
+            contacts = saved_contacts  # Use what was already persisted
         elapsed_ms = int(
             (datetime.now(tz=timezone.utc) - t0).total_seconds() * 1000
         )
 
-        # --- Dedup into PostgreSQL ---
+        # --- Dedup remaining companies into PostgreSQL ---
+        # Companies that weren't saved via on_save (e.g. non-qualified ones)
+        # still need to be upserted + tagged so triage works on next run.
         wave_results: list[dict[str, Any]] = []
         contacts_by_siren: dict[str, Contact] = {c.siren: c for c in contacts}
         async with pool.connection() as conn:
             for company in wave_companies:
-                await upsert_company(conn, company)
-                await bulk_tag_query(conn, [company.siren], query_name)
-                seen_set.mark_seen(company.model_dump())
-
-            for contact in contacts:
-                await upsert_contact(conn, contact)
-
-                # Audit log — one entry per enriched contact
-                await log_audit(
-                    conn,
-                    query_id=query_id,
-                    siren=contact.siren,
-                    action=_source_to_action(contact.source.value),
-                    result="success",
-                    source_url=contact.website,
-                    duration_ms=None,
-                )
-
-            # Tag replacement companies that the enricher swapped in.
-            # Their SIRENs differ from the wave companies, so without this
-            # they'd have contacts but no query_tags entry → gauge mismatch.
-            replacement_sirens = [
-                c.siren for c in contacts
-                if c.siren not in {co.siren for co in wave_companies}
-            ]
-            if replacement_sirens:
-                await bulk_tag_query(conn, replacement_sirens, query_name)
-                log.debug(
-                    "batch.replacements_tagged",
-                    count=len(replacement_sirens),
-                    query=query_name,
-                )
+                if company.siren not in saved_companies:
+                    await upsert_company(conn, company)
+                    await bulk_tag_query(conn, [company.siren], query_name)
+                    seen_set.mark_seen(company.model_dump())
 
             # Build wave result records for checkpoint
             wave_results = [c.model_dump() for c in wave_companies]
@@ -215,7 +229,7 @@ async def run_query(
             wave_cards.append(card)
         try:
             qf.append_wave(query_id, wave_cards)
-            mf.append_records(wave_cards)
+
             log.debug(
                 "batch.jsonl_written",
                 wave=wave_num,

@@ -48,7 +48,7 @@ from fortress.module_b.web_search import (
     _is_individual_operator,
     is_directory_url,
 )
-from fortress.module_c.curl_client import CurlClient
+from fortress.module_c.curl_client import CurlClient, CurlClientError
 
 log = structlog.get_logger()
 
@@ -262,6 +262,7 @@ async def enrich_companies(
     curl_client: CurlClient,
     maps_scraper: Any | None = None,
     on_progress: Any | None = None,
+    on_save: Any | None = None,
 ) -> tuple[list[Contact], int]:
     """Qualify-or-replace enrichment pipeline.
 
@@ -398,12 +399,24 @@ async def enrich_companies(
                 await on_progress(len(tried_sirens), replaced_count)
             continue
 
-        # ── Qualified → add to output ─────────────────────────────────
+        # ── Qualified → add to output + persist immediately ───────────
         contacts.append(contact)
         if contact.phone:
             source_phone[source_label] += 1
         if contact.email:
             source_email[source_label] += 1
+
+        # Real-time save: persist this company+contact to DB immediately
+        # so data survives even if the wave is interrupted.
+        if on_save:
+            try:
+                await on_save(company, contact)
+            except Exception as save_exc:
+                log.warning(
+                    "enricher.on_save_error",
+                    siren=company.siren,
+                    error=str(save_exc),
+                )
 
         # Notify runner of incremental progress
         if on_progress:
@@ -551,26 +564,105 @@ async def _enrich_one(
             reason="Maps scraper not available — primary data source missing",
         )
 
-    # ── Step 2: Website crawl via Playwright (same browser as Maps) ─────
-    # Uses the real browser to visit company websites, solving the problem
-    # where curl_cffi gets blocked/timeout on sites that work fine in Chrome.
+    # ── Step 2: Website crawl ─────────────────────────────────────────
+    # Primary: curl_cffi (1 retry only — dead sites shouldn't waste time).
+    # Crawls homepage AND /contact page for better email extraction.
+    # Fallback: Playwright only if curl got a response but found nothing
+    #           (NOT for DNS/SSL failures — those won't work in Playwright either).
     crawl_result: dict[str, Any] = {}
     best_email: str | None = None
     social: dict[str, str] = {}
 
-    if maps_website and maps_scraper is not None:
+    if maps_website:
+        from fortress.module_b.contact_parser import (
+            extract_emails as _extract_emails,
+            extract_phones as _extract_phones,
+            extract_social_links as _extract_social,
+        )
+        from urllib.parse import urlparse as _urlparse
+
+        # ── Primary: curl_cffi (homepage + /contact page) ────────────
+        curl_success = False
+        curl_infra_failure = False  # DNS/SSL = don't bother with Playwright
+        all_emails: list[str] = []
+        all_phones: list[str] = []
+        all_social: dict[str, str] = {}
+
+        # Ensure clean root URL
         try:
-            crawl_result = await maps_scraper.crawl_url(
-                maps_website,
-                siren=siren,
-            )
-        except Exception as exc:
+            _parsed = _urlparse(maps_website)
+            root_url = f"{_parsed.scheme}://{_parsed.netloc}"
+        except Exception:
+            root_url = maps_website
+
+        # Crawl homepage + /contact (2 pages max)
+        pages_to_crawl = [root_url, f"{root_url}/contact"]
+        pages_visited = 0
+
+        curl_crawl = CurlClient(timeout=8.0, max_retries=1, delay_min=0.3, delay_max=0.5, delay_jitter=0.0)
+        try:
+            for page_url in pages_to_crawl:
+                try:
+                    resp = await curl_crawl.get(page_url)
+                    if resp.status_code == 200 and len(resp.text) > 500:
+                        all_emails.extend(_extract_emails(resp.text))
+                        all_phones.extend(_extract_phones(resp.text))
+                        page_social = _extract_social(resp.text)
+                        all_social.update(page_social)
+                        pages_visited += 1
+                except CurlClientError as exc:
+                    # DNS or SSL failure — Playwright won't help either
+                    err_str = str(exc).lower()
+                    if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
+                        curl_infra_failure = True
+                        log.debug(
+                            "enricher.curl_infra_failure",
+                            siren=siren, url=page_url, error=str(exc),
+                        )
+                        break  # Don't try /contact if homepage DNS failed
+                except Exception as exc:
+                    log.debug(
+                        "enricher.curl_crawl_error",
+                        siren=siren, url=page_url, error=str(exc),
+                    )
+        finally:
+            await curl_crawl.close()
+
+        if pages_visited > 0:
+            # Deduplicate
+            crawl_result = {
+                "emails": list(set(all_emails)),
+                "phones": list(set(all_phones)),
+                "social": all_social,
+                "pages_visited": pages_visited,
+            }
+            curl_success = True
             log.debug(
-                "enricher_crawl_error",
-                siren=siren,
-                url=maps_website,
-                error=str(exc),
+                "enricher.curl_crawl_ok",
+                siren=siren, url=maps_website,
+                emails=len(crawl_result["emails"]),
+                phones=len(crawl_result["phones"]),
+                pages=pages_visited,
             )
+
+        # ── Fallback: Playwright (ONLY if curl got nothing AND it wasn't DNS/SSL) ─
+        if not curl_success and not curl_infra_failure and maps_scraper is not None:
+            try:
+                crawl_result = await maps_scraper.crawl_url(
+                    maps_website,
+                    siren=siren,
+                )
+                log.debug(
+                    "enricher.playwright_crawl_fallback",
+                    siren=siren, url=maps_website,
+                    emails=len(crawl_result.get("emails", [])),
+                )
+            except Exception as exc:
+                log.debug(
+                    "enricher.playwright_crawl_error",
+                    siren=siren, url=maps_website,
+                    error=str(exc),
+                )
 
         raw_emails: list[str] = crawl_result.get("emails", [])
         clean_emails = [e for e in raw_emails if not is_junk_email(e)]

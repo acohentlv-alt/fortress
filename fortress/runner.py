@@ -1,5 +1,10 @@
 """Background runner — launched as subprocess by the UI.
 
+# Ensure Chrome/Playwright can create temp dirs on macOS.
+# Must be set BEFORE any imports that touch tempfile.
+import os as _os
+_os.environ.setdefault("TMPDIR", "/tmp")
+
 Usage:
     python -m fortress.runner <query_id>
 
@@ -367,7 +372,7 @@ async def run(query_id: str) -> None:
 
                     async with CurlClient() as curl_client:
 
-                        async def enrich_fn(companies):  # noqa: ANN001, ANN202
+                        async def enrich_fn(companies, on_save=None):  # noqa: ANN001, ANN202
                             nonlocal wave_counter, companies_scraped, total_replaced
 
                             async def _on_progress(tried: int, replaced: int) -> None:
@@ -388,6 +393,7 @@ async def run(query_id: str) -> None:
                                 curl_client=curl_client,
                                 maps_scraper=maps_scraper,
                                 on_progress=_on_progress,
+                                on_save=on_save,
                             )
                             wave_counter += 1
                             total_replaced = replaced
