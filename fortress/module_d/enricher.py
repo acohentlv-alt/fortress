@@ -380,12 +380,12 @@ async def enrich_companies(
                 candidates.append(repl)
             # Log for admin
             await _log_enrichment(
-                pool, query_id, company, "failed", None, None, None, 0, None,
+                pool, query_id, company, "failed", None, None, None, None, 0, None,
                 int((time.monotonic() - _t0) * 1000),
             )
             continue
 
-        contact, source_label, match_confidence = result
+        contact, source_label, match_confidence, maps_name = result
         source_counts[source_label] += 1
 
         # ── Qualification decision ────────────────────────────────────
@@ -421,7 +421,7 @@ async def enrich_companies(
                 await on_progress(len(tried_sirens), replaced_count)
             # Log for admin
             await _log_enrichment(
-                pool, query_id, company, "replaced", match_confidence, None, None, 0, reason,
+                pool, query_id, company, "replaced", match_confidence, None, None, maps_name, 0, reason,
                 int((time.monotonic() - _t0) * 1000),
             )
             continue
@@ -452,7 +452,7 @@ async def enrich_companies(
         # Log for admin
         await _log_enrichment(
             pool, query_id, company, "qualified", match_confidence,
-            contact.phone, contact.website,
+            contact.phone, contact.website, maps_name,
             1 if contact.email else 0, None,
             int((time.monotonic() - _t0) * 1000),
         )
@@ -504,13 +504,13 @@ async def _enrich_one(
     *,
     curl_client: CurlClient,
     maps_scraper: Any | None = None,
-) -> tuple[Contact | None, str, str]:
+) -> tuple[Contact | None, str, str, str | None]:
     """Enrich a single company: Maps first, then website crawl.
 
     Returns:
-        (Contact | None, source_label, match_confidence).
+        (Contact | None, source_label, match_confidence, maps_name).
         match_confidence is 'high', 'low', or 'none'.
-        Returns (None, "none", "none") when no data was found.
+        Returns (None, "none", "none", None) when no data was found.
     """
     siren = company.siren
     denomination = company.denomination or ""
@@ -557,6 +557,7 @@ async def _enrich_one(
             "enricher.maps_result",
             siren=siren,
             match_confidence=match_confidence,
+            maps_name=maps_result.get("maps_name"),
             maps_phone=maps_result.get("phone"),
             maps_website=maps_result.get("website"),
             maps_address=maps_result.get("address"),
@@ -712,7 +713,7 @@ async def _enrich_one(
 
     if not has_data:
         log.debug("enricher.no_data_found", siren=siren, denomination=denomination)
-        return (None, "none", match_confidence if maps_scraper else "none")
+        return (None, "none", match_confidence if maps_scraper else "none", maps_result.get("maps_name"))
 
     # Source attribution: Maps when phone came from Maps, website_crawl when email came from crawl
     source = ContactSource.GOOGLE_MAPS
@@ -749,6 +750,7 @@ async def _enrich_one(
         ),
         source_label,
         match_confidence if maps_scraper else "none",
+        maps_result.get("maps_name"),
     )
 
 
@@ -764,6 +766,7 @@ async def _log_enrichment(
     maps_method: str | None,
     maps_phone: str | None,
     maps_website: str | None,
+    maps_name: str | None,
     emails_found: int,
     replace_reason: str | None,
     time_ms: int,
@@ -774,12 +777,12 @@ async def _log_enrichment(
             await conn.execute(
                 """INSERT INTO enrichment_log
                    (query_id, siren, denomination, outcome, maps_method,
-                    maps_phone, maps_website, crawl_method, emails_found,
-                    replace_reason, time_ms)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    maps_phone, maps_website, maps_name, crawl_method,
+                    emails_found, replace_reason, time_ms)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (query_id, company.siren, company.denomination, outcome,
-                 maps_method, maps_phone, maps_website, None, emails_found,
-                 replace_reason, time_ms),
+                 maps_method, maps_phone, maps_website, maps_name, None,
+                 emails_found, replace_reason, time_ms),
             )
             await conn.commit()
     except Exception:

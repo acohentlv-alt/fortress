@@ -96,30 +96,49 @@ export function formeJuridiqueBadge(code) {
     return `<span class="badge badge-accent">${label}</span>`;
 }
 
-// ── Contact Indicators ───────────────────────────────────────────
+// ── Contact Indicators (enhanced — shows actual values) ─────────
 export function contactIndicators(contact) {
     if (!contact) contact = {};
+
+    // Truncate long values for card display
+    const truncate = (val, max = 20) => {
+        if (!val) return null;
+        const s = String(val);
+        return s.length > max ? s.slice(0, max) + '…' : s;
+    };
+
+    const phoneDisplay = contact.phone
+        ? `<a href="tel:${escapeHtml(contact.phone)}" onclick="event.stopPropagation()" style="color:var(--success);text-decoration:none">${escapeHtml(contact.phone)}</a>`
+        : '—';
+
+    const emailDisplay = contact.email
+        ? `<a href="mailto:${escapeHtml(contact.email)}" onclick="event.stopPropagation()" style="color:var(--accent-hover);text-decoration:none">${escapeHtml(truncate(contact.email, 24))}</a>`
+        : '—';
+
+    const webDisplay = contact.website
+        ? `<a href="${contact.website.startsWith('http') ? contact.website : 'https://' + contact.website}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--info);text-decoration:none">${escapeHtml(truncate(contact.website, 22))}</a>`
+        : '—';
+
+    // Social icons row
+    const socials = [];
+    if (contact.social_linkedin) socials.push(`<a href="${contact.social_linkedin}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="LinkedIn" style="color:var(--text-muted);text-decoration:none;font-size:14px">🔗</a>`);
+    if (contact.social_facebook) socials.push(`<a href="${contact.social_facebook}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Facebook" style="color:var(--text-muted);text-decoration:none;font-size:14px">📘</a>`);
+    if (contact.maps_url) socials.push(`<a href="${contact.maps_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Google Maps" style="color:var(--text-muted);text-decoration:none;font-size:14px">🗺️</a>`);
+
     return `
         <div class="company-card-contacts">
             <span class="contact-indicator ${contact.phone ? 'has-data' : 'no-data'}" title="Téléphone">
-                📞 ${contact.phone ? 'Oui' : '—'}
+                📞 ${phoneDisplay}
             </span>
             <span class="contact-indicator ${contact.email ? 'has-data' : 'no-data'}" title="Email">
-                ✉️ ${contact.email ? 'Oui' : '—'}
+                ✉️ ${emailDisplay}
             </span>
             <span class="contact-indicator ${contact.website ? 'has-data' : 'no-data'}" title="Site web">
-                🌐 ${contact.website ? 'Oui' : '—'}
+                🌐 ${webDisplay}
             </span>
-            <span class="contact-indicator ${contact.address ? 'has-data' : 'no-data'}" title="Adresse">
-                📍 ${contact.address ? 'Oui' : '—'}
-            </span>
-            <span class="contact-indicator ${contact.rating ? 'has-data' : 'no-data'}" title="Note Google">
-                ⭐ ${contact.rating || '—'}
-            </span>
-            ${contact.maps_url ? `<a href="${contact.maps_url}" target="_blank" rel="noopener" class="contact-indicator has-data" title="Voir sur Google Maps" onclick="event.stopPropagation()" style="text-decoration:none">
-                🗺️ Maps
-            </a>` : ''}
         </div>
+        ${contact.rating ? `<div style="margin-top:var(--space-xs)">${renderStarRating(contact.rating, contact.review_count)}</div>` : ''}
+        ${socials.length > 0 ? `<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-xs)">${socials.join('')}</div>` : ''}
     `;
 }
 
@@ -267,5 +286,164 @@ export function breadcrumb(items) {
         return `<span style="color: var(--text-primary)">${item.label}</span>`;
     }).join('')}
         </nav>
+    `;
+}
+
+// ── Star Rating ──────────────────────────────────────────────────
+// Edge cases: null rating → "—", rating > 5 → capped, 0 reviews → shows "(0 avis)"
+export function renderStarRating(rating, reviewCount) {
+    if (rating === null || rating === undefined) return '<span style="color:var(--text-muted)">—</span>';
+    const r = Math.min(5, Math.max(0, parseFloat(rating) || 0));
+    const full = Math.round(r);
+    const empty = 5 - full;
+    const count = reviewCount != null ? reviewCount : 0;
+    return `
+        <span class="star-rating">
+            <span class="star-rating-value">${r.toFixed(1)}</span>
+            <span class="star-rating-stars">${'★'.repeat(full)}${'☆'.repeat(empty)}</span>
+            <span class="star-rating-count">(${count} avis)</span>
+        </span>
+    `;
+}
+
+// ── Triage Bar ───────────────────────────────────────────────────
+// Edge cases: all zero → empty bar, missing categories → 0, single category → full width
+export function renderTriageBar(triage) {
+    if (!triage) triage = {};
+    const green = triage.green || triage.triage_green || 0;
+    const yellow = triage.yellow || triage.triage_yellow || 0;
+    const red = triage.red || triage.triage_red || 0;
+    const black = triage.black || triage.triage_black || 0;
+    const blue = triage.blue || triage.triage_blue || 0;
+    const total = green + yellow + red + black + blue;
+
+    const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(1) : 0;
+
+    const segments = [
+        { cls: 'green', val: green, label: 'Complet' },
+        { cls: 'yellow', val: yellow, label: 'Partiel' },
+        { cls: 'red', val: red, label: 'Nouveau' },
+        { cls: 'black', val: black, label: 'Blacklisté' },
+        { cls: 'blue', val: blue, label: 'Client' },
+    ].filter(s => s.val > 0);
+
+    return `
+        <div class="triage-bar">
+            ${segments.map(s => `<div class="triage-bar-segment ${s.cls}" style="width:${pct(s.val)}%" title="${s.label}: ${s.val}"></div>`).join('')}
+        </div>
+        <div class="triage-legend">
+            ${segments.map(s => `
+                <span class="triage-legend-item">
+                    <span class="triage-legend-dot ${s.cls}"></span>
+                    ${s.label}: ${s.val}
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
+// ── Pipeline Stage Indicator ─────────────────────────────────────
+// Edge cases: unknown/null stage → all grey (safe default)
+export function renderPipelineStages(activeStage) {
+    const stages = [
+        { id: 'maps', icon: '🗺️', label: 'Maps' },
+        { id: 'crawl', icon: '🌐', label: 'Crawl' },
+        { id: 'save', icon: '💾', label: 'Sauvegarde' },
+    ];
+
+    let foundActive = false;
+    const stageHTML = stages.map((s, i) => {
+        let cls = '';
+        if (s.id === activeStage) {
+            cls = 'active';
+            foundActive = true;
+        } else if (!foundActive && activeStage) {
+            cls = 'completed';
+        }
+        // If activeStage is null/unknown, all stay default (grey)
+
+        const arrow = i < stages.length - 1
+            ? `<span class="pipeline-stage-arrow ${cls === 'completed' ? 'completed' : ''}">→</span>`
+            : '';
+
+        return `
+            <span class="pipeline-stage ${cls}">
+                <span class="pipeline-stage-icon">${s.icon}</span>
+                ${s.label}
+            </span>
+            ${arrow}
+        `;
+    }).join('');
+
+    return `<div class="pipeline-stages">${stageHTML}</div>`;
+}
+
+// ── Animate Counter ──────────────────────────────────────────────
+// Edge cases: overlapping calls → cancels previous, same value → no-op, null → "—"
+const _counterAnimations = new WeakMap();
+
+export function animateCounter(element, targetValue, duration = 600) {
+    if (!element) return;
+
+    // Handle null/undefined
+    if (targetValue === null || targetValue === undefined) {
+        element.textContent = '—';
+        return;
+    }
+
+    const target = parseInt(targetValue) || 0;
+    const current = parseInt(element.textContent) || 0;
+
+    // Same value → no-op
+    if (current === target) return;
+
+    // Cancel any previous animation on this element
+    const prev = _counterAnimations.get(element);
+    if (prev) cancelAnimationFrame(prev);
+
+    const startTime = performance.now();
+    const diff = target - current;
+
+    function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease-out expo
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const value = Math.round(current + diff * eased);
+        element.textContent = value.toLocaleString('fr-FR');
+
+        if (progress < 1) {
+            const id = requestAnimationFrame(step);
+            _counterAnimations.set(element, id);
+        } else {
+            element.textContent = target.toLocaleString('fr-FR');
+            _counterAnimations.delete(element);
+        }
+    }
+
+    const id = requestAnimationFrame(step);
+    _counterAnimations.set(element, id);
+}
+
+// ── Progress Ring (SVG) ──────────────────────────────────────────
+export function renderProgressRing(pct, size = 120, strokeWidth = 6) {
+    const r = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * r;
+    const offset = circumference - (Math.min(100, Math.max(0, pct)) / 100) * circumference;
+
+    return `
+        <div class="progress-ring" style="width:${size}px;height:${size}px">
+            <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <circle class="progress-ring-bg" cx="${size/2}" cy="${size/2}" r="${r}"></circle>
+                <circle class="progress-ring-fill" cx="${size/2}" cy="${size/2}" r="${r}"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}"
+                    id="progress-ring-circle"></circle>
+            </svg>
+            <div class="progress-ring-text">
+                <div class="progress-ring-pct" id="progress-ring-pct">${Math.round(pct)}%</div>
+                <div class="progress-ring-label">Progression</div>
+            </div>
+        </div>
     `;
 }

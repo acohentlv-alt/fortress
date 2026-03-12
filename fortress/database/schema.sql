@@ -225,6 +225,7 @@ CREATE TABLE IF NOT EXISTS enrichment_log (
     maps_method     VARCHAR(30),                    -- direct_hit, click_result, no_result, geographic, false_positive
     maps_phone      TEXT,
     maps_website    TEXT,
+    maps_name       TEXT,                            -- business name from Maps panel h1
     crawl_method    VARCHAR(30),                    -- curl, skipped, infra_error
     emails_found    INT             DEFAULT 0,
     replace_reason  VARCHAR(30),                    -- no_maps_data, low_confidence, null

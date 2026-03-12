@@ -79,6 +79,24 @@
     --transition: 250ms ease;
     --transition-slow: 400ms ease;
 
+    /* ── Motion (centralized durations) ────────────────────── */
+    --duration-fast: 150ms;
+    --duration-standard: 250ms;
+    --duration-slow: 400ms;
+    --duration-counter: 600ms;
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+    /* ── Glass Effect ─────────────────────────────────────── */
+    --glass-bg: rgba(12, 30, 58, 0.7);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-blur: 16px;
+
+    /* ── Gradients ────────────────────────────────────────── */
+    --gradient-accent: linear-gradient(135deg, #2563EB, #7C3AED);
+    --gradient-success: linear-gradient(135deg, #22C55E, #06B6D4);
+    --gradient-warning: linear-gradient(135deg, #F59E0B, #EF4444);
+    --gradient-info: linear-gradient(135deg, #06B6D4, #2563EB);
+
     /* Layout */
     --sidebar-width: 240px;
     --sidebar-collapsed: 64px;
@@ -344,4 +362,54 @@ a:hover { color: var(--accent); }
 
 .breadcrumb-sep {
     color: var(--text-disabled);
+}
+
+/* ── Keyframe Animations ──────────────────────────────────────── */
+@keyframes fadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes countUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes glow-pulse {
+    0%, 100% {
+        box-shadow: 0 0 8px var(--accent-glow);
+    }
+    50% {
+        box-shadow: 0 0 20px var(--accent-glow);
+    }
+}
+
+@keyframes progress-ring-fill {
+    from {
+        stroke-dashoffset: var(--ring-circumference, 283);
+    }
+    to {
+        stroke-dashoffset: var(--ring-target, 0);
+    }
+}
+
+/* ── Reduced Motion ───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }

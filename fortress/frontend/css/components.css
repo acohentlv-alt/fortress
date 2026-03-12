@@ -1475,6 +1475,372 @@
     color: var(--text-primary);
 }
 
+/* ── Glassmorphism Stat Card ───────────────────────────────────── */
+.stat-card-glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    padding: var(--space-lg) var(--space-xl);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.stat-card-glass::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--stat-accent, var(--accent));
+    border-radius: 0 2px 2px 0;
+}
+
+.stat-card-glass:hover {
+    border-color: var(--border-default);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.stat-card-glass .stat-card-value {
+    font-size: var(--font-2xl);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.stat-card-glass .stat-card-label {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stat-card-glass .stat-card-icon {
+    font-size: 1.2rem;
+    margin-bottom: var(--space-sm);
+}
+
+/* ── Progress Ring (SVG circular gauge) ────────────────────────── */
+.progress-ring {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.progress-ring svg {
+    transform: rotate(-90deg);
+}
+
+.progress-ring-bg {
+    fill: none;
+    stroke: var(--border-subtle);
+    stroke-width: 6;
+}
+
+.progress-ring-fill {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 6;
+    stroke-linecap: round;
+    transition: stroke-dashoffset var(--duration-counter) var(--ease-out-expo);
+}
+
+.progress-ring-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+}
+
+.progress-ring-pct {
+    font-size: var(--font-2xl);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+    line-height: 1;
+}
+
+.progress-ring-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+}
+
+/* ── Triage Bar (stacked horizontal segments) ──────────────────── */
+.triage-bar {
+    display: flex;
+    width: 100%;
+    height: 8px;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    background: var(--border-subtle);
+}
+
+.triage-bar-segment {
+    height: 100%;
+    transition: width var(--duration-slow) var(--ease-out-expo);
+    min-width: 0;
+}
+
+.triage-bar-segment.green { background: var(--success); }
+.triage-bar-segment.yellow { background: var(--warning); }
+.triage-bar-segment.red { background: var(--danger); }
+.triage-bar-segment.black { background: var(--text-disabled); }
+.triage-bar-segment.blue { background: var(--info); }
+
+.triage-legend {
+    display: flex;
+    gap: var(--space-lg);
+    margin-top: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.triage-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.triage-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.triage-legend-dot.green { background: var(--success); }
+.triage-legend-dot.yellow { background: var(--warning); }
+.triage-legend-dot.red { background: var(--danger); }
+.triage-legend-dot.black { background: var(--text-disabled); }
+.triage-legend-dot.blue { background: var(--info); }
+
+/* ── Pipeline Stage Indicator ──────────────────────────────────── */
+.pipeline-stages {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: var(--space-md) 0;
+}
+
+.pipeline-stage {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-lg);
+    border-radius: var(--radius-full);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    transition: all var(--duration-standard) ease;
+    white-space: nowrap;
+}
+
+.pipeline-stage.active {
+    color: var(--accent-hover);
+    background: var(--accent-subtle);
+    animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.pipeline-stage.completed {
+    color: var(--success);
+}
+
+.pipeline-stage-icon {
+    font-size: 1rem;
+}
+
+.pipeline-stage-arrow {
+    color: var(--text-disabled);
+    font-size: var(--font-xs);
+    margin: 0 var(--space-xs);
+    flex-shrink: 0;
+}
+
+.pipeline-stage-arrow.completed {
+    color: var(--success);
+}
+
+/* ── Wave Chip ─────────────────────────────────────────────────── */
+.wave-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 4px 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-full);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    position: relative;
+    overflow: hidden;
+}
+
+.wave-chip-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--accent-subtle);
+    transition: width var(--duration-slow) var(--ease-out-expo);
+    border-radius: var(--radius-full);
+}
+
+.wave-chip-text {
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Star Rating ───────────────────────────────────────────────── */
+.star-rating {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-sm);
+}
+
+.star-rating-stars {
+    color: var(--warning);
+    letter-spacing: 1px;
+    font-size: 0.85em;
+}
+
+.star-rating-value {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.star-rating-count {
+    color: var(--text-muted);
+    font-size: var(--font-xs);
+}
+
+/* ── Monitor Card Animation ────────────────────────────────────── */
+.monitor-card-enter {
+    animation: fadeSlideIn var(--duration-slow) var(--ease-out-expo) both;
+}
+
+/* Stagger delay for multiple cards appearing at once */
+.monitor-card-enter:nth-child(1) { animation-delay: 0ms; }
+.monitor-card-enter:nth-child(2) { animation-delay: 60ms; }
+.monitor-card-enter:nth-child(3) { animation-delay: 120ms; }
+.monitor-card-enter:nth-child(4) { animation-delay: 180ms; }
+.monitor-card-enter:nth-child(5) { animation-delay: 240ms; }
+
+/* ── Live Indicator ────────────────────────────────────────────── */
+.live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    color: var(--success);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.live-badge-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: glow-pulse 2s ease-in-out infinite;
+    box-shadow: 0 0 6px var(--success);
+}
+
+/* ── Warning Banner (polling failure) ──────────────────────────── */
+.poll-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--warning-subtle);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    font-weight: 500;
+    color: var(--warning);
+    animation: fadeSlideIn var(--duration-standard) var(--ease-out-expo);
+}
+
+/* ── Completion State ──────────────────────────────────────────── */
+.completion-card {
+    text-align: center;
+    padding: var(--space-2xl) var(--space-xl);
+    background: var(--bg-secondary);
+    border: 1px solid var(--success);
+    border-radius: var(--radius-lg);
+    animation: fadeSlideIn var(--duration-slow) var(--ease-out-expo);
+}
+
+.completion-icon {
+    font-size: 3rem;
+    margin-bottom: var(--space-lg);
+}
+
+.completion-title {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    color: var(--success);
+    margin-bottom: var(--space-sm);
+}
+
+.completion-subtitle {
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xl);
+}
+
+/* ── Counter Animation ─────────────────────────────────────────── */
+.counter-animate {
+    display: inline-block;
+    transition: opacity var(--duration-fast) ease;
+}
+
+/* ── Monitor Metric Card ───────────────────────────────────────── */
+.monitor-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--space-md);
+}
+
+.monitor-metric {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: var(--space-lg);
+    text-align: center;
+}
+
+.monitor-metric-value {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.monitor-metric-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-top: var(--space-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .sidebar {

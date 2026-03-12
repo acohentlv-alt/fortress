@@ -426,6 +426,16 @@ class PlaywrightMapsScraper:
         page = self._page
         result: dict[str, Any] = {}
 
+        # ── Business name: h1 from panel header (for match validation) ──
+        try:
+            name_el = await page.query_selector('h1.DUwDvf') or await page.query_selector('h1')
+            if name_el:
+                maps_name = (await name_el.inner_text()).strip()
+                if maps_name and len(maps_name) > 1:
+                    result["maps_name"] = maps_name
+        except Exception:
+            pass  # Non-critical — used for diagnostics only
+
         # ── Strategy 1: data-item-id phone buttons (Maps 2024+) ──────
         phone_btn = await page.query_selector('button[data-item-id^="phone"]')
         if phone_btn:
@@ -662,6 +672,7 @@ class PlaywrightMapsScraper:
             has_rating=bool(result.get("rating")),
             has_reviews=bool(result.get("review_count")),
             has_maps_url=bool(result.get("maps_url")),
+            maps_name=result.get("maps_name"),
         )
         return result
 
