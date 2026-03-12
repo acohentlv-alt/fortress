@@ -165,3 +165,41 @@ If not, add these fields to the job detail response — they should already be s
 - Test cancel flow: start a batch → request cancel → verify runner stops after current wave
 - Test delete flow: delete a completed batch → verify companies still exist in other batches
 - Test untag flow: untag a company → verify it disappears from that batch's results but still exists globally
+
+---
+
+## 5. Expose Original Batch Parameters for Rerun / Refresh
+
+The frontend "Relancer" and "Rafraîchir" buttons both need to re-submit a batch with the same parameters. The `GET /api/jobs/{query_id}` response must include:
+
+```json
+{
+    "query_id": "...",
+    "query_name": "TRANSPORT 66",
+    "sector": "TRANSPORT",
+    "departement": "66",
+    "batch_size": 50,
+    "naf_code": "49.41A",
+    "city": null,
+    "mode": "discovery"
+}
+```
+
+Check if `scrape_jobs` already stores these fields. If not, add them to the table.
+
+**Refresh flow (frontend handles orchestration):**
+1. Frontend calls `POST /api/jobs/{query_id}/cancel`
+2. Frontend waits for status to become `cancelled`
+3. Frontend calls `POST /api/batch/run` with same parameters
+4. Frontend redirects to `#/monitor/{new_query_id}`
+
+---
+
+## 6. Dashboard "Par Job" — Sector Grouping Data
+
+The dashboard needs to group batches by **sector** (not by query string). Either:
+
+- Include `sector` field in `GET /api/jobs` response (preferred — no new endpoint)
+- Or create `GET /api/dashboard/stats-by-sector` that returns pre-grouped data
+
+The `sector` value comes from the batch creation form and should already be in `scrape_jobs.query_name` or could be extracted from the NAF code prefix.

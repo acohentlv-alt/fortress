@@ -127,6 +127,28 @@ async def run_query(
     # Phase D: wave loop
     # ------------------------------------------------------------------
     for wave_num in range(start_wave, total_waves + 1):
+        # --- Check for cancellation request (graceful stop) ---
+        try:
+            async with pool.connection() as conn:
+                cancel_row = await (await conn.execute(
+                    "SELECT cancel_requested FROM scrape_jobs WHERE query_id = %s",
+                    (query_id,),
+                )).fetchone()
+                if cancel_row and cancel_row[0]:
+                    log.info(
+                        "batch.cancellation_requested",
+                        wave=wave_num,
+                        query=query_name,
+                    )
+                    await conn.execute(
+                        "UPDATE scrape_jobs SET status = 'cancelled', updated_at = NOW() WHERE query_id = %s",
+                        (query_id,),
+                    )
+                    await conn.commit()
+                    return  # Exit cleanly — data already checkpointed
+        except Exception as exc:
+            log.debug("batch.cancel_check_error", error=str(exc))
+
         wave_start = (wave_num - 1) * wave_size
         wave_end = min(wave_start + wave_size, len(scrape_queue))
         wave_companies = scrape_queue[wave_start:wave_end]

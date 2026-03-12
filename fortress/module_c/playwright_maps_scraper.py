@@ -49,6 +49,43 @@ _HARD_TIMEOUT = 15.0    # seconds — absolute max per entity search
 _PAGE_TIMEOUT = 10000   # ms — max for page.goto / networkidle
 _SELECTOR_TIMEOUT = 5000  # ms — max wait for DOM element
 
+# ── Legal forms to strip during name comparison ───────────────────────────
+_LEGAL_FORMS = frozenset({
+    "sarl", "sas", "sasu", "eurl", "sa", "sci", "snc",
+    "scs", "sca", "ei", "eirl", "asso", "association",
+    "et", "cie", "fils", "freres", "groupe", "holding",
+})
+
+
+def _name_similarity(maps_name: str, denomination: str) -> float:
+    """Quick name similarity score (0.0 to 1.0) for pre-click filtering.
+
+    Normalizes both names (lowercase, strip legal forms, accents),
+    then checks containment and token overlap.
+    """
+    if not maps_name or not denomination:
+        return 0.0
+
+    def _tokens(name: str) -> list[str]:
+        t = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
+        return [w for w in t if w not in _LEGAL_FORMS and len(w) > 1]
+
+    m_tok = _tokens(maps_name)
+    d_tok = _tokens(denomination)
+    if not m_tok or not d_tok:
+        return 0.0
+
+    m_joined = " ".join(m_tok)
+    d_joined = " ".join(d_tok)
+
+    # Full containment → strong match
+    if d_joined in m_joined or m_joined in d_joined:
+        return 1.0
+
+    # Token overlap ratio
+    overlap = sum(1 for t in d_tok if t in m_tok)
+    return overlap / max(len(d_tok), 1)
+
 # ── Phone patterns ────────────────────────────────────────────────────────
 _TEL_LINK_RE = re.compile(r'href="tel:([^"]+)"')
 _DATA_ITEM_PHONE_RE = re.compile(r'data-item-id="phone:tel:([^"]+)"')
@@ -387,23 +424,65 @@ class PlaywrightMapsScraper:
         # Check for direct business panel with phone button
         phone_btn = await page.query_selector('button[data-item-id^="phone"]')
         if phone_btn:
+            # Layer 1: verify the h1 name before extracting
+            try:
+                h1 = await page.query_selector('h1.DUwDvf') or await page.query_selector('h1')
+                if h1:
+                    h1_text = (await h1.inner_text()).strip()
+                    score = _name_similarity(h1_text, denomination)
+                    if h1_text and score < 0.3:
+                        log.info("maps_scraper.direct_hit_name_mismatch",
+                                 h1=h1_text, denomination=denomination,
+                                 score=round(score, 2), siren=siren)
+                        return {"maps_name": h1_text}  # Return name for logging only
+            except Exception:
+                pass  # If h1 check fails, proceed with extraction anyway
             log.debug("maps_scraper.direct_business_hit",
                       denomination=denomination, siren=siren)
             return await self._extract_from_page(denomination, department, siren)
 
-        # Check for result list (mega scrapper selector)
-        first_result = await page.query_selector(
+        # Check for result list — scan aria-labels for best name match
+        all_results = await page.query_selector_all(
             'a.hfpxzc, [class*="hfpxzc"], [class*="Nv2PK"] a'
         )
-        if first_result:
-            log.debug("maps_scraper.clicking_first_result",
-                      denomination=denomination, siren=siren)
-            try:
-                await first_result.click()
-                await page.wait_for_timeout(600)
-            except Exception as exc:
-                log.debug("maps_scraper.click_result_failed", error=str(exc), siren=siren)
-            return await self._extract_from_page(denomination, department, siren)
+        if all_results:
+            best_result = None
+            best_score = 0.0
+            best_label = ""
+            for r in all_results[:5]:  # Check top 5 results
+                try:
+                    label = (await r.get_attribute("aria-label")) or ""
+                    score = _name_similarity(label, denomination)
+                    if score > best_score:
+                        best_score = score
+                        best_result = r
+                        best_label = label
+                except Exception:
+                    continue
+
+            if best_result and best_score >= 0.4:
+                log.debug("maps_scraper.smart_click",
+                          matched_name=best_label, score=round(best_score, 2),
+                          denomination=denomination, siren=siren)
+                try:
+                    await best_result.click()
+                    await page.wait_for_timeout(600)
+                except Exception as exc:
+                    log.debug("maps_scraper.click_result_failed",
+                              error=str(exc), siren=siren)
+                return await self._extract_from_page(denomination, department, siren)
+            else:
+                # No result matched our denomination — skip entirely
+                labels = []
+                for r in all_results[:3]:
+                    try:
+                        labels.append((await r.get_attribute("aria-label")) or "?")
+                    except Exception:
+                        pass
+                log.info("maps_scraper.no_matching_result",
+                         denomination=denomination, top_labels=labels,
+                         best_score=round(best_score, 2), siren=siren)
+                return {}  # Empty — will trigger replacement
 
         # Check for geographic entity (département/town page)
         page_text = await page.text_content("body") or ""
@@ -655,6 +734,25 @@ class PlaywrightMapsScraper:
                         log.debug("maps_scraper.review_body_parse_error", raw=body_match.group(2), siren=siren)
         except Exception as exc:
             log.debug("maps_scraper.rating_extraction_error", error=str(exc), siren=siren)
+
+        # ── Business name: h1 from panel header ────────────────────────
+        # Used by _assess_match() in enricher.py for name-based validation.
+        # Maps business panels always have an <h1> with the business name.
+        try:
+            name_el = await page.query_selector(
+                'h1.DUwDvf, h1.fontHeadlineLarge, h1[class*="header"], div.lMbq3e h1'
+            )
+            if not name_el:
+                # Fallback: any h1 on a Maps place page
+                name_el = await page.query_selector('h1')
+            if name_el:
+                maps_name = (await name_el.inner_text()).strip()
+                if maps_name and len(maps_name) > 1:
+                    result["maps_name"] = maps_name
+                    log.debug("maps_scraper.name_extracted",
+                              maps_name=maps_name, siren=siren)
+        except Exception as exc:
+            log.debug("maps_scraper.name_extraction_error", error=str(exc), siren=siren)
 
         # ── Maps URL: capture the current page URL ─────────────────────
         current_url = page.url

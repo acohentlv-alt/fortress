@@ -1130,79 +1130,56 @@
     margin-bottom: var(--space-lg);
 }
 
-.enrich-options {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-}
-
-.enrich-option {
+/* Pipeline preview: Maps → Crawl */
+.enrich-pipeline-preview {
     display: flex;
     align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
+.enrich-step {
+    display: flex;
+    align-items: flex-start;
     gap: var(--space-md);
     padding: var(--space-md) var(--space-lg);
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    user-select: none;
-}
-
-.enrich-option:hover {
-    border-color: var(--accent);
-    background: var(--bg-hover);
-}
-
-.enrich-option input[type="checkbox"] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--border-strong);
-    border-radius: 4px;
-    background: var(--bg-input);
-    cursor: pointer;
-    position: relative;
-    flex-shrink: 0;
-    transition: all var(--transition-fast);
-}
-
-.enrich-option input[type="checkbox"]:checked {
-    background: var(--accent);
-    border-color: var(--accent);
-}
-
-.enrich-option input[type="checkbox"]:checked::after {
-    content: '✓';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    color: white;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-.enrich-option-icon {
-    font-size: 1.1rem;
-    flex-shrink: 0;
-}
-
-.enrich-option-info {
     flex: 1;
+    min-width: 140px;
 }
 
-.enrich-option-label {
+.enrich-step-icon {
+    font-size: 1.3rem;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.enrich-step-label {
     font-size: var(--font-base);
     font-weight: 600;
     color: var(--text-primary);
 }
 
-.enrich-option-desc {
+.enrich-step-desc {
     font-size: var(--font-xs);
     color: var(--text-muted);
     margin-top: 2px;
+}
+
+.enrich-step-time {
+    font-size: var(--font-xs);
+    color: var(--accent);
+    font-weight: 500;
+    margin-top: 4px;
+}
+
+.enrich-step-arrow {
+    font-size: 1.5rem;
+    color: var(--text-muted);
+    font-weight: 700;
+    flex-shrink: 0;
 }
 
 .enrich-submit {
@@ -1246,6 +1223,20 @@
 
 .enrich-submit.loading .enrich-spinner {
     display: block;
+}
+
+/* ── Data Provenance Tooltips ─────────────────────────────────── */
+.provenance-badge {
+    cursor: help;
+    font-size: 11px;
+    opacity: 0.35;
+    margin-left: 3px;
+    transition: opacity var(--transition-fast);
+    user-select: none;
+}
+
+.provenance-badge:hover {
+    opacity: 1;
 }
 
 .enrich-submit.loading .enrich-submit-text {

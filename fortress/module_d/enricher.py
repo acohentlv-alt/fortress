@@ -64,42 +64,155 @@ def _assess_match(
 ) -> str:
     """Assess whether a Maps result is for the correct company.
 
-    Compares the address returned by Maps against the company's known
-    ville and code_postal from SIRENE data.
+    Compares BOTH the business name AND address returned by Maps against
+    the company's known denomination, ville, and code_postal from SIRENE.
+
+    Scoring matrix:
+        Name match + same city/postal   → "high"
+        Name match + no address          → "high" (Maps confirmed the name)
+        No name match + same city/postal → "low"  (probably wrong business)
+        No name match + no address       → "low"
+        No data at all                   → "none"
 
     Returns:
-        'high'  — Maps address contains expected city or postal code
-        'low'   — Maps returned data but no geographic match
+        'high'  — Maps name matches AND/OR address matches
+        'low'   — Maps returned data but name/geo mismatch
         'none'  — Maps returned nothing
     """
     if not maps_result:
         return "none"
 
+    # ── Name match ─────────────────────────────────
+    maps_name = (maps_result.get("maps_name") or "").strip()
+    denomination = (getattr(company, "denomination", None) or "").strip()
+    name_matches = _names_match(maps_name, denomination)
+
+    # ── Geographic match ───────────────────────────
     maps_address = (maps_result.get("address") or "").lower()
-    if not maps_address:
-        # Maps found something but no address — can't validate
+    geo_matches = _geo_matches(maps_address, company)
+
+    # ── Decision matrix ────────────────────────────
+    if name_matches:
+        return "high"  # Name confirmed — geography is secondary
+
+    if not maps_name:
+        # Couldn't extract name (panel issue) — fall back to geo-only
+        if geo_matches:
+            return "high"
         return "low" if maps_result.get("phone") else "none"
 
-    # Check postal code match (most precise)
-    if company.code_postal and company.code_postal in maps_address:
-        return "high"
+    # Name was extracted from Maps but didn't match our denomination
+    return "low"  # Wrong business, even if same city
 
-    # Check city name match
-    if company.ville and company.ville.lower() in maps_address:
-        return "high"
 
-    # Check department code in postal prefix (e.g. "33" in "33000")
-    if company.departement:
-        # Look for a 5-digit postal code starting with the dept
-        import re as _re
-        postal_matches = _re.findall(r"\b(\d{5})\b", maps_address)
+# French legal form suffixes to strip during name comparison
+_LEGAL_FORMS = frozenset({
+    "sarl", "sas", "sasu", "eurl", "sa", "sci", "snc",
+    "scs", "sca", "ei", "eirl", "asso", "association",
+    "et", "cie", "fils", "freres", "groupe", "holding",
+})
+
+
+def _normalize_name(name: str) -> list[str]:
+    """Normalize a business name: lowercase, strip legal forms, keep tokens > 1 char."""
+    tokens = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
+    return [t for t in tokens if t not in _LEGAL_FORMS and len(t) > 1]
+
+
+def _names_match(maps_name: str, denomination: str) -> bool:
+    """Fuzzy compare Maps business name with SIRENE denomination.
+
+    Strategy:
+        1. Normalize: lowercase, strip legal forms (SARL, SAS, EURL, etc.)
+        2. Containment: if one normalized string contains the other → match
+        3. Token overlap: if ≥50% of denomination tokens appear in maps_name → match
+
+    Returns True if the names plausibly refer to the same business.
+    """
+    if not maps_name or not denomination:
+        return False
+
+    maps_tokens = _normalize_name(maps_name)
+    denom_tokens = _normalize_name(denomination)
+
+    if not maps_tokens or not denom_tokens:
+        return False
+
+    # Containment check (handles "BAILLOEUIL" vs "Bailloeuil Perpignan")
+    maps_joined = " ".join(maps_tokens)
+    denom_joined = " ".join(denom_tokens)
+    if maps_joined in denom_joined or denom_joined in maps_joined:
+        return True
+
+    # Token overlap: ≥50% of denomination tokens found in maps name
+    overlap = sum(1 for t in denom_tokens if t in maps_tokens)
+
+    # Single-token guard: if denomination is just 1 word (e.g. "TAXI"),
+    # require it to be the FIRST token of the Maps name (not just anywhere).
+    # Prevents "TAXI" matching "Restaurant Chez Taxi" or "Les Frères" matching "Frères D'Armes".
+    if len(denom_tokens) == 1:
+        return denom_tokens[0] == maps_tokens[0]
+
+    threshold = max(1, len(denom_tokens) * 0.5)
+    return overlap >= threshold
+
+
+def _geo_matches(maps_address: str, company: Any) -> bool:
+    """Check if Maps address is in the same city/postal/dept as SIRENE data."""
+    if not maps_address:
+        return False
+
+    code_postal = getattr(company, "code_postal", None)
+    if code_postal and code_postal in maps_address:
+        return True
+
+    ville = getattr(company, "ville", None)
+    if ville and ville.lower() in maps_address:
+        return True
+
+    departement = getattr(company, "departement", None)
+    if departement:
+        postal_matches = re.findall(r"\b(\d{5})\b", maps_address)
         for postal in postal_matches:
-            if postal[:2] == company.departement or (
-                len(company.departement) == 3 and postal[:3] == company.departement
+            if postal[:2] == departement or (
+                len(departement) == 3 and postal[:3] == departement
             ):
-                return "high"
+                return True
+    return False
 
-    return "low"
+
+def _domain_confirms_name(url_or_email: str, denomination: str) -> bool:
+    """Check if a website domain or email domain contains the business name.
+
+    Examples:
+        hconvoyage.fr + "H CONVOYAGE"     → True  ("hconvoyage" contains "hconvoyage")
+        bailloeuil.fr + "BAILLOEUIL"      → True
+        thefrenchlane.com + "LUXURY DRIVER" → False
+    """
+    if not url_or_email or not denomination:
+        return False
+
+    # Extract domain base (strip www, TLD, path)
+    try:
+        if "@" in url_or_email:
+            domain = url_or_email.split("@")[1].split(".")[0].lower()
+        else:
+            from urllib.parse import urlparse as _up
+            domain = _up(url_or_email).netloc.lower().replace("www.", "")
+            domain = domain.split(".")[0]  # "hconvoyage" from "hconvoyage.fr"
+    except Exception:
+        return False
+
+    if not domain or len(domain) < 3:
+        return False
+
+    # Clean denomination to alphanumeric only
+    denom_clean = re.sub(r'[^a-z0-9]', '', denomination.lower())
+    if not denom_clean or len(denom_clean) < 3:
+        return False
+
+    # Check mutual containment
+    return denom_clean in domain or domain in denom_clean
 
 
 # MVP fields used to decide what a YELLOW company still needs.
@@ -700,6 +813,29 @@ async def _enrich_one(
         if not maps_phone:
             crawl_phones = crawl_result.get("phones", [])
             maps_phone = _best_phone(crawl_phones, siren)
+
+    # ── Layer 3: Website/email cross-validation ─────────────────────────
+    # If name matching (Layer 2) said "low" confidence, check if the website
+    # domain or email domain contains the business name. If so, it confirms
+    # we have the right company — upgrade confidence to "high".
+    if match_confidence == "low":
+        domain_match = False
+        if maps_website and _domain_confirms_name(maps_website, denomination):
+            domain_match = True
+            log.info("enricher.domain_confirms_name",
+                     siren=siren, website=maps_website, denomination=denomination)
+        elif best_email and _domain_confirms_name(best_email, denomination):
+            domain_match = True
+            log.info("enricher.email_confirms_name",
+                     siren=siren, email=best_email, denomination=denomination)
+
+        if domain_match:
+            match_confidence = "high"
+            # Restore phone if it was discarded by low-confidence filter
+            if not maps_phone and maps_result.get("phone"):
+                maps_phone = maps_result["phone"]
+                log.debug("enricher.phone_restored_by_domain",
+                          siren=siren, phone=maps_phone)
 
     # ── Build final contact ────────────────────────────────────────────────
     maps_rating_raw = maps_result.get("rating")

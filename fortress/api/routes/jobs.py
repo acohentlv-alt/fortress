@@ -1,9 +1,9 @@
-"""Jobs API routes — job-based views and company listing."""
+"""Jobs API routes — job-based views, delete, cancel, and company listing."""
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from fortress.api.db import fetch_all, fetch_one
+from fortress.api.db import fetch_all, fetch_one, get_conn
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -19,11 +19,72 @@ async def list_jobs():
             sj.wave_current, sj.wave_total,
             sj.batch_number, sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
-            COALESCE(sj.replaced_count, 0) AS replaced_count
+            COALESCE(sj.replaced_count, 0) AS replaced_count,
+            sj.filters_json
         FROM scrape_jobs sj
+        WHERE sj.status != 'deleted'
         ORDER BY sj.updated_at DESC
     """)
     return rows
+
+
+@router.delete("/{query_id}")
+async def delete_job(query_id: str):
+    """Soft-delete a batch. Removes query_tags but preserves company/contact data."""
+    async with get_conn() as conn:
+        row = await (await conn.execute(
+            "SELECT status, query_name, companies_scraped, batch_size FROM scrape_jobs WHERE query_id = %s",
+            (query_id,),
+        )).fetchone()
+
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
+        if row[0] == "in_progress":
+            return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
+
+        # Soft-delete the job
+        await conn.execute(
+            "UPDATE scrape_jobs SET status = 'deleted', updated_at = NOW() WHERE query_id = %s",
+            (query_id,),
+        )
+        # Remove query_tags for this job's query_name
+        await conn.execute(
+            "DELETE FROM query_tags WHERE query_name = %s",
+            (row[1],),
+        )
+        await conn.commit()
+
+    return {"deleted": True, "query_id": query_id}
+
+
+@router.post("/{query_id}/cancel")
+async def cancel_job(query_id: str):
+    """Request graceful cancellation of a running batch.
+
+    Sets cancel_requested=TRUE in scrape_jobs. The runner checks this flag
+    before each wave and stops gracefully, preserving already-collected data.
+    """
+    async with get_conn() as conn:
+        row = await (await conn.execute(
+            "SELECT status FROM scrape_jobs WHERE query_id = %s",
+            (query_id,),
+        )).fetchone()
+
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
+        if row[0] not in ("in_progress", "queued", "triage", "new"):
+            return JSONResponse(status_code=409, content={
+                "error": "Le batch n'est pas en cours",
+                "current_status": row[0],
+            })
+
+        await conn.execute(
+            "UPDATE scrape_jobs SET cancel_requested = TRUE, updated_at = NOW() WHERE query_id = %s",
+            (query_id,),
+        )
+        await conn.commit()
+
+    return {"cancelled": True, "query_id": query_id}
 
 
 @router.get("/{query_id}")

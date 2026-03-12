@@ -1,91 +1,167 @@
-# Frontend Agent Plan — UX Review Feedback (v1)
+# Frontend Agent Plan — UX Review Feedback (v2)
 
-Based on the user's page-by-page review of the current UI. These changes are all frontend-only except where noted as requiring backend API endpoints.
+Based on the user's page-by-page review. All changes are frontend-only except where noted as requiring backend endpoints.
 
 ---
 
-## 1. Dashboard — Add "Par Recherche" Tab
+## 1. Dashboard — Fix Tab Naming + Add 3rd Tab
 
-**Currently:** 2 tabs — "Par Localisation" and "Par Job"
-**Requested:** 3 tabs — add "Par Recherche"
+**Current problem:** The "Par Job" tab actually groups batches by `query_name` (the raw search string like "TRANSPORT 66"). That's really a **search history** view, not a job view.
 
-### What "Par Recherche" Means
+### Corrected Tab Structure
 
-A third view that shows batches grouped by **search query string** (the raw user input like "TRANSPORT 66"). This is subtly different from "Par Job" which groups by `query_name` (the display name). "Par Recherche" should show:
+#### 📍 Tab 1: Par Localisation
+Department folders containing enriched company cards.
+- Each department is a collapsible folder card showing: `66 — Pyrénées-Orientales (127 entreprises)`
+- Inside each folder: company cards with contact indicators, completude bar
+- Quality gauges per department (📞 Tél. / ✉️ Email / 🌐 Web)
 
-- The original search text
-- All batches spawned from that search
-- Batch size, scrape progress, status per batch
-- Clickable → navigates to job detail
+#### 📋 Tab 2: Par Job
+Groups all batches by **sector/activity type** — the business category, not the raw search string.
+- Example: all "TRANSPORT" batches across departments 66, 34, 11 grouped under one "TRANSPORT" card
+- Shows total companies found across all related batches
+- Shows combined quality gauges
+- Clickable → opens a filtered view of all companies in that sector
+
+> [!IMPORTANT]
+> **Backend dependency:** Needs `sector` field in jobs response, or grouping by NAF code prefix.
+
+#### 🔍 Tab 3: Par Recherche
+A **search history timeline** — every batch the user has launched, organized by the exact search query.
+
+Each search card shows:
+```
+┌────────────────────────────────────────────────────────┐
+│  🔍 TRANSPORT 66                                       │
+│  ────────────────────────────────────────────────────── │
+│  📅 Dernière recherche: 12/03/2026 à 14:30             │
+│  📊 3 batchs lancés · 127 entreprises collectées       │
+│  ████████████████████░░░░  84% complétude              │
+│                                                        │
+│  📞 86% tél. · ✉️ 72% email · 🌐 91% web              │
+│                                                        │
+│  ▼ Historique des batchs                               │
+│  ├─ ● Batch #3 — 50/50 ✅ Terminé (12/03)             │
+│  ├─ ● Batch #2 — 50/50 ✅ Terminé (10/03)             │
+│  └─ ● Batch #1 — 27/30 ✅ Terminé (08/03)             │
+│                                                        │
+│  [📥 Exporter tout]  [🔄 Relancer]  [🗑️ Supprimer]    │
+└────────────────────────────────────────────────────────┘
+```
+
+Key features:
+- **Grouped by `query_name`** (case-insensitive) — this is the current `renderByJob` logic
+- **Aggregate stats** across all batches within the same search: total companies, quality %
+- **Batch timeline** expandable — shows each batch with status, date, progress
+- **Action buttons per search:** export all results, relaunch, delete
+- **Sorted** by most recent batch date (newest first)
+- **Filtering:** search bar at the top to filter searches by name
 
 ### Files to Modify
 
 #### [MODIFY] [dashboard.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/dashboard.js)
 
-- Add third toggle button: `📋 Par Recherche` (line 108-109)
-- Add click handler: calls existing `getJobs()` and groups by `query_id` prefix or search text
-- Add `renderBySearch(jobs)` function rendering cards similar to `_renderGroupCard`
+- Rename current "Par Job" tab → "Par Recherche" and enhance its cards with aggregate stats + action buttons
+- Add new "Par Job" tab grouped by sector/NAF
+- Add 3 toggle buttons: `📍 Par Localisation` / `📋 Par Job` / `🔍 Par Recherche`
+- For "Par Localisation": department folders must contain company cards inside (not just summary counts)
+- Add search filter bar for "Par Recherche" tab
 
 ---
 
-## 2. Delete / Cancel Capabilities
+## 2. Delete / Cancel / Refresh Capabilities
 
-**Currently:** No delete or cancel actions anywhere in the UI
-**Requested:** User must be able to:
+**Requested actions:**
 - **Delete a completed batch** (from job detail or dashboard)
 - **Cancel a running pipeline** (from Pipeline Live monitor view)
+- **Refresh (restart) a currently running pipeline** (from monitor view)
 - **Delete a single entity** from results (from company card in job view)
+- **Rerun a completed/failed batch** (from job detail)
 
 > [!WARNING]
-> **Backend dependency.** No delete/cancel API endpoints exist today. These must be created first:
-> - `DELETE /api/jobs/{query_id}` — delete a batch + its query_tags (soft delete: set `status = 'deleted'`)
-> - `POST /api/jobs/{query_id}/cancel` — mark a running job as `cancelled`, kill subprocess
-> - `DELETE /api/companies/{siren}/tags/{query_id}` — remove a company from a batch result (untag only, never delete company data)
+> **Backend dependency.** These endpoints must exist:
+> - `DELETE /api/jobs/{query_id}` — soft-delete batch
+> - `POST /api/jobs/{query_id}/cancel` — cancel running batch
+> - `DELETE /api/companies/{siren}/tags/{query_id}` — untag company from batch
+> - `GET /api/jobs/{query_id}` must return original batch params (`sector`, `departement`, `batch_size`, `naf_code`, `city`, `mode`) for rerun
+
+### Confirmation Modal — Show Exactly What Gets Deleted
+
+The generic "Êtes-vous sûr ?" is not enough. The modal must list exactly what will be affected:
+
+**For deleting a batch:**
+```
+🗑️ Supprimer ce batch ?
+
+Batch: TRANSPORT 66
+Créé le: 12/03/2026 à 14:30
+Entreprises collectées: 47
+Données de contact liées: 43 téléphones, 38 emails
+
+⚠️ Les tags de recherche seront supprimés.
+✅ Les fiches entreprises et contacts resteront dans la base.
+
+[Annuler]  [Supprimer]
+```
+
+**For cancelling a pipeline:**
+```
+⏹ Arrêter ce batch ?
+
+Batch: TRANSPORT 66
+Progression: 23/50 entreprises (46%)
+Vague: 2/4
+
+✅ Les 23 entreprises déjà collectées seront conservées.
+⚠️ Les 27 restantes ne seront pas traitées.
+
+[Annuler]  [Arrêter le batch]
+```
+
+**For removing a company:**
+```
+🗑️ Retirer cette entreprise ?
+
+BAILLOEUIL (SIREN 400 643 128)
+
+⚠️ L'entreprise sera retirée de ce batch.
+✅ Sa fiche et ses contacts resteront dans la base.
+
+[Annuler]  [Retirer]
+```
 
 ### Frontend Changes
 
 #### [MODIFY] [job.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/job.js)
 
-- Add red "🗑️ Supprimer ce batch" button in header next to export buttons
-- Confirmation modal: "Êtes-vous sûr ? Les données des entreprises seront conservées."
-- On confirm: `DELETE /api/jobs/{query_id}` → redirect to dashboard
+- Add "🗑️ Supprimer" button in header (next to export buttons)
+- Add "🔄 Relancer" button (for completed/failed batches)
+- Both trigger detailed confirmation modals showing affected data
 
 #### [MODIFY] [monitor.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/monitor.js)
 
-- Add "⏹ Arrêter le batch" button (visible only when `status === 'in_progress'`)
-- Confirmation: "Arrêter le batch en cours ? Les données déjà collectées seront conservées."
-- On confirm: `POST /api/jobs/{query_id}/cancel` → update status display
+- Add "⏹ Arrêter" button (visible when `status === 'in_progress'`)
+- Add "🔄 Rafraîchir" button — restarts the same batch (cancel current + relaunch with same params)
+- Confirmation modal with progress data
+
+#### [NEW] [modal.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/components/modal.js) (or add to components.js)
+
+Reusable confirmation modal component:
+```javascript
+export function showConfirmModal({ title, body, confirmLabel, onConfirm, danger = false })
+```
 
 #### [MODIFY] [api.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/api.js)
 
-- Add `deleteJob(queryId)` — `DELETE /api/jobs/{query_id}`
-- Add `cancelJob(queryId)` — `POST /api/jobs/{query_id}/cancel`
-- Add `untagCompany(siren, queryId)` — `DELETE /api/companies/{siren}/tags/{query_id}`
+- Add `deleteJob(queryId)`
+- Add `cancelJob(queryId)`
+- Add `untagCompany(siren, queryId)`
 
 ---
 
-## 3. Refresh / Rerun Batch
+## 3. Company Page — Reorder Contact Section
 
-**Currently:** No way to rerun a failed or suspicious batch
-**Requested:** User can click "Relancer" to replay a batch with the same parameters
-
-### Frontend Changes
-
-#### [MODIFY] [job.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/job.js)
-
-- Add "🔄 Relancer" button in header (visible for completed/failed batches)
-- On click: calls `POST /api/batch/run` with the same parameters as the original batch
-- Show toast: "Nouveau batch lancé — redirection vers le suivi..."
-- Redirect to `#/monitor/{new_query_id}`
-
-> [!IMPORTANT]
-> **Backend may need to expose the original batch parameters.** The job detail API response should include `sector`, `departement`, `batch_size`, `naf_code`, `city`, `mode` so the frontend can re-submit them. Check if `GET /api/jobs/{query_id}` already returns these fields.
-
----
-
-## 4. Company Page — Reorder Contact Section
-
-**Currently:** Right column order is:
+**Current order** (right column):
 1. 🏛️ Identité juridique
 2. 📊 Activité
 3. 💰 Données financières
@@ -95,44 +171,50 @@ A third view that shows batches grouped by **search query string** (the raw user
 7. 👤 Dirigeants
 8. 📜 Historique
 
-**Requested:** Contact card immediately after identity.
-
-### New Order
-
-1. 🏛️ Identité juridique (SIREN, SIRET, forme, statut, date)
-2. 📞 Contact (phone, email, website, Maps, socials) ← moved up
-3. ⭐ Avis Google (if exists)
-4. 📍 Localisation
-5. 📊 Activité
-6. 💰 Données financières
-7. 👤 Dirigeants
-8. 📜 Historique
+**New order:**
+1. 🏛️ Identité juridique
+2. 📞 Contact (+ Avis Google merged in) ← **moved to #2**
+3. 📍 Localisation
+4. 📊 Activité
+5. 💰 Données financières
+6. 👤 Dirigeants
+7. 📜 Historique
 
 #### [MODIFY] [company.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/company.js)
 
-Move lines 223-239 (Contact section) to immediately after lines 182-189 (Identité section). Merge Avis Google (lines 241-251) into the Contact section.
+Move Contact section (lines 223-251) to immediately after Identité section (after line 189).
 
 ---
 
-## 5. Data Provenance Tooltips
+## 4. Data Provenance Tooltips — Including Social Media Sources
 
-**Currently:** Data fields show values but no source attribution
-**Requested:** Hover over any data value to see where it came from (e.g., "Source: Google Maps", "Source: SIRENE", "Source: Website Crawl")
+**Rule:** Every single data field shows its source on hover. No exceptions — including social media links.
 
-### How It Works
+### Source Mapping
 
-Every field already has a known source:
-- **SIREN, SIRET, Forme Juridique, NAF, Effectif, Ville, Code Postal** → Source: `SIRENE`
-- **Phone, Address, Rating, Maps URL** → Source: `Google Maps`
-- **Email, LinkedIn, Facebook** → Source: `Website Crawl`
-- **Website URL** → Source: `Google Maps` (discovered via Maps, verified via crawl)
-- **CA, Résultat Net** → Source: `Enrichissement` (future)
+| Field | Source | Tooltip text |
+|-------|--------|-------------|
+| SIREN, SIRET, Forme, NAF, Effectif, Ville, CP | SIRENE | "Source : Registre SIRENE (INSEE)" |
+| Phone | Google Maps | "Source : Google Maps" |
+| Address (enriched) | Google Maps | "Source : Google Maps" |
+| Website URL | Google Maps | "Source : Google Maps" |
+| Email | Website crawl | "Source : Site web ({domain})" |
+| Rating, Reviews | Google Maps | "Source : Google Maps" |
+| LinkedIn | Website crawl | "Source : Trouvé sur {website_url}" |
+| Facebook | Website crawl | "Source : Trouvé sur {website_url}" |
+| Twitter | Website crawl | "Source : Trouvé sur {website_url}" |
+| Maps URL | Google Maps | "Source : Google Maps" |
+
+> [!IMPORTANT]
+> **Backend dependency for social source detail.** Currently the `contacts` table stores `social_linkedin`, `social_facebook` etc. but doesn't track *which page* they were found on. To show "Trouvé sur www.bailloeuil.com/contact", the backend would need to store page-level provenance. 
+>
+> **Short-term workaround:** If the contact has a `website` field, use that as the social media source: `"Source : Trouvé sur {mc.website}"`. This is accurate enough — social links are only extracted during website crawl of that company's website.
 
 ### Implementation
 
 #### [MODIFY] [company.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/company.js)
 
-Replace `detailRow(label, value)` with `detailRow(label, value, source)`:
+Update `detailRow()` to accept a source parameter:
 
 ```javascript
 function detailRow(label, value, source = null) {
@@ -148,45 +230,37 @@ function detailRow(label, value, source = null) {
 }
 ```
 
-Then update every `detailRow()` call to pass the source:
-
+Update all calls:
 ```javascript
-detailRow('SIREN', formatSiren(co.siren), 'SIRENE')
-detailRow('Téléphone', mc.phone ? ... : ..., 'Google Maps')
-detailRow('Email', mc.email ? ... : ..., 'Site web de l\'entreprise')
+detailRow('SIREN', ..., 'Registre SIRENE')
+detailRow('Téléphone', ..., 'Google Maps')
+detailRow('Email', ..., mc.website ? `Site web (${mc.website})` : 'Site web')
+detailRow('LinkedIn', ..., mc.website ? `Trouvé sur ${mc.website}` : 'Site web')
+detailRow('Facebook', ..., mc.website ? `Trouvé sur ${mc.website}` : 'Site web')
 ```
 
-#### [NEW] CSS for `.provenance-badge` in `components.css`
-
-Small info icon that shows a tooltip on hover with the data source name.
+#### [MODIFY] [components.css](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/css/components.css)
 
 ```css
 .provenance-badge {
     cursor: help;
     font-size: 12px;
-    opacity: 0.5;
+    opacity: 0.4;
     margin-left: 4px;
-    transition: opacity 0.2s;
+    transition: opacity var(--duration-fast);
 }
 .provenance-badge:hover { opacity: 1; }
 ```
 
 ---
 
-## 6. Update Enrichment Panel to Match Pipeline
+## 5. Update Enrichment Panel to Match Pipeline
 
-**Currently:** Three checkboxes that don't match the real pipeline:
-- 🌐 Website & Contacts → "Email, site web, réseaux sociaux, avis Google"
-- 📞 Phone Numbers → "Numéro de téléphone principal via PagesJaunes" ← **WRONG: PagesJaunes is not used anymore**
-- 💰 Financials → "SIRET, CA, résultat net, effectif via Pappers" ← **WRONG: Pappers is not integrated**
+**Problem:** Current panel shows 3 checkboxes (Website, PagesJaunes, Pappers) — none of these match the real pipeline.
 
-### Updated Panel (matching real pipeline)
-
-The pipeline is fixed: **Maps → Crawl**. The enrichment panel should reflect this:
+**Fix:** Replace with a visual pipeline diagram showing the 2 real steps, plus timing expectations.
 
 #### [MODIFY] [company.js](file:///Users/alancohen/Downloads/Project%20Alan%20copy/fortress/fortress/frontend/js/pages/company.js)
-
-Replace `enrichmentPanelHTML()` (lines 45-81):
 
 ```javascript
 function enrichmentPanelHTML() {
@@ -199,6 +273,7 @@ function enrichmentPanelHTML() {
                     <div>
                         <div class="enrich-step-label">Google Maps</div>
                         <div class="enrich-step-desc">Téléphone, adresse, site web, avis, note</div>
+                        <div class="enrich-step-time">~5 secondes</div>
                     </div>
                 </div>
                 <div class="enrich-step-arrow">→</div>
@@ -207,8 +282,12 @@ function enrichmentPanelHTML() {
                     <div>
                         <div class="enrich-step-label">Site Web</div>
                         <div class="enrich-step-desc">Email, LinkedIn, Facebook, réseaux sociaux</div>
+                        <div class="enrich-step-time">~20 secondes (recherche sur le site)</div>
                     </div>
                 </div>
+            </div>
+            <div class="enrich-time-notice">
+                ⏱️ Durée estimée : ~25 secondes par entreprise
             </div>
             <button class="enrich-submit" id="enrich-submit-btn">
                 <span class="enrich-spinner"></span>
@@ -219,28 +298,30 @@ function enrichmentPanelHTML() {
 }
 ```
 
-**No more checkboxes** — the pipeline is fixed (Maps → Crawl), user just clicks "Lancer". The panel shows the 2 pipeline steps clearly so the user knows what will happen.
-
-Update `_initEnrichmentPanel()` — remove checkbox logic, submit always sends `["contact_web", "contact_phone"]` together.
+**No more checkboxes** — the pipeline is fixed (Maps → Crawl), user just clicks "Lancer".
 
 ---
 
-## Summary of Backend Dependencies
+## Backend Dependencies Summary (Updated)
 
-These items **require backend agent work before the frontend can implement them**:
+| Feature | Backend Endpoint | Status |
+|---------|-----------------|--------|
+| Delete batch | `DELETE /api/jobs/{query_id}` | ❌ Doesn't exist |
+| Cancel running batch | `POST /api/jobs/{query_id}/cancel` + `cancel_requested` column | ❌ Doesn't exist |
+| Remove company from batch | `DELETE /api/companies/{siren}/tags/{query_id}` | ❌ Doesn't exist |
+| Rerun batch | `GET /api/jobs/{query_id}` must return `sector`, `departement`, `batch_size`, `naf_code`, `city`, `mode` | ⚠️ Check if fields exist |
+| Refresh running pipeline | Cancel current + relaunch → uses cancel + `POST /api/batch/run` (both must work) | ❌ Cancel doesn't exist |
+| "Par Job" grouping by sector | `GET /api/dashboard/stats-by-sector` or include `sector` in jobs response | ⚠️ Check if data available |
+| Social provenance detail | Store which page social links were found on | ✅ Workaround: use `mc.website` as source |
 
-| Feature | Backend Endpoint Needed |
-|---------|------------------------|
-| Delete batch | `DELETE /api/jobs/{query_id}` |
-| Cancel running batch | `POST /api/jobs/{query_id}/cancel` |
-| Remove company from batch | `DELETE /api/companies/{siren}/tags/{query_id}` |
-| Rerun batch | Expose original params in `GET /api/jobs/{query_id}` response |
-
-Everything else (reorder, tooltips, enrichment panel) is **frontend-only**.
+> [!IMPORTANT]
+> **Blocking dependencies:** Items 1-5 in the table above are blocked on backend work. The frontend agent should implement items 3, 4, 5 first (company reorder, provenance tooltips, enrichment panel) since those are frontend-only.
 
 ## Implementation Order
 
-1. **Company page reorder + enrichment panel update** (frontend-only, no risk)
-2. **Data provenance tooltips** (frontend-only, no risk)
-3. **Dashboard "Par Recherche" tab** (frontend-only, uses existing API)
-4. **Delete/Cancel/Rerun** (blocked on backend endpoints)
+1. **Company page reorder + enrichment panel** (frontend-only, zero risk)
+2. **Data provenance tooltips** (frontend-only, zero risk)
+3. **Dashboard "Par Recherche" rename** (frontend-only — just rename the current tab)
+4. **Confirmation modal component** (frontend-only, preparation)
+5. **Delete / Cancel / Refresh / Rerun** (blocked on backend endpoints)
+6. **Dashboard "Par Job" true sector grouping** (needs backend data)

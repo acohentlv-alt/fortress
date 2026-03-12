@@ -41,38 +41,34 @@ function unenrichedField(module) {
     </span>`;
 }
 
-// ── Smart Enrichment Panel HTML ──────────────────────────────────
+// ── Enrichment Panel — Maps → Crawl pipeline (no checkboxes) ─────
 function enrichmentPanelHTML() {
     return `
         <div class="enrich-panel" id="enrich-panel">
-            <div class="enrich-panel-title">⚡ Smart Enrichment</div>
-            <div class="enrich-options">
-                <label class="enrich-option">
-                    <input type="checkbox" name="enrich-module" value="contact_web">
-                    <span class="enrich-option-icon">🌐</span>
-                    <div class="enrich-option-info">
-                        <div class="enrich-option-label">Website & Contacts</div>
-                        <div class="enrich-option-desc">Email, site web, réseaux sociaux, avis Google</div>
+            <div class="enrich-panel-title">⚡ Enrichissement</div>
+            <div class="enrich-pipeline-preview">
+                <div class="enrich-step">
+                    <span class="enrich-step-icon">🗺️</span>
+                    <div>
+                        <div class="enrich-step-label">Google Maps</div>
+                        <div class="enrich-step-desc">Téléphone, adresse, site web, avis, note</div>
+                        <div class="enrich-step-time">~5 secondes</div>
                     </div>
-                </label>
-                <label class="enrich-option">
-                    <input type="checkbox" name="enrich-module" value="contact_phone">
-                    <span class="enrich-option-icon">📞</span>
-                    <div class="enrich-option-info">
-                        <div class="enrich-option-label">Phone Numbers</div>
-                        <div class="enrich-option-desc">Numéro de téléphone principal via PagesJaunes</div>
+                </div>
+                <div class="enrich-step-arrow">→</div>
+                <div class="enrich-step">
+                    <span class="enrich-step-icon">🌐</span>
+                    <div>
+                        <div class="enrich-step-label">Site Web</div>
+                        <div class="enrich-step-desc">Email, LinkedIn, Facebook, réseaux sociaux</div>
+                        <div class="enrich-step-time">~20 secondes</div>
                     </div>
-                </label>
-                <label class="enrich-option">
-                    <input type="checkbox" name="enrich-module" value="financials">
-                    <span class="enrich-option-icon">💰</span>
-                    <div class="enrich-option-info">
-                        <div class="enrich-option-label">Financials</div>
-                        <div class="enrich-option-desc">SIRET, CA, résultat net, effectif via Pappers</div>
-                    </div>
-                </label>
+                </div>
             </div>
-            <button class="enrich-submit" id="enrich-submit-btn" disabled>
+            <div style="font-size:var(--font-xs); color:var(--text-muted); text-align:center; margin-top:var(--space-sm)">
+                ⏱️ Durée estimée : ~25 secondes par entreprise
+            </div>
+            <button class="enrich-submit" id="enrich-submit-btn">
                 <span class="enrich-spinner"></span>
                 <span class="enrich-submit-text">🚀 Lancer l'enrichissement</span>
             </button>
@@ -178,79 +174,76 @@ export async function renderCompany(container, siren) {
 
             <!-- Right Column: Data Sections -->
             <div class="company-detail-data">
-                <!-- Identité juridique -->
+                <!-- 1. Identité juridique -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">🏛️ Identité juridique</h3>
-                    ${detailRow('SIREN', formatSiren(co.siren))}
-                    ${detailRow('SIRET siège', formatSiret(co.siret_siege))}
-                    ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Statut', statutBadge(co.statut))}
-                    ${detailRow('Date création', formatDate(co.date_creation))}
+                    ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
+                    ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
+                    ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
+                    ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
                 </div>
 
-                <!-- Activité & Effectif -->
+                <!-- 2. Contact — MOVED UP (was #5) -->
+                <div class="detail-section">
+                    <h3 class="detail-section-title">📞 Contact</h3>
+                    ${detailRow('Téléphone', mc.phone
+        ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
+        : unenrichedField('contact_phone'), 'Google Maps')}
+                    ${detailRow('Email', mc.email
+            ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
+            : unenrichedField('contact_web'), mc.website ? `Site web (${mc.website})` : 'Site web')}
+                    ${detailRow('Site web', mc.website
+                ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
+                : unenrichedField('contact_web'), 'Google Maps')}
+                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, 'Google Maps') : ''}
+                    ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`, 'Google Maps') : ''}
+                    ${mc.social_linkedin ? detailRow('LinkedIn', `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
+                    ${mc.social_facebook ? detailRow('Facebook', `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
+                    ${mc.social_twitter ? detailRow('Twitter', `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
+                    ${mc.rating ? `
+                        <div class="detail-row" style="margin-top:var(--space-md)">
+                            <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : Google Maps">ℹ️</span></span>
+                            <span class="detail-value">
+                                <span style="font-weight:700">${mc.rating}</span>
+                                <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
+                                <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
+                            </span>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- 3. Localisation -->
+                <div class="detail-section">
+                    <h3 class="detail-section-title">📍 Localisation</h3>
+                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                </div>
+
+                <!-- 4. Activité & Effectif -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📊 Activité</h3>
-                    ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>` : '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Libellé NAF', co.naf_libelle ? escapeHtml(co.naf_libelle) : '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>')}
+                    ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Libellé NAF', co.naf_libelle ? escapeHtml(co.naf_libelle) : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
-                <!-- Données financières — actionable empty states -->
+                <!-- 5. Données financières -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">💰 Données financières</h3>
                     ${detailRow("Chiffre d'affaires",
         co.chiffre_affaires
             ? formatCurrency(co.chiffre_affaires)
-            : unenrichedField('financials')
-    )}
+            : unenrichedField('financials'))}
                     ${detailRow('Résultat net',
         co.resultat_net
             ? formatCurrency(co.resultat_net)
-            : unenrichedField('financials')
-    )}
+            : unenrichedField('financials'))}
                 </div>
 
-                <!-- Localisation -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">📍 Localisation</h3>
-                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>')}
-                    ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>')}
-                </div>
-
-                <!-- Contact — actionable empty states -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">📞 Contact</h3>
-                    ${detailRow('Téléphone', mc.phone
-        ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_phone'))}
-                    ${detailRow('Email', mc.email
-            ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-            : unenrichedField('contact_web'))}
-                    ${detailRow('Site web', mc.website
-                ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-                : unenrichedField('contact_web'))}
-                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`) : ''}
-                    ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`) : ''}
-                    ${mc.social_linkedin ? detailRow('LinkedIn', `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`) : ''}
-                    ${mc.social_facebook ? detailRow('Facebook', `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`) : ''}
-                </div>
-
-                <!-- Avis Google -->
-                ${mc.rating ? `
-                    <div class="detail-section">
-                        <h3 class="detail-section-title">⭐ Avis Google</h3>
-                        <div style="display:flex; align-items:center; gap:var(--space-lg)">
-                            <span style="font-size:var(--font-2xl); font-weight:700">${mc.rating}</span>
-                            <span style="font-size:1.2rem; color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
-                            <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
-                        </div>
-                    </div>
-                ` : ''}
-
-                <!-- Dirigeants -->
+                <!-- 6. Dirigeants -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">👤 Dirigeants</h3>
                     ${officers.length > 0 ? officers.map(o => `
@@ -265,7 +258,7 @@ export async function renderCompany(container, siren) {
                     `}
                 </div>
 
-                <!-- Enrichment History Timeline -->
+                <!-- 7. Enrichment History Timeline -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📜 Historique d'enrichissement</h3>
                     <div id="enrich-history-container">
@@ -289,23 +282,11 @@ function _initEnrichmentPanel(siren) {
     const submitBtn = document.getElementById('enrich-submit-btn');
     if (!panel || !submitBtn) return;
 
-    const checkboxes = panel.querySelectorAll('input[name="enrich-module"]');
-
-    // Enable/disable submit based on selections
-    function updateSubmitState() {
-        const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
-        submitBtn.disabled = !anyChecked;
-    }
-    checkboxes.forEach(cb => cb.addEventListener('change', updateSubmitState));
+    // Fixed pipeline: always send both modules (Maps → Crawl)
+    const modules = ['contact_web', 'contact_phone'];
 
     // Submit handler — 200 vs 202 split
     submitBtn.addEventListener('click', async () => {
-        const modules = Array.from(checkboxes)
-            .filter(cb => cb.checked)
-            .map(cb => cb.value);
-
-        if (modules.length === 0) return;
-
         // Loading state
         submitBtn.classList.add('loading');
         submitBtn.disabled = true;
@@ -314,23 +295,19 @@ function _initEnrichmentPanel(siren) {
             const result = await enrichCompany(siren, modules);
 
             if (result && result._status === 202) {
-                // Async job queued — scraping will happen in background
-                showToast(result.message || 'Mise en file d\'attente...', 'success');
+                showToast(result.message || 'Enrichissement lancé — ~25s...', 'success');
             } else if (result && result._ok) {
-                // 200 — data was cached/deduplicated, available immediately
                 showToast(result.message || 'Données récupérées', 'success');
-                // Re-render the page to show updated data instantly
                 await renderCompany(container, siren);
-                return; // skip finally — page is re-rendered
+                return;
             } else {
-                // Error (422, 404, 500, etc.)
                 showToast(extractApiError(result), 'error');
             }
         } catch (err) {
             showToast('Erreur lors de l\'enrichissement', 'error');
         } finally {
             submitBtn.classList.remove('loading');
-            updateSubmitState();
+            submitBtn.disabled = false;
         }
     });
 
@@ -360,10 +337,13 @@ function _initEnrichmentPanel(siren) {
     });
 }
 
-function detailRow(label, value) {
+function detailRow(label, value, source = null) {
+    const tooltip = source
+        ? `<span class="provenance-badge" title="Source : ${source}">ℹ️</span>`
+        : '';
     return `
         <div class="detail-row">
-            <span class="detail-label">${label}</span>
+            <span class="detail-label">${label} ${tooltip}</span>
             <span class="detail-value">${value}</span>
         </div>
     `;

@@ -120,6 +120,18 @@ export async function getJob(queryId) {
     return await request(`/jobs/${encodeURIComponent(queryId)}`);
 }
 
+export async function deleteJob(queryId) {
+    return await request(`/jobs/${encodeURIComponent(queryId)}`, { method: 'DELETE' });
+}
+
+export async function cancelJob(queryId) {
+    return await request(`/jobs/${encodeURIComponent(queryId)}/cancel`, { method: 'POST' });
+}
+
+export async function untagCompany(siren, queryName) {
+    return await request(`/companies/${siren}/tags/${encodeURIComponent(queryName)}`, { method: 'DELETE' });
+}
+
 export async function getJobCompanies(queryId, { page = 1, pageSize = 20, search = '', sort = 'completude' } = {}) {
     const params = new URLSearchParams({
         page: page.toString(),

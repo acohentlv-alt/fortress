@@ -234,3 +234,6 @@ CREATE TABLE IF NOT EXISTS enrichment_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_enrichment_log_query ON enrichment_log(query_id);
+
+-- Add cancel_requested flag for graceful pipeline cancellation
+ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE;

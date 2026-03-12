@@ -345,6 +345,21 @@ async def get_enrich_history(siren: str):
     return {"siren": siren, "history": rows, "count": len(rows)}
 
 
+@router.delete("/{siren}/tags/{query_name}")
+async def untag_company(siren: str, query_name: str):
+    """Remove a company from a batch's results (untag only — never deletes data)."""
+    async with get_conn() as conn:
+        result = await conn.execute(
+            "DELETE FROM query_tags WHERE siren = %s AND query_name = %s RETURNING siren",
+            (siren, query_name),
+        )
+        row = await result.fetchone()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Tag introuvable"})
+        await conn.commit()
+    return {"untagged": True, "siren": siren, "query_name": query_name}
+
+
 @router.get("/{siren}")
 async def get_company(siren: str):
     """Full company detail with enriched data, contacts, and officers."""
