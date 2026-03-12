@@ -20,7 +20,9 @@ async def list_jobs():
             sj.batch_number, sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             COALESCE(sj.replaced_count, 0) AS replaced_count,
-            sj.filters_json
+            sj.filters_json,
+            UPPER(SPLIT_PART(sj.query_name, ' ', 1)) AS sector,
+            sj.user_id
         FROM scrape_jobs sj
         WHERE sj.status != 'deleted'
         ORDER BY sj.updated_at DESC
@@ -225,7 +227,7 @@ async def get_job_quality(query_id: str):
             COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN co.siren END) AS with_phone,
             COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN co.siren END) AS with_email,
             COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN co.siren END) AS with_website,
-            COUNT(DISTINCT CASE WHEN co.siret_siege IS NOT NULL THEN co.siren END) AS with_siret
+            COUNT(DISTINCT CASE WHEN (ct.social_linkedin IS NOT NULL OR ct.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
         FROM (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         LEFT JOIN contacts ct ON co.siren = ct.siren
@@ -235,14 +237,33 @@ async def get_job_quality(query_id: str):
         return {"total": 0, "phone_pct": 0, "email_pct": 0, "website_pct": 0, "siret_pct": 0}
 
     total = stats["total"]
+    # Source breakdown from scrape_audit
+    sources_raw = await fetch_all("""
+        SELECT action,
+               COUNT(*) FILTER (WHERE result = 'success') AS success,
+               COUNT(*) FILTER (WHERE result != 'success') AS other,
+               COUNT(*) AS total
+        FROM scrape_audit
+        WHERE query_id = %s
+        GROUP BY action
+    """, (query_id,))
+    sources = {}
+    for s in (sources_raw or []):
+        sources[s["action"]] = {
+            "success": s["success"],
+            "total": s["total"],
+            "rate": round(100 * s["success"] / s["total"]) if s["total"] else 0,
+        }
+
     return {
         "total": total,
         "with_phone": stats["with_phone"],
         "with_email": stats["with_email"],
         "with_website": stats["with_website"],
-        "with_siret": stats["with_siret"],
+        "with_social": stats["with_social"],
         "phone_pct": round(100 * stats["with_phone"] / total),
         "email_pct": round(100 * stats["with_email"] / total),
         "website_pct": round(100 * stats["with_website"] / total),
-        "siret_pct": round(100 * stats["with_siret"] / total),
+        "social_pct": round(100 * stats["with_social"] / total),
+        "sources": sources,
     }

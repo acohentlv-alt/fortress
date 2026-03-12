@@ -2,10 +2,10 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob } from '../api.js';
 import {
     breadcrumb, statusBadge, companyCard, renderGauge,
-    formatDateTime, escapeHtml, renderPagination,
+    formatDateTime, escapeHtml, renderPagination, showConfirmModal, showToast,
 } from '../components.js';
 
 export async function renderJob(container, queryId) {
@@ -52,6 +52,8 @@ export async function renderJob(container, queryId) {
             <div style="display:flex; gap:var(--space-sm)">
                 <a href="${getExportUrl(queryId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
                 <a href="${getExportUrl(queryId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
+                ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
+                <button id="btn-delete-job" class="btn btn-secondary" title="Supprimer ce batch" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
             `<a href="#/monitor/${encodeURIComponent(queryId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
             </div>
@@ -59,22 +61,24 @@ export async function renderJob(container, queryId) {
 
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
-            <div style="display:flex; justify-content:space-between; margin-bottom:var(--space-md)">
-                <span style="font-weight:600">Progression</span>
-                <span style="color:var(--text-secondary)">${scraped}/${batchSize} (${progressPct}%)</span>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
+                <span style="font-weight:600">Progression — ${batchSize} entreprises</span>
+                <div style="display:flex; align-items:center; gap:var(--space-md)">
+                    <span style="color:var(--text-secondary)">${scraped}/${batchSize} (${progressPct}%)</span>
+                    <button id="toggle-provenance" title="D'où viennent ces données ?" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
+                </div>
             </div>
+            ${job.status === 'in_progress' ? `
             <div class="progress-bar" style="height:10px">
-                <div class="progress-bar-fill ${job.status === 'in_progress' ? 'animated' : ''}"
-                     style="width:${progressPct}%"></div>
-            </div>
-            <div style="display:flex; gap:var(--space-xl); margin-top:var(--space-lg); font-size:var(--font-sm); color:var(--text-secondary)">
-                <span>🟢 Green: ${job.triage_green || 0}</span>
-                <span>🟡 Yellow: ${job.triage_yellow || 0}</span>
-                <span>🔴 Red: ${job.triage_red || 0}</span>
-                <span>⚫ Black: ${job.triage_black || 0}</span>
-                ${job.triage_blue ? `<span style="color:var(--info)">🔵 Blue: ${job.triage_blue}</span>` : ''}
-                ${job.wave_total ? `<span>Vague: ${job.wave_current || 0}/${job.wave_total}</span>` : ''}
-                ${job.replaced_count ? `<span style="color:var(--warning)">🔄 Remplacées: ${job.replaced_count}</span>` : ''}
+                <div class="progress-bar-fill progress-bar-accent animated" style="width:${progressPct}%"></div>
+            </div>` : ''}
+            <div id="provenance-panel" style="display:none; margin-top:var(--space-lg); padding:var(--space-lg); background:var(--bg-secondary); border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
+                <div style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
+                    Sources des données
+                </div>
+                <div id="provenance-sources" style="display:flex; gap:var(--space-xl); flex-wrap:wrap; font-size:var(--font-sm)">
+                    <span style="color:var(--text-secondary)">Chargement…</span>
+                </div>
             </div>
         </div>
 
@@ -87,7 +91,7 @@ export async function renderJob(container, queryId) {
                 ${renderGauge(q.phone_pct || 0, '📞 Téléphone')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
                 ${renderGauge(q.website_pct || 0, '🌐 Site web')}
-                ${renderGauge(q.siret_pct || 0, '🏢 SIRET')}
+                ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
             </div>
             <div style="text-align:center; font-size:var(--font-sm); color:var(--text-muted); margin-top:var(--space-lg)">
                 ${q.total || 0} entreprises au total
@@ -129,10 +133,95 @@ export async function renderJob(container, queryId) {
     // Load companies
     await loadCompanies(queryId, 1, 'completude');
 
+    // Provenance panel toggle
+    const toggleBtn = document.getElementById('toggle-provenance');
+    let provenanceLoaded = false;
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            const panel = document.getElementById('provenance-panel');
+            if (!panel) return;
+            const visible = panel.style.display !== 'none';
+            panel.style.display = visible ? 'none' : 'block';
+            toggleBtn.style.opacity = visible ? '0.4' : '1';
+            // Populate sources on first open
+            if (!visible && !provenanceLoaded && q.sources) {
+                provenanceLoaded = true;
+                const container = document.getElementById('provenance-sources');
+                if (!container) return;
+                const icons = {
+                    maps_lookup: '🗺️ Google Maps',
+                    website_crawl: '🌐 Site web',
+                    web_search: '🔍 Recherche web',
+                    inpi_lookup: '📋 INPI',
+                };
+                const entries = Object.entries(q.sources);
+                if (entries.length === 0) {
+                    container.innerHTML = '<span style="color:var(--text-muted)">Aucune donnée de source disponible</span>';
+                    return;
+                }
+                container.innerHTML = entries.map(([action, data]) => {
+                    const label = icons[action] || action;
+                    const color = data.rate >= 70 ? 'var(--success)' : data.rate >= 40 ? 'var(--warning)' : 'var(--text-muted)';
+                    return `<div style="display:flex;flex-direction:column;gap:2px;padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);min-width:180px">
+                        <span style="font-weight:600">${label}</span>
+                        <span style="color:${color}">${data.success}/${data.total} réussies (${data.rate}%)</span>
+                    </div>`;
+                }).join('');
+            }
+        });
+    }
+
     // Sort change handler
     document.getElementById('job-sort').addEventListener('change', (e) => {
         loadCompanies(queryId, 1, e.target.value);
     });
+
+    // Delete button
+    const deleteBtn = document.getElementById('btn-delete-job');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => {
+            showConfirmModal({
+                title: '🗑️ Supprimer ce batch ?',
+                body: `
+                    <p><strong>Batch :</strong> ${escapeHtml(job.query_name)}</p>
+                    <p><strong>Créé le :</strong> ${formatDateTime(job.created_at)}</p>
+                    <p><strong>${scraped}</strong> entreprises collectées</p>
+                    <p style="color:var(--warning)">⚠️ Les tags de recherche seront supprimés.</p>
+                    <p style="color:var(--success)">✅ Les fiches entreprises et contacts resteront dans la base.</p>
+                `,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteJob(queryId);
+                    if (result._ok !== false) {
+                        showToast('Batch supprimé avec succès', 'success');
+                        window.location.hash = '#/';
+                    } else {
+                        showToast('Erreur lors de la suppression', 'error');
+                    }
+                },
+            });
+        });
+    }
+
+    // Rerun button
+    const rerunBtn = document.getElementById('btn-rerun');
+    if (rerunBtn) {
+        rerunBtn.addEventListener('click', () => {
+            // Pre-fill new batch form from original job params
+            const params = new URLSearchParams();
+            if (job.filters_json) {
+                const f = typeof job.filters_json === 'string' ? JSON.parse(job.filters_json) : job.filters_json;
+                if (f.sector) params.set('sector', f.sector);
+                if (f.department) params.set('department', f.department);
+                if (f.size) params.set('size', f.size);
+                if (f.mode) params.set('mode', f.mode);
+                if (f.naf_code) params.set('naf_code', f.naf_code);
+                if (f.city) params.set('city', f.city);
+            }
+            window.location.hash = `#/new-batch?${params.toString()}`;
+        });
+    }
 }
 
 async function loadCompanies(queryId, page, sort) {

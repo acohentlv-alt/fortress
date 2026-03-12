@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -41,7 +41,7 @@ def _build_query_id(sector: str, dept: str) -> str:
 
 
 @router.post("/run", status_code=202)
-async def run_batch(body: BatchRunRequest):
+async def run_batch(body: BatchRunRequest, request: Request):
     """Create a scrape job and launch the runner subprocess.
 
     Returns 202 with the query_id for monitoring.
@@ -97,11 +97,15 @@ async def run_batch(body: BatchRunRequest):
     # Insert the job row
     try:
         async with get_conn() as conn:
+            # Get user_id from authenticated session (if present)
+            user_id = getattr(request.state, 'user', None)
+            user_id = user_id.id if user_id else None
+
             await conn.execute(
                 """INSERT INTO scrape_jobs
-                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s)""",
-                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json),
+                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s)""",
+                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id),
             )
             await conn.commit()
     except Exception as exc:

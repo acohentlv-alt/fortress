@@ -11,26 +11,28 @@
 const API_BASE = '/api';
 
 /**
- * Get stored API key from localStorage.
+ * In-memory user state (populated by getCurrentUser on app load).
+ * No localStorage needed — the HttpOnly session cookie handles persistence.
  */
-function getApiKey() {
-    return localStorage.getItem('fortress_api_key') || '';
-}
+let _currentUser = null;
+
+export function getCachedUser() { return _currentUser; }
+export function setCachedUser(user) { _currentUser = user; }
+export function clearCachedUser() { _currentUser = null; }
 
 /**
  * Core request wrapper.
  * Returns the JSON body with `_status` and `_ok` fields injected.
- * Automatically sends X-API-Key header from localStorage.
+ * The session cookie is sent automatically via credentials: 'same-origin'.
  */
 async function request(path, options = {}) {
     const url = `${API_BASE}${path}`;
-    const apiKey = getApiKey();
     const headers = { 'Accept': 'application/json', ...options.headers };
-    if (apiKey) headers['X-API-Key'] = apiKey;
     try {
         const resp = await fetch(url, {
             ...options,
             headers,
+            credentials: 'same-origin',
         });
         let data;
         try { data = await resp.json(); } catch { data = {}; }
@@ -40,9 +42,11 @@ async function request(path, options = {}) {
             data._ok = resp.ok;
         }
         if (resp.status === 401) {
-            // API key invalid or missing — clear and reload to show login
-            localStorage.removeItem('fortress_api_key');
-            window.location.reload();
+            // Session expired or invalid — redirect to login
+            _currentUser = null;
+            if (!window.location.hash.startsWith('#/login')) {
+                window.location.hash = '#/login';
+            }
             return data;
         }
         if (!resp.ok) {
@@ -192,15 +196,11 @@ export async function runBatch({ sector, department, size, mode, city, naf_code 
 
 // ── Export ────────────────────────────────────────────────────────
 export function getExportUrl(queryId, format = 'csv') {
-    const key = getApiKey();
-    const base = `${API_BASE}/export/${encodeURIComponent(queryId)}/${format}`;
-    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+    return `${API_BASE}/export/${encodeURIComponent(queryId)}/${format}`;
 }
 
 export function getMasterExportUrl() {
-    const key = getApiKey();
-    const base = `${API_BASE}/export/master/csv`;
-    return key ? `${base}?api_key=${encodeURIComponent(key)}` : base;
+    return `${API_BASE}/export/master/csv`;
 }
 
 // ── Health Check ─────────────────────────────────────────────────
@@ -219,14 +219,11 @@ export async function checkHealth() {
 export async function uploadClientCSV(file) {
     const formData = new FormData();
     formData.append('file', file);
-    const headers = {};
-    const apiKey = getApiKey();
-    if (apiKey) headers['X-API-Key'] = apiKey;
     try {
         const resp = await fetch(`${API_BASE}/client/upload`, {
             method: 'POST',
-            headers,
             body: formData,
+            credentials: 'same-origin',
         });
         let data;
         try { data = await resp.json(); } catch { data = {}; }
@@ -258,28 +255,49 @@ export async function checkAuthRequired() {
     }
 }
 
-export async function loginWithApiKey(apiKey) {
+export async function loginUser(username, password) {
     try {
         const resp = await fetch(`${API_BASE}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: apiKey }),
+            credentials: 'same-origin',
+            body: JSON.stringify({ username, password }),
         });
         const data = await resp.json();
         if (resp.ok && data.status === 'ok') {
-            localStorage.setItem('fortress_api_key', apiKey);
-            return { ok: true };
+            _currentUser = data.user;
+            return { ok: true, user: data.user };
         }
-        return { ok: false, error: data.error || 'Clé invalide' };
+        return { ok: false, error: data.error || 'Identifiants incorrects.' };
     } catch (err) {
         return { ok: false, error: err.message };
     }
 }
 
-export function logout() {
-    localStorage.removeItem('fortress_api_key');
+export async function logoutUser() {
+    try {
+        await fetch(`${API_BASE}/auth/logout`, {
+            method: 'POST',
+            credentials: 'same-origin',
+        });
+    } catch { /* ignore */ }
+    _currentUser = null;
 }
 
-export function isLoggedIn() {
-    return !!localStorage.getItem('fortress_api_key');
+export async function getCurrentUser() {
+    try {
+        const resp = await fetch(`${API_BASE}/auth/me`, {
+            credentials: 'same-origin',
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            _currentUser = data.user;
+            return data.user;
+        }
+        _currentUser = null;
+        return null;
+    } catch {
+        _currentUser = null;
+        return null;
+    }
 }

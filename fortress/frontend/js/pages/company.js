@@ -189,21 +189,21 @@ export async function renderCompany(container, siren) {
                     <h3 class="detail-section-title">📞 Contact</h3>
                     ${detailRow('Téléphone', mc.phone
         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_phone'), 'Google Maps')}
+        : unenrichedField('contact_phone'), sourceLabel(mc.phone_source))}
                     ${detailRow('Email', mc.email
             ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-            : unenrichedField('contact_web'), mc.website ? `Site web (${mc.website})` : 'Site web')}
+            : unenrichedField('contact_web'), sourceLabel(mc.email_source))}
                     ${detailRow('Site web', mc.website
                 ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-                : unenrichedField('contact_web'), 'Google Maps')}
-                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, 'Google Maps') : ''}
-                    ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`, 'Google Maps') : ''}
-                    ${mc.social_linkedin ? detailRow('LinkedIn', `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
-                    ${mc.social_facebook ? detailRow('Facebook', `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
-                    ${mc.social_twitter ? detailRow('Twitter', `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`, mc.website ? `Trouvé sur ${mc.website}` : 'Site web') : ''}
+                : unenrichedField('contact_web'), sourceLabel(mc.website_source))}
+                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
+                    ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`, '🗺️ Google Maps') : ''}
+                    ${mc.social_linkedin ? detailRow('LinkedIn', `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`, sourceLabel(mc.social_linkedin_source)) : ''}
+                    ${mc.social_facebook ? detailRow('Facebook', `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`, sourceLabel(mc.social_facebook_source)) : ''}
+                    ${mc.social_twitter ? detailRow('Twitter', `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`, sourceLabel(mc.social_twitter_source)) : ''}
                     ${mc.rating ? `
                         <div class="detail-row" style="margin-top:var(--space-md)">
-                            <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : Google Maps">ℹ️</span></span>
+                            <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
                             <span class="detail-value">
                                 <span style="font-weight:700">${mc.rating}</span>
                                 <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
@@ -335,6 +335,22 @@ function _initEnrichmentPanel(siren) {
             }
         });
     });
+}
+
+/**
+ * Translate a contact source code (from DB) to a human-readable French label.
+ * e.g. 'google_maps' → '🗺️ Google Maps'
+ */
+function sourceLabel(src) {
+    if (!src) return null;
+    const map = {
+        google_maps:   '🗺️ Google Maps',
+        website_crawl: '🌐 Site web',
+        synthesized:   '🔗 Synthèse',
+        inpi:          '📋 INPI',
+        sirene:        '🏛️ Registre SIRENE',
+    };
+    return map[src] || src;
 }
 
 function detailRow(label, value, source = null) {

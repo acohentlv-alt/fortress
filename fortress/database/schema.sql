@@ -237,3 +237,21 @@ CREATE INDEX IF NOT EXISTS idx_enrichment_log_query ON enrichment_log(query_id);
 
 -- Add cancel_requested flag for graceful pipeline cancellation
 ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE;
+
+-- ---------------------------------------------------------------------------
+-- Users — authentication and role-based access
+-- Roles: 'admin' (sees all data), 'user' (sees own batches only)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL          PRIMARY KEY,
+    username        VARCHAR(50)     NOT NULL UNIQUE,
+    password_hash   TEXT            NOT NULL,
+    role            VARCHAR(20)     NOT NULL DEFAULT 'user',  -- 'admin' | 'user'
+    display_name    TEXT,
+    created_at      TIMESTAMP       NOT NULL DEFAULT NOW(),
+    last_login      TIMESTAMP
+);
+
+-- Add user_id to scrape_jobs so we can filter "my batches" per user
+ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);

@@ -145,6 +145,21 @@ def checkpoint_exists(job_id: str, *, base_dir: Path = _DEFAULT_BASE_DIR) -> boo
     return (base_dir / job_id / "job_state.json").exists()
 
 
+def clear(job_id: str, *, base_dir: Path = _DEFAULT_BASE_DIR) -> bool:
+    """Remove all checkpoint files for a job.
+
+    Returns True if a checkpoint directory was found and removed.
+    Safe to call even if no checkpoint exists.
+    """
+    import shutil
+
+    ckpt_dir = base_dir / job_id
+    if ckpt_dir.exists():
+        shutil.rmtree(ckpt_dir, ignore_errors=True)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

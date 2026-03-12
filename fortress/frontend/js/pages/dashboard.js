@@ -106,7 +106,8 @@ export async function renderDashboard(container) {
         <!-- View Toggle -->
         <div class="view-toggle">
             <button class="view-toggle-btn active" id="btn-by-location">📍 Par Localisation</button>
-            <button class="view-toggle-btn" id="btn-by-job">📋 Par Job</button>
+            <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
+            <button class="view-toggle-btn" id="btn-by-sector">🏭 Par Secteur</button>
         </div>
 
         <!-- View Container -->
@@ -135,6 +136,11 @@ export async function renderDashboard(container) {
         } else {
             renderByJob(jobs);
         }
+    });
+
+    document.getElementById('btn-by-sector').addEventListener('click', () => {
+        setActiveToggle('btn-by-sector');
+        renderBySector(jobs);
     });
 }
 
@@ -308,6 +314,62 @@ function _renderGroupCard(g, idx) {
     }).join('')}
                 </div>
             </div>
+        </div>
+    `;
+}
+
+// ── By Sector View ─────────────────────────────────────────────────
+function renderBySector(jobs) {
+    const view = document.getElementById('dashboard-view');
+    if (!jobs || jobs.length === 0) {
+        view.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">🏭</div>
+                <div class="empty-state-text">Aucun secteur trouvé</div>
+                <p style="color: var(--text-muted)">Lancez un batch pour commencer</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Group by sector (first word of query_name, uppercased)
+    const sectors = {};
+    for (const j of jobs) {
+        const sector = (j.sector || (j.query_name || '').split(' ')[0]).toUpperCase().trim();
+        if (!sector) continue;
+        if (!sectors[sector]) sectors[sector] = { name: sector, batches: [], totalScraped: 0 };
+        sectors[sector].batches.push(j);
+        sectors[sector].totalScraped += (j.companies_scraped || 0);
+    }
+
+    // Sort by total scraped (most data first)
+    const sorted = Object.values(sectors).sort((a, b) => b.totalScraped - a.totalScraped);
+
+    view.innerHTML = `
+        <div class="dept-grid">
+            ${sorted.map(s => {
+                const batchCount = s.batches.length;
+                const hasRunning = s.batches.some(b => b.status === 'in_progress');
+                const depts = [...new Set(s.batches.map(b => {
+                    const parts = (b.query_name || '').split(' ');
+                    return parts.length > 1 ? parts.slice(1).join(' ') : '';
+                }).filter(Boolean))];
+
+                return `
+                    <div class="dept-card" onclick="window.location.hash='#/search?q=${encodeURIComponent(s.name)}'">
+                        <div class="dept-card-header">
+                            <span class="dept-card-number">🏭</span>
+                            <span class="dept-card-count">${s.totalScraped} entreprise${s.totalScraped > 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="dept-card-name">${escapeHtml(s.name)}</div>
+                        <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs)">
+                            ${batchCount} batch${batchCount > 1 ? 'es' : ''}
+                            ${depts.length > 0 ? ` · ${depts.slice(0, 3).join(', ')}${depts.length > 3 ? '…' : ''}` : ''}
+                            ${hasRunning ? ' · ⏳ En cours' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('')}
         </div>
     `;
 }

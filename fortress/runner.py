@@ -185,6 +185,14 @@ async def run(query_id: str) -> None:
 
     log.info("runner_start", query_id=query_id, wave_size=_wave_size)
 
+    # ── Clear stale checkpoint from previous runs ────────────────────────
+    # Every runner invocation is a NEW job launch. Old checkpoint dirs
+    # with the same query_id would cause batch.already_complete skip.
+    from fortress.module_d import checkpoint as _ckpt
+    if _ckpt.checkpoint_exists(query_id):
+        _ckpt.clear(query_id)
+        log.info("runner.stale_checkpoint_cleared", query_id=query_id)
+
     # ── Phase 4: start Google Maps scraper (Playwright Chromium) ─────────────
     # Browser must be started before the DB connection pool and heavy SIRENE
     # queries.  After interpret_query (20+ seconds of SQL), browser sometimes

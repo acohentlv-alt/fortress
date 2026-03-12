@@ -429,25 +429,34 @@ async def get_company(siren: str):
 
 
 def _merge_contacts(contacts: list[dict]) -> dict:
-    """Merge all contact rows into a single best-of dict."""
+    """Merge all contact rows into a single best-of dict with per-field provenance."""
     merged = {
-        "phone": None, "email": None, "email_type": None,
-        "website": None, "social_linkedin": None,
-        "social_facebook": None, "social_twitter": None,
-        "rating": None, "review_count": None, "sources": [],
+        "phone": None, "phone_source": None,
+        "email": None, "email_source": None,
+        "email_type": None,
+        "website": None, "website_source": None,
+        "social_linkedin": None, "social_linkedin_source": None,
+        "social_facebook": None, "social_facebook_source": None,
+        "social_twitter": None, "social_twitter_source": None,
+        "rating": None, "rating_source": None,
+        "review_count": None,
+        "sources": [],
     }
     for c in contacts:
-        if c.get("source"):
-            merged["sources"].append(c["source"])
+        src = c.get("source")
+        if src:
+            merged["sources"].append(src)
         for key in ("phone", "email", "website", "social_linkedin",
                      "social_facebook", "social_twitter"):
             if merged[key] is None and c.get(key):
                 merged[key] = c[key]
+                merged[f"{key}_source"] = src
         if merged["email_type"] is None and c.get("email_type"):
             merged["email_type"] = c["email_type"]
         if merged["rating"] is None and c.get("rating"):
             merged["rating"] = c["rating"]
             merged["review_count"] = c.get("review_count")
+            merged["rating_source"] = src
 
     merged["sources"] = list(set(merged["sources"]))
     return merged

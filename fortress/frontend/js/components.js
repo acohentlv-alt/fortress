@@ -108,7 +108,10 @@ export function contactIndicators(contact) {
     };
 
     const phoneDisplay = contact.phone
-        ? `<a href="tel:${escapeHtml(contact.phone)}" onclick="event.stopPropagation()" style="color:var(--success);text-decoration:none">${escapeHtml(contact.phone)}</a>`
+        ? (() => {
+            const cleanPhone = String(contact.phone).replace(/[\n\r\s]+/g, '').trim();
+            return `<a href="tel:${escapeHtml(cleanPhone)}" onclick="event.stopPropagation()" style="color:var(--success);text-decoration:none;white-space:nowrap">${escapeHtml(cleanPhone)}</a>`;
+        })()
         : '—';
 
     const emailDisplay = contact.email
@@ -161,16 +164,21 @@ export function completudeBar(company) {
 }
 
 // ── Compact Company Card ─────────────────────────────────────────
-export function companyCard(company) {
+export function companyCard(company, opts = {}) {
     const siren = company.siren || '';
+    const removeBtn = opts.removable ? `
+        <button class="card-remove-btn" data-siren="${siren}" title="Retirer de cette requête"
+            onclick="event.stopPropagation();">×</button>
+    ` : '';
     return `
-        <div class="company-card" onclick="window.location.hash='#/company/${siren}'">
+        <div class="company-card" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'">
             <div class="company-card-header">
                 <div>
                     <div class="company-card-name">${escapeHtml(company.denomination || '—')}</div>
                     <div class="company-card-siren">${formatSiren(siren)}</div>
                 </div>
                 <div style="display:flex; gap:6px; align-items:center;">
+                    ${removeBtn}
                     ${statutBadge(company.statut)}
                     ${formeJuridiqueBadge(company.forme_juridique)}
                 </div>
@@ -447,3 +455,67 @@ export function renderProgressRing(pct, size = 120, strokeWidth = 6) {
         </div>
     `;
 }
+
+// ── Confirmation Modal ───────────────────────────────────────────
+/**
+ * Show a reusable confirmation modal.
+ * @param {object} opts
+ * @param {string} opts.title     - Modal title
+ * @param {string} opts.body      - HTML body content
+ * @param {string} opts.confirmLabel - Confirm button text (default: 'Confirmer')
+ * @param {boolean} opts.danger   - If true, confirm button is red
+ * @param {Function} opts.onConfirm - Async callback when confirmed
+ */
+export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, onConfirm }) {
+    // Remove any existing modal
+    const existing = document.getElementById('confirm-modal-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'confirm-modal-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-content">
+            <h3 class="modal-title">${title}</h3>
+            <div class="modal-body">${body}</div>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn btn-secondary">Annuler</button>
+                <button id="modal-confirm" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${confirmLabel}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    // Fade in
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    const close = () => {
+        overlay.classList.remove('visible');
+        setTimeout(() => overlay.remove(), 200);
+    };
+
+    // Backdrop click
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+
+    // Escape key
+    const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+
+    // Cancel button
+    document.getElementById('modal-cancel').addEventListener('click', close);
+
+    // Confirm button
+    document.getElementById('modal-confirm').addEventListener('click', async () => {
+        const btn = document.getElementById('modal-confirm');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> …';
+        try {
+            await onConfirm();
+        } catch (err) {
+            console.error('Modal confirm error:', err);
+        }
+        close();
+    });
+}
+

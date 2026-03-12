@@ -12,7 +12,7 @@ import { renderNewBatch } from './pages/new-batch.js';
 import { renderOpenQuery } from './pages/open-query.js';
 import { renderUpload } from './pages/upload.js';
 import { renderLogin } from './pages/login.js';
-import { getDashboardStats, checkAuthRequired, isLoggedIn, logout } from './api.js';
+import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 
 // ── Page Cleanup System ──────────────────────────────────────────
 // Pages register cleanup functions (e.g. clearInterval) that must
@@ -53,8 +53,78 @@ function showLoading() {
     getPageContent().innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 }
 
+// ── UI helpers ───────────────────────────────────────────────────
+
+function _showSidebar(show) {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.style.display = show ? '' : 'none';
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) mainContent.style.marginLeft = show ? '' : '0';
+    const header = document.querySelector('.header');
+    if (header) header.style.display = show ? '' : 'none';
+}
+
+function _updateUserDisplay(user) {
+    const el = document.getElementById('user-display');
+    if (!el) return;
+    if (!user) {
+        el.style.display = 'none';
+        return;
+    }
+    const icon = user.role === 'admin' ? '👑' : '👤';
+    const label = user.display_name || user.username;
+    el.innerHTML = `${icon} ${label}`;
+    el.style.display = 'block';
+}
+
+function _showLoginPage() {
+    _showSidebar(false);
+    renderLogin(getPageContent(), (user) => {
+        // On successful login — restore app UI
+        _showSidebar(true);
+        _updateUserDisplay(user);
+        _setupLogout();
+        _setupRunningJobs();
+        initGlobalSearch();
+        // Navigate to dashboard
+        window.location.hash = '#/';
+        navigate();
+    });
+}
+
+function _setupLogout() {
+    const logoutBtn = document.getElementById('btn-logout');
+    if (!logoutBtn) return;
+    logoutBtn.style.display = 'block';
+    // Remove old listener by cloning
+    const fresh = logoutBtn.cloneNode(true);
+    logoutBtn.parentNode.replaceChild(fresh, logoutBtn);
+    fresh.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await logoutUser();
+        _updateUserDisplay(null);
+        _showLoginPage();
+    });
+}
+
+// ── Navigation ───────────────────────────────────────────────────
+
 async function navigate() {
     const hash = window.location.hash || '#/';
+
+    // Login route — skip auth check
+    if (hash === '#/login') {
+        _showLoginPage();
+        return;
+    }
+
+    // Auth guard — verify session before rendering
+    const user = getCachedUser();
+    if (!user) {
+        _showLoginPage();
+        return;
+    }
+
     const container = getPageContent();
 
     // Find matching route
@@ -100,6 +170,7 @@ async function navigate() {
 // ── Global Search ────────────────────────────────────────────────
 function initGlobalSearch() {
     const input = document.getElementById('global-search');
+    if (!input) return;
     let debounceTimer;
 
     input.addEventListener('keydown', (e) => {
@@ -124,6 +195,8 @@ function initGlobalSearch() {
 }
 
 // ── Running Job Badge ────────────────────────────────────────────
+let _runningJobsInterval = null;
+
 async function checkRunningJobs() {
     const stats = await getDashboardStats();
     const badge = document.getElementById('header-running-badge');
@@ -135,48 +208,44 @@ async function checkRunningJobs() {
     }
 }
 
-// ── Auth Gate ─────────────────────────────────────────────────────
-let _authRequired = false;
+function _setupRunningJobs() {
+    checkRunningJobs();
+    if (_runningJobsInterval) clearInterval(_runningJobsInterval);
+    _runningJobsInterval = setInterval(checkRunningJobs, 30000);
+}
+
+// ── App Init ─────────────────────────────────────────────────────
 
 async function initApp() {
-    const authInfo = await checkAuthRequired();
-    _authRequired = authInfo.auth_required;
+    // Check session with backend — cookie is sent automatically
+    const user = await getCurrentUser();
 
-    if (_authRequired && !isLoggedIn()) {
-        // Hide sidebar, show login
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar) sidebar.style.display = 'none';
-        renderLogin(getPageContent(), () => {
-            // On successful login, restore UI and navigate
-            if (sidebar) sidebar.style.display = '';
-            navigate();
-        });
+    if (!user) {
+        // Not authenticated — show login page
+        _showLoginPage();
         return;
     }
 
+    // Authenticated — show full app
+    _showSidebar(true);
+    _updateUserDisplay(user);
+    _setupLogout();
     initGlobalSearch();
     navigate();
-    checkRunningJobs();
-    // Poll for running jobs every 30s (reduced from 10s to limit DB load)
-    setInterval(checkRunningJobs, 30000);
-
-    // Show logout button if auth is active
-    if (_authRequired) {
-        const logoutBtn = document.getElementById('btn-logout');
-        if (logoutBtn) {
-            logoutBtn.style.display = 'block';
-            logoutBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                logout();
-                window.location.reload();
-            });
-        }
-    }
+    _setupRunningJobs();
 }
 
-// ── Init ─────────────────────────────────────────────────────────
+// ── Event Listeners ──────────────────────────────────────────────
 window.addEventListener('hashchange', () => {
-    if (_authRequired && !isLoggedIn()) return;
+    const hash = window.location.hash || '#/';
+    if (hash === '#/login') {
+        _showLoginPage();
+        return;
+    }
+    if (!getCachedUser()) {
+        _showLoginPage();
+        return;
+    }
     navigate();
 });
 window.addEventListener('DOMContentLoaded', initApp);

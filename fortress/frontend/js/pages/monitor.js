@@ -12,11 +12,11 @@
  *   - Counters: animate only when value changes
  */
 
-import { getJobs, getJob, getJobQuality, getJobCompanies } from '../api.js';
+import { getJobs, getJob, getJobQuality, getJobCompanies, cancelJob } from '../api.js';
 import {
     breadcrumb, statusBadge, formatDateTime, escapeHtml,
     renderGauge, companyCard, renderTriageBar, renderPipelineStages,
-    animateCounter, renderProgressRing,
+    animateCounter, renderProgressRing, showConfirmModal, showToast,
 } from '../components.js';
 import { registerCleanup } from '../app.js';
 
@@ -116,7 +116,10 @@ async function renderJobMonitor(container, queryId) {
                 <h1 class="page-title" id="mon-title">Chargement...</h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)" id="mon-status-row"></div>
             </div>
-            <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-secondary">📋 Détail complet</a>
+            <div style="display:flex; align-items:center; gap:var(--space-sm)">
+                <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="Arrêter ce batch">⏹ Arrêter</button>
+                <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-secondary">📋 Détail complet</a>
+            </div>
         </div>
 
         <!-- Poll warning (hidden by default) -->
@@ -213,6 +216,7 @@ async function renderJobMonitor(container, queryId) {
         breadcrumb: document.getElementById('mon-breadcrumb'),
         pollWarning: document.getElementById('mon-poll-warning'),
         completion: document.getElementById('mon-completion'),
+        cancelBtn: document.getElementById('mon-cancel-btn'),
     };
 
     // ── State tracking ──────────────────────────────────────────
@@ -220,6 +224,35 @@ async function renderJobMonitor(container, queryId) {
     let lastScrapedCount = 0;
     let failedPolls = 0;
     let previousValues = { scraped: -1, failed: -1, batch: -1, replaced: -1, pct: -1 };
+
+    // ── Cancel button handler ───────────────────────────────────────────
+    if ($.cancelBtn) {
+        $.cancelBtn.addEventListener('click', () => {
+            const scraped = previousValues.scraped > 0 ? previousValues.scraped : 0;
+            const batchSize = previousValues.batch > 0 ? previousValues.batch : 0;
+            const remaining = Math.max(0, batchSize - scraped);
+            const pct = batchSize > 0 ? Math.round((scraped / batchSize) * 100) : 0;
+            showConfirmModal({
+                title: '\u23f9 Arr\u00eater ce batch ?',
+                body: `
+                    <p><strong>Batch :</strong> ${escapeHtml($.title.textContent)}</p>
+                    <p><strong>Progression :</strong> ${scraped}/${batchSize} entreprises (${pct}%)</p>
+                    <p style="color:var(--success)">\u2705 Les ${scraped} entreprises d\u00e9j\u00e0 collect\u00e9es seront conserv\u00e9es.</p>
+                    <p style="color:var(--warning)">\u26a0\ufe0f Les ${remaining} restantes ne seront pas trait\u00e9es.</p>
+                `,
+                confirmLabel: 'Arr\u00eater le batch',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await cancelJob(queryId);
+                    if (result._ok !== false) {
+                        showToast('Batch arr\u00eat\u00e9', 'success');
+                    } else {
+                        showToast('Erreur lors de l\'arr\u00eat', 'error');
+                    }
+                },
+            });
+        });
+    }
 
     // ── Smart update function — patches by ID, no full rebuild ───
     async function update() {
@@ -271,6 +304,11 @@ async function renderJobMonitor(container, queryId) {
             ${statusBadge(job.status)}
             ${isRunning ? '<span class="live-badge"><span class="live-badge-dot"></span> EN DIRECT</span>' : ''}
         `;
+
+        // Show/hide cancel button
+        if ($.cancelBtn) {
+            $.cancelBtn.style.display = isRunning ? '' : 'none';
+        }
 
         // ── Progress Ring — only update if pct changed ──────────
         if (pct !== previousValues.pct) {
@@ -342,7 +380,7 @@ async function renderJobMonitor(container, queryId) {
                 ${renderGauge(q.phone_pct || 0, '📞 Tél.')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
                 ${renderGauge(q.website_pct || 0, '🌐 Web')}
-                ${renderGauge(q.siret_pct || 0, '🏢 SIRET')}
+                ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
             `;
         } catch { /* gauges are optional */ }
 

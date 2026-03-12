@@ -6,6 +6,11 @@ Run with:
 Serves:
     - /api/* endpoints for data access
     - / static files for the frontend SPA
+
+Authentication:
+    Session-based via signed cookies. All /api/* routes require authentication
+    except /api/health, /api/auth/check, /api/auth/login, /api/auth/logout.
+    The session cookie is HttpOnly (JS can't read it), signed with SESSION_SECRET.
 """
 
 from contextlib import asynccontextmanager
@@ -19,8 +24,9 @@ from fastapi.staticfiles import StaticFiles
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import batch, client, companies, dashboard, departments, export, health, jobs
+from fortress.api.routes import auth as auth_routes, batch, client, companies, dashboard, departments, export, health, jobs
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -78,33 +84,50 @@ async def _pg_interface_handler(request: Request, exc: psycopg.InterfaceError):
     )
 
 
-# ── API Key Auth Middleware ─────────────────────────────────────────
-# Enabled when FORTRESS_API_KEY is set in .env or environment.
-# Protects all /api/* routes except /api/health and /api/auth/check.
-# Frontend sends the key via X-API-Key header (stored in localStorage).
+# ── Session Auth Middleware ─────────────────────────────────────────
+# Protects all /api/* routes except public paths.
+# Reads the session cookie, decodes it, and attaches user to request.state.
 
-_PUBLIC_PATHS = {"/api/health", "/api/auth/check", "/api/auth/login"}
+_PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/check",
+    "/api/auth/login",
+    "/api/auth/logout",
+}
+
+_COOKIE_NAME = "fortress_session"
 
 
-class ApiKeyMiddleware(BaseHTTPMiddleware):
+class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+
         # Only protect /api/* routes (not static files)
-        if settings.api_key and path.startswith("/api/") and path not in _PUBLIC_PATHS:
-            key = request.headers.get("x-api-key") or request.query_params.get("api_key")
-            if key != settings.api_key:
+        if path.startswith("/api/") and path not in _PUBLIC_PATHS:
+            token = request.cookies.get(_COOKIE_NAME)
+            if not token:
                 return JSONResponse(
                     status_code=401,
-                    content={"error": "Clé API invalide ou manquante."},
+                    content={"error": "Authentification requise."},
                 )
+            user = decode_session_token(token)
+            if not user:
+                response = JSONResponse(
+                    status_code=401,
+                    content={"error": "Session expirée. Veuillez vous reconnecter."},
+                )
+                response.delete_cookie(_COOKIE_NAME)
+                return response
+            # Attach user to request so routes can access it
+            request.state.user = user
+        else:
+            request.state.user = None
+
         return await call_next(request)
 
 
-if settings.api_key:
-    app.add_middleware(ApiKeyMiddleware)
-    logger.info("🔐 API key protection ENABLED")
-else:
-    logger.info("🔓 API key protection DISABLED (set FORTRESS_API_KEY to enable)")
+app.add_middleware(SessionAuthMiddleware)
+logger.info("🔐 Session-based authentication ENABLED")
 
 
 # CORS — restrict to configured frontend origin
@@ -116,27 +139,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Auth endpoints ─────────────────────────────────────────────────
-
-@app.get("/api/auth/check")
-async def auth_check():
-    """Returns whether auth is required."""
-    return {"auth_required": bool(settings.api_key)}
-
-
-@app.post("/api/auth/login")
-async def auth_login(request: Request):
-    """Validate an API key. Returns ok if valid."""
-    body = await request.json()
-    key = body.get("api_key", "")
-    if not settings.api_key:
-        return {"status": "ok", "message": "Auth non requise."}
-    if key == settings.api_key:
-        return {"status": "ok"}
-    return JSONResponse(status_code=401, content={"error": "Clé API invalide."})
-
-
 # Register API routers
+app.include_router(auth_routes.router)
 app.include_router(health.router)
 app.include_router(dashboard.router)
 app.include_router(departments.router)

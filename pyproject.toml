@@ -4,24 +4,28 @@ version = "0.1.0"
 description = "Zero-Cost French B2B Extraction Engine"
 requires-python = ">=3.11"
 dependencies = [
+    # Web framework
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    # Auth
+    "bcrypt>=4.0",
+    "itsdangerous>=2.1",
     # Database
     "psycopg[binary]>=3.1",
     "psycopg_pool>=3.2",
     # Data processing
     "polars>=1.0",
-    "duckdb>=1.0",
     # HTTP clients
     "curl_cffi>=0.14",
     "httpx[http2]>=0.28",
-    # Browser automation (Google Maps fallback)
-    "nodriver>=0.48",
+    # Browser automation (Google Maps scraper)
+    "playwright>=1.40",
     # Models & validation
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     # Fuzzy matching
     "rapidfuzz>=3.0",
-    # UI
-    "streamlit>=1.30",
     # Logging
     "structlog>=24.0",
     # Utilities
@@ -38,8 +42,11 @@ dev = [
     "mypy>=1.13",
     "pre-commit>=4.0",
 ]
-stealth = [
-    # Camoufox fallback — install separately if needed
+extra = [
+    # Not required for production deploy
+    "streamlit>=1.30",
+    "nodriver>=0.48",
+    "duckdb>=1.0",
     "camoufox[geoip]>=0.4",
 ]
 
