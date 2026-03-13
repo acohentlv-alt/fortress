@@ -383,7 +383,7 @@ async def run(query_id: str) -> None:
                         async def enrich_fn(companies, on_save=None):  # noqa: ANN001, ANN202
                             nonlocal wave_counter, companies_scraped, total_replaced
 
-                            async def _on_progress(tried: int, replaced: int) -> None:
+                            async def _on_progress(tried: int, replaced: int, qualified: int = 0) -> None:
                                 """Fires after each company decision — updates DB mid-wave."""
                                 nonlocal companies_scraped, total_replaced
                                 # `tried` is cumulative within this wave's enricher call
@@ -393,6 +393,7 @@ async def run(query_id: str) -> None:
                                     conn_holder, query_id,
                                     companies_scraped=companies_scraped,
                                     replaced_count=total_replaced,
+                                    companies_qualified=qualified,
                                 )
 
                             contacts, replaced = await enrich_companies(

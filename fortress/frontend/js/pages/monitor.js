@@ -58,8 +58,9 @@ async function renderMonitorList(container) {
             <div class="job-list">
                 ${runningJobs.map(j => {
         const batchSize = j.batch_size || j.total_companies || 1;
+        const qualified = j.companies_qualified || 0;
         const scraped = j.companies_scraped || 0;
-        const pct = Math.min(100, Math.round((scraped / batchSize) * 100));
+        const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
         return `
                         <div class="job-card" onclick="window.location.hash='#/monitor/${encodeURIComponent(j.query_id)}'">
                             <div class="job-card-info">
@@ -289,9 +290,11 @@ async function renderJobMonitor(container, queryId) {
 
         const batchSize = job.batch_size || job.total_companies || 1;
         const scraped = job.companies_scraped || 0;
+        const qualified = job.companies_qualified || 0;
         const failed = job.companies_failed || 0;
         const replaced = job.replaced_count || 0;
-        const pct = Math.min(100, Math.round((scraped / batchSize) * 100));
+        // Progress = qualified companies / batch_size (only phone-confirmed count)
+        const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
         const isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
 
         // ── Breadcrumb + Title ──────────────────────────────────
@@ -299,9 +302,9 @@ async function renderJobMonitor(container, queryId) {
             { label: 'Pipeline Live', href: '#/monitor' },
             { label: job.query_name },
         ]);
-        $.title.textContent = job.query_name;
+        $.title.textContent = job.query_name || 'Batch en cours';
         $.statusRow.innerHTML = `
-            ${statusBadge(job.status)}
+            ${statusBadge(job.status || 'queued')}
             ${isRunning ? '<span class="live-badge"><span class="live-badge-dot"></span> EN DIRECT</span>' : ''}
         `;
 
@@ -327,8 +330,8 @@ async function renderJobMonitor(container, queryId) {
 
         // ── Metric Counters — animate only on change ────────────
         if (scraped !== previousValues.scraped) {
-            previousValues.scraped = scraped;
-            animateCounter($.scraped, scraped);
+            previousValues.scraped = qualified;  // Show qualified count as "Complétées"
+            animateCounter($.scraped, qualified);
         }
         if (failed !== previousValues.failed) {
             previousValues.failed = failed;
@@ -403,10 +406,10 @@ async function renderJobMonitor(container, queryId) {
             : `Batch terminé · ${formatDateTime(job.updated_at)}`;
 
         // ── Company Cards — append-only (track rendered SIRENs) ──
-        $.cardsTitle.textContent = `📋 Entreprises collectées (${scraped})`;
+        $.cardsTitle.textContent = `📋 Entreprises collectées (${qualified})`;
 
-        if (scraped > 0 && scraped !== lastScrapedCount) {
-            lastScrapedCount = scraped;
+        if (qualified > 0 && qualified !== lastScrapedCount) {
+            lastScrapedCount = qualified;
             try {
                 const cardData = await getJobCompanies(queryId, { page: 1, pageSize: 50, sort: 'completude' });
                 if (cardData && cardData.companies && cardData.companies.length > 0) {

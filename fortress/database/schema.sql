@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
     filters_json            TEXT,                                 -- JSON-serialized advanced filters from UI
     batch_size              INTEGER         DEFAULT 0,            -- user-requested company count (stays constant)
     replaced_count          INTEGER         DEFAULT 0,            -- companies replaced by qualify-or-replace loop
+    companies_qualified     INTEGER         DEFAULT 0,            -- companies with confirmed phone (MVP field)
     created_at              TIMESTAMP       NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMP       NOT NULL DEFAULT NOW()
 );

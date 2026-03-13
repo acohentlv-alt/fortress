@@ -27,6 +27,7 @@ async def list_jobs(request: Request):
             sj.batch_number, sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             COALESCE(sj.replaced_count, 0) AS replaced_count,
+            COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.filters_json,
             UPPER(SPLIT_PART(sj.query_name, ' ', 1)) AS sector,
             sj.user_id,
@@ -122,7 +123,8 @@ async def get_job(query_id: str):
             sj.batch_number, sj.batch_offset, sj.filters_json,
             sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
-            COALESCE(sj.replaced_count, 0) AS replaced_count
+            COALESCE(sj.replaced_count, 0) AS replaced_count,
+            COALESCE(sj.companies_qualified, 0) AS companies_qualified
         FROM scrape_jobs sj
         WHERE sj.query_id = %s
     """, (query_id,))

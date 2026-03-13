@@ -502,13 +502,23 @@ async def enrich_companies(
         source_counts[source_label] += 1
 
         # ── Qualification decision ────────────────────────────────────
-        # KEEP: Maps confirmed the company (high confidence) AND found data
-        # REPLACE: Maps found nothing, or wrong city, or no useful data
-        qualified = contact is not None and match_confidence != "none"
+        # KEEP: Maps confirmed the company (high confidence) AND found phone
+        # REPLACE: Maps found nothing, wrong city, or no phone number
+        # Phone is the MVP field — users expect actionable contact data.
+        qualified = (
+            contact is not None
+            and match_confidence != "none"
+            and contact.phone is not None  # MVP: phone required
+        )
 
         if not qualified:
             replaced_count += 1
-            reason = "no_maps_data" if match_confidence == "none" else "low_confidence"
+            if match_confidence == "none":
+                reason = "no_maps_data"
+            elif contact is not None and contact.phone is None:
+                reason = "no_phone"
+            else:
+                reason = "low_confidence"
             rejected_batch.append((company.siren, reason))
             log.info(
                 "enricher.company_replaced",
@@ -531,7 +541,7 @@ async def enrich_companies(
                 )
             # Notify runner of incremental progress
             if on_progress:
-                await on_progress(len(tried_sirens), replaced_count)
+                await on_progress(len(tried_sirens), replaced_count, len(contacts))
             # Log for admin
             await _log_enrichment(
                 pool, query_id, company, "replaced", match_confidence, None, None, maps_name, 0, reason,
@@ -560,7 +570,7 @@ async def enrich_companies(
 
         # Notify runner of incremental progress
         if on_progress:
-            await on_progress(len(tried_sirens), replaced_count)
+            await on_progress(len(tried_sirens), replaced_count, len(contacts))
 
         # Log for admin
         await _log_enrichment(
