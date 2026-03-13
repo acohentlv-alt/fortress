@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, checkHealth, extractApiError } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, checkHealth, extractApiError, getCachedUser } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast } from '../components.js';
 
 const API_BASE = '/api';
@@ -108,6 +108,7 @@ export async function renderDashboard(container) {
             <button class="view-toggle-btn active" id="btn-by-location">📍 Par Localisation</button>
             <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-sector">🏭 Par Secteur</button>
+            ${(getCachedUser()?.role === 'admin') ? '<button class="view-toggle-btn" id="btn-data-bank">🏦 Banque de Données</button>' : ''}
         </div>
 
         <!-- View Container -->
@@ -142,6 +143,22 @@ export async function renderDashboard(container) {
         setActiveToggle('btn-by-sector');
         renderBySector(jobs);
     });
+
+    // Admin-only data bank tab
+    const dataBankBtn = document.getElementById('btn-data-bank');
+    if (dataBankBtn) {
+        dataBankBtn.addEventListener('click', async () => {
+            setActiveToggle('btn-data-bank');
+            const view = document.getElementById('dashboard-view');
+            view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            const data = await getDataBank();
+            if (!data || data._ok === false) {
+                view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
+                return;
+            }
+            renderDataBank(data);
+        });
+    }
 }
 
 function setActiveToggle(activeId) {
@@ -371,5 +388,101 @@ function renderBySector(jobs) {
                 `;
             }).join('')}
         </div>
+    `;
+}
+
+// ── Data Bank View (admin only) ──────────────────────────────────
+function renderDataBank(data) {
+    const view = document.getElementById('dashboard-view');
+    const t = data.totals || {};
+    const sectors = data.top_sectors || [];
+    const depts = data.top_departments || [];
+    const workers = data.workers || [];
+
+    // Find max sector company count for bar widths
+    const maxSectorCount = sectors.length > 0 ? Math.max(...sectors.map(s => s.companies || 0)) : 1;
+
+    view.innerHTML = `
+        <!-- Global totals -->
+        <div class="stats-grid" style="margin-bottom:var(--space-xl)">
+            <div class="stat-card">
+                <span class="stat-card-icon">🏦</span>
+                <span class="stat-card-value">${(t.total_enriched || 0).toLocaleString('fr-FR')}</span>
+                <span class="stat-card-label">Entreprises enrichies</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-card-icon">📞</span>
+                <span class="stat-card-value">${(t.with_phone || 0).toLocaleString('fr-FR')}</span>
+                <span class="stat-card-label">Avec téléphone</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-card-icon">✉️</span>
+                <span class="stat-card-value">${(t.with_email || 0).toLocaleString('fr-FR')}</span>
+                <span class="stat-card-label">Avec email</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-card-icon">👥</span>
+                <span class="stat-card-value">${t.total_users || 0}</span>
+                <span class="stat-card-label">Utilisateurs</span>
+            </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:var(--space-xl)">
+            <!-- Top Sectors -->
+            <div class="card">
+                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                    🏭 Top secteurs
+                </h3>
+                ${sectors.length === 0 ? '<p style="color:var(--text-muted)">Aucun secteur</p>' :
+                    sectors.map(s => `
+                        <div style="margin-bottom:var(--space-md)">
+                            <div style="display:flex; justify-content:space-between; font-size:var(--font-sm); margin-bottom:var(--space-xs)">
+                                <span style="font-weight:600">${escapeHtml(s.sector || '—')}</span>
+                                <span style="color:var(--text-secondary)">${(s.companies || 0).toLocaleString('fr-FR')}</span>
+                            </div>
+                            <div style="height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
+                                <div style="height:100%; width:${Math.round(100 * (s.companies || 0) / maxSectorCount)}%; background:var(--accent); border-radius:3px; transition:width 0.3s ease"></div>
+                            </div>
+                        </div>
+                    `).join('')
+                }
+            </div>
+
+            <!-- Top Departments -->
+            <div class="card">
+                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                    📍 Top départements
+                </h3>
+                ${depts.length === 0 ? '<p style="color:var(--text-muted)">Aucun département</p>' :
+                    `<div class="dept-grid">${depts.map(d => `
+                        <div class="dept-card" onclick="window.location.hash='#/department/${d.departement}'">
+                            <div class="dept-card-header">
+                                <span class="dept-card-number">${escapeHtml(d.departement || '—')}</span>
+                                <span class="dept-card-count">${(d.companies || 0).toLocaleString('fr-FR')}</span>
+                            </div>
+                            <div class="dept-card-name">entreprises</div>
+                        </div>
+                    `).join('')}</div>`
+                }
+            </div>
+        </div>
+
+        <!-- Active Workers -->
+        ${workers.length > 0 ? `
+            <div class="card" style="margin-top:var(--space-xl)">
+                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                    🖥️ Workers actifs (7 derniers jours)
+                </h3>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:var(--space-md)">
+                    ${workers.map(w => `
+                        <div style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:var(--space-lg)">
+                            <div style="font-weight:700; font-size:var(--font-sm); margin-bottom:var(--space-xs)">🖥️ ${escapeHtml(w.worker)}</div>
+                            <div style="font-size:var(--font-xs); color:var(--text-secondary)">${w.batches} batch${w.batches > 1 ? 'es' : ''}</div>
+                            <div style="font-size:var(--font-xs); color:var(--text-muted)">${formatDateTime(w.last_active)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
     `;
 }

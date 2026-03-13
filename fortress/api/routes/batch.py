@@ -101,11 +101,14 @@ async def run_batch(body: BatchRunRequest, request: Request):
             user_id = getattr(request.state, 'user', None)
             user_id = user_id.id if user_id else None
 
+            from fortress.config.settings import settings as _settings
+            worker_id = _settings.effective_worker_id
+
             await conn.execute(
                 """INSERT INTO scrape_jobs
-                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s)""",
-                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id),
+                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s)""",
+                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id),
             )
             await conn.commit()
     except Exception as exc:

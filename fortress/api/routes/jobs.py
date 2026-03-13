@@ -1,6 +1,6 @@
 """Jobs API routes — job-based views, delete, cancel, and company listing."""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
@@ -9,9 +9,16 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.get("")
-async def list_jobs():
-    """All jobs with status and progress."""
-    rows = await fetch_all("""
+async def list_jobs(request: Request):
+    """All jobs with status and progress.
+
+    Admin sees ALL jobs from all users/workers.
+    Regular users see only their own jobs.
+    """
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    base_query = """
         SELECT
             sj.query_id, sj.query_name, sj.status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
@@ -22,11 +29,25 @@ async def list_jobs():
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             sj.filters_json,
             UPPER(SPLIT_PART(sj.query_name, ' ', 1)) AS sector,
-            sj.user_id
+            sj.user_id,
+            sj.worker_id
         FROM scrape_jobs sj
         WHERE sj.status != 'deleted'
-        ORDER BY sj.updated_at DESC
-    """)
+    """
+
+    if is_admin:
+        # Admin sees everything
+        rows = await fetch_all(
+            base_query + " ORDER BY sj.updated_at DESC"
+        )
+    else:
+        # Regular user sees only their own batches
+        user_id = user.id if user else None
+        rows = await fetch_all(
+            base_query + " AND sj.user_id = %s ORDER BY sj.updated_at DESC",
+            (user_id,),
+        )
+
     return rows
 
 

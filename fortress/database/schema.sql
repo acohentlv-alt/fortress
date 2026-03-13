@@ -255,3 +255,6 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Add user_id to scrape_jobs so we can filter "my batches" per user
 ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+
+-- Worker tracking: which machine ran this batch
+ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(50);

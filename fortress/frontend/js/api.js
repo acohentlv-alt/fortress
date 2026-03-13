@@ -106,6 +106,10 @@ export async function getDashboardStatsByJob() {
     return await request('/dashboard/stats/by-job');
 }
 
+export async function getDataBank() {
+    return await request('/dashboard/data-bank');
+}
+
 // ── Departments ──────────────────────────────────────────────────
 export async function getDepartments() {
     return await request('/departments');

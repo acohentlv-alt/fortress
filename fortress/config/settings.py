@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     lambda_monthly_budget: int = 800_000
     lambda_rotation_every: int = 5
 
+    # Multi-worker — identifies this machine in scrape_jobs.worker_id
+    worker_id: str = ""
+
     # Testing
     test_db_url: str = ""  # Set via TEST_DB_URL env var to override db_url in tests
 
@@ -85,6 +88,14 @@ class Settings(BaseSettings):
     def secure_cookies(self) -> bool:
         """True when frontend is served over HTTPS — enables Secure flag on cookies."""
         return self.frontend_url.startswith("https://")
+
+    @property
+    def effective_worker_id(self) -> str:
+        """Worker identifier — uses WORKER_ID env var if set, otherwise the hostname."""
+        if self.worker_id:
+            return self.worker_id
+        import socket
+        return socket.gethostname()
 
 
 settings = Settings()

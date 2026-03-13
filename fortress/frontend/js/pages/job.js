@@ -44,6 +44,7 @@ export async function renderJob(container, queryId) {
                         Créé le ${formatDateTime(job.created_at)}
                     </span>
                     ${job.batch_number > 1 ? `<span class="badge badge-accent">Batch #${job.batch_number}</span>` : ''}
+                    ${(job.triage_green || 0) > 0 ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3)">🟢 ${job.triage_green} données existantes</span>` : ''}
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-sm)">

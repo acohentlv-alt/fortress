@@ -1,10 +1,10 @@
 """Dashboard API routes — global stats and recent activity.
 
-Stats are scoped to companies we actually scraped (via query_tags),
-not the full 16M+ sirene import table.
+Admin: sees ALL enriched data (the "data bank" view).
+Regular users: stats scoped to their own jobs only.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from fortress.api.db import fetch_all, fetch_one
 
@@ -12,16 +12,31 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("/stats")
-async def get_stats():
-    """Global dashboard statistics (scraped companies only).
+async def get_stats(request: Request):
+    """Dashboard statistics.
 
-    Uses a single-pass CTE instead of 7 correlated subqueries to
-    avoid O(7×N) table scans on every dashboard poll.
+    Admin: stats from ALL query_tags (the data bank).
+    User: stats scoped to their own jobs' query_names.
     """
-    stats = await fetch_one("""
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    # Build a WHERE clause on query_tags for user scoping
+    if is_admin:
+        scope_clause = ""
+        scope_params: tuple = ()
+        jobs_scope = ""
+    else:
+        user_id = user.id if user else -1
+        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
+        scope_params = (user_id,)
+        jobs_scope = f"WHERE user_id = {user_id}" if user else ""
+
+    stats = await fetch_one(f"""
         WITH tagged AS (
             SELECT DISTINCT qt.siren
             FROM query_tags qt
+            {scope_clause}
         ),
         enriched AS (
             SELECT
@@ -42,29 +57,46 @@ async def get_stats():
             COUNT(*) FILTER (WHERE website IS NOT NULL)        AS with_website,
             COUNT(DISTINCT departement)
                 FILTER (WHERE departement IS NOT NULL)         AS departments_covered,
-            (SELECT COUNT(*) FROM scrape_jobs)                 AS total_jobs,
+            (SELECT COUNT(*) FROM scrape_jobs {jobs_scope})    AS total_jobs,
             (SELECT COUNT(*) FROM scrape_jobs
-             WHERE status = 'completed')                      AS completed_jobs,
+             WHERE status = 'completed' {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS completed_jobs,
             (SELECT COUNT(*) FROM scrape_jobs
-             WHERE status = 'in_progress')                    AS running_jobs
+             WHERE status = 'in_progress' {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS running_jobs
         FROM enriched
-    """)
+    """, scope_params)
     return stats or {}
 
 
 @router.get("/recent-activity")
-async def get_recent_activity():
-    """Last 10 job updates."""
-    rows = await fetch_all("""
-        SELECT query_id, query_name, status,
-               total_companies, companies_scraped, companies_failed,
-               wave_current, wave_total,
-               triage_black, triage_green, triage_yellow, triage_red,
-               created_at, updated_at
-        FROM scrape_jobs
-        ORDER BY updated_at DESC
-        LIMIT 10
-    """)
+async def get_recent_activity(request: Request):
+    """Last 10 job updates (user-scoped)."""
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    if is_admin:
+        rows = await fetch_all("""
+            SELECT query_id, query_name, status,
+                   total_companies, companies_scraped, companies_failed,
+                   wave_current, wave_total,
+                   triage_black, triage_green, triage_yellow, triage_red,
+                   created_at, updated_at, worker_id
+            FROM scrape_jobs
+            ORDER BY updated_at DESC
+            LIMIT 10
+        """)
+    else:
+        user_id = user.id if user else -1
+        rows = await fetch_all("""
+            SELECT query_id, query_name, status,
+                   total_companies, companies_scraped, companies_failed,
+                   wave_current, wave_total,
+                   triage_black, triage_green, triage_yellow, triage_red,
+                   created_at, updated_at
+            FROM scrape_jobs
+            WHERE user_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 10
+        """, (user_id,))
     return rows
 
 
@@ -73,17 +105,16 @@ async def get_recent_activity():
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/by-job")
-async def get_stats_by_job():
+async def get_stats_by_job(request: Request):
     """Job-level stats aggregated by normalized query_name.
 
-    Uses UPPER(query_name) to merge case-variant duplicates
-    (e.g. 'agriculture 66' and 'AGRICULTURE 66') into one row.
-
-    Returns a nested `batches` array within each group to prevent
-    the frontend timeline UI from breaking on flat payloads.
+    Admin: all jobs. User: own jobs only.
     """
-    # Step 1: Aggregated summary per normalized query_name
-    groups = await fetch_all("""
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+    user_filter = "" if is_admin else f"WHERE sj.user_id = {user.id if user else -1}"
+
+    groups = await fetch_all(f"""
         SELECT
             UPPER(sj.query_name) AS query_name,
             COUNT(*) AS batch_count,
@@ -95,12 +126,12 @@ async def get_stats_by_job():
             SUM(COALESCE(sj.triage_black, 0)) AS total_black,
             MAX(sj.updated_at) AS last_updated
         FROM scrape_jobs sj
+        {user_filter}
         GROUP BY UPPER(sj.query_name)
         ORDER BY MAX(sj.updated_at) DESC
     """)
 
-    # Step 2: Fetch individual batches for nesting
-    all_batches = await fetch_all("""
+    all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.query_name) AS group_key,
             sj.query_id, sj.query_name, sj.status,
@@ -109,19 +140,92 @@ async def get_stats_by_job():
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,
             sj.created_at, sj.updated_at
         FROM scrape_jobs sj
+        {user_filter}
         ORDER BY sj.created_at DESC
     """)
 
-    # Index batches by normalized group key
     batch_map: dict[str, list[dict]] = {}
     for b in all_batches:
         key = b.pop("group_key")
         batch_map.setdefault(key, []).append(b)
 
-    # Step 3: Merge groups + nested batches
     result = []
     for g in groups:
         g["batches"] = batch_map.get(g["query_name"], [])
         result.append(g)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Admin-only: Data Bank global stats
+# ---------------------------------------------------------------------------
+
+@router.get("/data-bank")
+async def get_data_bank(request: Request):
+    """Global enrichment stats — admin only ('the data bank').
+
+    Shows all enriched data across all users/workers.
+    """
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+
+    # Global totals
+    totals = await fetch_one("""
+        SELECT
+            COUNT(DISTINCT qt.siren) AS total_enriched,
+            COUNT(DISTINCT ct.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
+            COUNT(DISTINCT ct.siren) FILTER (WHERE ct.email IS NOT NULL) AS with_email,
+            COUNT(DISTINCT ct.siren) FILTER (WHERE ct.website IS NOT NULL) AS with_website,
+            COUNT(DISTINCT u.id) AS total_users,
+            COUNT(DISTINCT sj.query_id) AS total_batches
+        FROM query_tags qt
+        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        LEFT JOIN scrape_jobs sj ON UPPER(sj.query_name) = UPPER(qt.query_name)
+        LEFT JOIN users u ON u.id = sj.user_id
+    """)
+
+    # Top 10 sectors
+    top_sectors = await fetch_all("""
+        SELECT
+            UPPER(SPLIT_PART(query_name, ' ', 1)) AS sector,
+            COUNT(DISTINCT siren) AS companies
+        FROM query_tags
+        GROUP BY sector
+        ORDER BY companies DESC
+        LIMIT 10
+    """)
+
+    # Top 10 departments
+    top_depts = await fetch_all("""
+        SELECT
+            co.departement,
+            COUNT(DISTINCT qt.siren) AS companies
+        FROM query_tags qt
+        JOIN companies co ON co.siren = qt.siren
+        WHERE co.departement IS NOT NULL
+        GROUP BY co.departement
+        ORDER BY companies DESC
+        LIMIT 10
+    """)
+
+    # Active workers (batches per worker_id in last 7 days)
+    workers = await fetch_all("""
+        SELECT
+            COALESCE(worker_id, 'inconnu') AS worker,
+            COUNT(*) AS batches,
+            MAX(updated_at) AS last_active
+        FROM scrape_jobs
+        WHERE updated_at > NOW() - INTERVAL '7 days'
+        GROUP BY worker_id
+        ORDER BY last_active DESC
+    """)
+
+    return {
+        "totals": totals or {},
+        "top_sectors": top_sectors,
+        "top_departments": top_depts,
+        "workers": workers,
+    }
