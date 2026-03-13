@@ -139,7 +139,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
         process = subprocess.Popen(
             runner_cmd,
-            cwd=str(fortress_root),
+            cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
             stdout=log_fd,
             stderr=log_fd,
             close_fds=False,  # Let child inherit the fd
