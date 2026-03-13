@@ -86,24 +86,29 @@ export async function renderUpload(container) {
                 <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
                     Historique des imports
                 </h3>
-                <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
-                    <thead>
-                        <tr style="border-bottom:1px solid var(--border-color)">
-                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); color:var(--text-muted)">Fichier</th>
-                            <th style="text-align:right; padding:var(--space-sm) var(--space-md); color:var(--text-muted)">SIRENs</th>
-                            <th style="text-align:right; padding:var(--space-sm) var(--space-md); color:var(--text-muted)">Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${uploads.map(u => `
-                            <tr style="border-bottom:1px solid var(--border-subtle)">
-                                <td style="padding:var(--space-sm) var(--space-md)">${escapeHtml(u.source_file || '—')}</td>
-                                <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-weight:600">${(u.siren_count || 0).toLocaleString('fr-FR')}</td>
-                                <td style="text-align:right; padding:var(--space-sm) var(--space-md); color:var(--text-secondary)">${formatDateTime(u.uploaded_at)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:var(--space-md)">
+                    ${uploads.map(u => `
+                        <div style="
+                            background:var(--bg-tertiary);
+                            border:1px solid var(--border-subtle);
+                            border-radius:var(--radius);
+                            padding:var(--space-lg);
+                            transition:border-color var(--transition-fast);
+                        " onmouseover="this.style.borderColor='var(--accent)'"
+                           onmouseout="this.style.borderColor='var(--border-subtle)'">
+                            <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
+                                <span style="font-size:1.5rem">📄</span>
+                                <span style="font-weight:600; font-size:var(--font-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(u.source_file || '')}">${escapeHtml(u.source_file || '—')}</span>
+                            </div>
+                            <div style="font-size:var(--font-2xl); font-weight:800; color:var(--text-primary); margin-bottom:var(--space-xs)">
+                                ${(u.siren_count || 0).toLocaleString('fr-FR')}
+                            </div>
+                            <div style="font-size:var(--font-xs); color:var(--text-muted)">
+                                SIRENs · ${formatDateTime(u.uploaded_at)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
             </div>
         ` : ''}
     `;

@@ -234,6 +234,8 @@ async def search_companies(
     order: str = Query("asc", description="Sort order: asc or desc"),
     department: str = Query(None, description="Filter by department code (e.g. 66, 31)"),
     sector: str = Query(None, description="Filter by sector/query_name (e.g. logistique, agriculture)"),
+    min_rating: float = Query(None, ge=0, le=5, description="Minimum Google Maps rating (e.g. 4.0)"),
+    min_reviews: int = Query(None, ge=0, description="Minimum number of Google Maps reviews"),
 ):
     """Search for companies by name, SIREN, or NAF code — scoped to scraped data.
 
@@ -290,6 +292,14 @@ async def search_companies(
         if sector:
             where_parts.append("UPPER(qt.query_name) LIKE UPPER(%s)")
             params.append(f"%{sector.strip()}%")
+
+        if min_rating is not None:
+            where_parts.append("ct.rating >= %s")
+            params.append(min_rating)
+
+        if min_reviews is not None:
+            where_parts.append("ct.review_count >= %s")
+            params.append(min_reviews)
 
         where_clause = " AND ".join(where_parts)
         params.append(limit)

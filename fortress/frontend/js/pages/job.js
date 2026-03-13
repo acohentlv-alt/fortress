@@ -2,11 +2,8 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob } from '../api.js';
-import {
-    breadcrumb, statusBadge, companyCard, renderGauge,
-    formatDateTime, escapeHtml, renderPagination, showConfirmModal, showToast,
-} from '../components.js';
+import { getJob, getJobCompanies, deleteJob, untagCompany } from '../api.js';
+import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 
 export async function renderJob(container, queryId) {
     queryId = decodeURIComponent(queryId);
@@ -241,9 +238,47 @@ async function loadCompanies(queryId, page, sort) {
 
     const totalPages = Math.ceil((data.total || 0) / (data.page_size || 20));
     companiesContainer.innerHTML = `
-        <div class="company-grid">
-            ${data.companies.map(c => companyCard(c)).join('')}
+        <div class="company-grid" id="job-company-grid">
+            ${data.companies.map(c => companyCard(c, { removable: true })).join('')}
         </div>
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(queryId, p, sort))}
     `;
+
+    // Event delegation for × remove buttons
+    const grid = document.getElementById('job-company-grid');
+    if (grid) {
+        grid.addEventListener('click', (e) => {
+            const btn = e.target.closest('.card-remove-btn');
+            if (!btn) return;
+            e.stopPropagation();
+            const siren = btn.dataset.siren;
+            const card = btn.closest('.company-card');
+            const name = card?.querySelector('.company-card-name')?.textContent || siren;
+
+            showConfirmModal({
+                title: '× Retirer cette entreprise ?',
+                body: `
+                    <p><strong>${escapeHtml(name)}</strong></p>
+                    <p>SIREN: ${siren}</p>
+                    <p style="color:var(--text-muted)">L'entreprise sera retirée de cette requête.
+                    Ses données restent dans la base.</p>
+                `,
+                confirmLabel: 'Retirer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await untagCompany(siren, queryId);
+                    if (result._ok !== false) {
+                        showToast(`${name} retirée`, 'success');
+                        // Fade out the card
+                        if (card) {
+                            card.classList.add('card-fade-out');
+                            card.addEventListener('animationend', () => card.remove());
+                        }
+                    } else {
+                        showToast('Erreur lors du retrait', 'error');
+                    }
+                },
+            });
+        });
+    }
 }

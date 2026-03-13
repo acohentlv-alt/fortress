@@ -6,7 +6,7 @@
  *   - Active filter pills
  */
 
-import { searchCompanies, getJobs, checkHealth, extractApiError } from '../api.js';
+import { searchCompanies, getJobs, checkHealth, extractApiError, getExportUrl } from '../api.js';
 import { companyCard, escapeHtml, showToast } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
 
@@ -21,6 +21,8 @@ export async function renderSearch(container) {
     let currentOrder = '';
     let currentDepartment = '';
     let currentSector = '';
+    let currentMinRating = '';
+    let currentMinReviews = '';
     let currentOffset = 0;
     const PAGE_SIZE = 50;
 
@@ -83,6 +85,26 @@ export async function renderSearch(container) {
     ).join('')}
                     </select>
                 </div>
+                <div class="filter-group">
+                    <label class="filter-label" for="filter-rating">⭐ Note minimale</label>
+                    <select class="sort-select" id="filter-rating">
+                        <option value="">Toutes les notes</option>
+                        <option value="3.0">≥ 3.0 ⭐</option>
+                        <option value="3.5">≥ 3.5 ⭐</option>
+                        <option value="4.0">≥ 4.0 ⭐</option>
+                        <option value="4.5">≥ 4.5 ⭐</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label" for="filter-reviews">💬 Avis minimum</label>
+                    <select class="sort-select" id="filter-reviews">
+                        <option value="">Tous</option>
+                        <option value="5">≥ 5 avis</option>
+                        <option value="10">≥ 10 avis</option>
+                        <option value="25">≥ 25 avis</option>
+                        <option value="50">≥ 50 avis</option>
+                    </select>
+                </div>
             </div>
 
             <!-- Active Filter Pills -->
@@ -102,6 +124,21 @@ export async function renderSearch(container) {
         </div>
 
         <div id="search-results"></div>
+
+        <!-- Floating bulk action bar -->
+        <div id="bulk-bar" style="
+            position:fixed; bottom:-60px; left:50%; transform:translateX(-50%);
+            background:var(--bg-elevated); border:1px solid var(--accent);
+            border-radius:var(--radius-lg); padding:var(--space-md) var(--space-xl);
+            display:flex; align-items:center; gap:var(--space-lg);
+            box-shadow:0 -4px 20px rgba(0,0,0,0.3); z-index:100;
+            transition:bottom 0.3s ease;
+            min-width:320px; justify-content:center;
+        ">
+            <span id="bulk-count" style="font-weight:700; color:var(--accent)"></span>
+            <button class="btn btn-primary btn-sm" id="bulk-export">📥 Exporter CSV</button>
+            <button class="btn btn-secondary btn-sm" id="bulk-clear">Désélectionner</button>
+        </div>
     `;
 
     const input = document.getElementById('search-input');
@@ -110,8 +147,37 @@ export async function renderSearch(container) {
     const sortSelect = document.getElementById('sort-select');
     const filterDept = document.getElementById('filter-dept');
     const filterSector = document.getElementById('filter-sector');
+    const filterRating = document.getElementById('filter-rating');
+    const filterReviews = document.getElementById('filter-reviews');
     const filterPills = document.getElementById('filter-pills');
+    const bulkBar = document.getElementById('bulk-bar');
+    const bulkCount = document.getElementById('bulk-count');
     let debounceTimer;
+    const selectedSirens = new Set();
+
+    function updateBulkBar() {
+        if (selectedSirens.size > 0) {
+            bulkBar.style.bottom = '20px';
+            bulkCount.textContent = `${selectedSirens.size} sélectionnée${selectedSirens.size > 1 ? 's' : ''}`;
+        } else {
+            bulkBar.style.bottom = '-60px';
+        }
+    }
+
+    document.getElementById('bulk-clear').addEventListener('click', () => {
+        selectedSirens.clear();
+        document.querySelectorAll('.card-checkbox').forEach(cb => cb.checked = false);
+        updateBulkBar();
+    });
+
+    document.getElementById('bulk-export').addEventListener('click', () => {
+        if (selectedSirens.size === 0) return;
+        // Build CSV export URL with selected SIRENs as query param
+        const sirens = Array.from(selectedSirens).join(',');
+        const url = getExportUrl('csv') + `&sirens=${encodeURIComponent(sirens)}`;
+        window.open(url, '_blank');
+        showToast(`Export de ${selectedSirens.size} entreprises lancé`, 'success');
+    });
 
     // ── Update filter pills ──────────────────────────────────────
     function updateFilterPills() {
@@ -123,6 +189,12 @@ export async function renderSearch(container) {
         }
         if (currentSector) {
             pills.push(`<span class="filter-pill" data-filter="sector">📋 ${escapeHtml(currentSector)} <button class="filter-pill-remove" data-clear="sector">✕</button></span>`);
+        }
+        if (currentMinRating) {
+            pills.push(`<span class="filter-pill" data-filter="rating">⭐ ≥ ${currentMinRating} <button class="filter-pill-remove" data-clear="rating">✕</button></span>`);
+        }
+        if (currentMinReviews) {
+            pills.push(`<span class="filter-pill" data-filter="reviews">💬 ≥ ${currentMinReviews} avis <button class="filter-pill-remove" data-clear="reviews">✕</button></span>`);
         }
 
         if (pills.length > 0) {
@@ -139,6 +211,12 @@ export async function renderSearch(container) {
                     } else if (target === 'sector') {
                         currentSector = '';
                         filterSector.value = '';
+                    } else if (target === 'rating') {
+                        currentMinRating = '';
+                        filterRating.value = '';
+                    } else if (target === 'reviews') {
+                        currentMinReviews = '';
+                        filterReviews.value = '';
                     }
                     updateFilterPills();
                     const q = input.value.trim();
@@ -169,6 +247,8 @@ export async function renderSearch(container) {
             order: currentOrder,
             department: currentDepartment,
             sector: currentSector,
+            minRating: currentMinRating,
+            minReviews: currentMinReviews,
         });
 
         // API error (503, 500, network failure)
@@ -229,8 +309,19 @@ export async function renderSearch(container) {
                     ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
                 </p>
             </div>
-            <div class="company-grid">
-                ${data.results.map(c => companyCard(c)).join('')}
+            <div class="company-grid" id="search-grid">
+                ${data.results.map(c => {
+                    const checked = selectedSirens.has(c.siren);
+                    return `
+                        <div style="position:relative">
+                            <input type="checkbox" class="card-checkbox" data-siren="${c.siren}"
+                                ${checked ? 'checked' : ''}
+                                style="position:absolute; top:12px; left:12px; z-index:2; width:18px; height:18px; cursor:pointer; accent-color:var(--accent);"
+                                onclick="event.stopPropagation()">
+                            ${companyCard(c)}
+                        </div>
+                    `;
+                }).join('')}
             </div>
             ${totalPages > 1 ? `
                 <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-2xl)">
@@ -257,6 +348,21 @@ export async function renderSearch(container) {
         }
         if (nextBtn && hasNext) {
             nextBtn.addEventListener('click', () => doSearch(q, currentOffset + PAGE_SIZE));
+        }
+
+        // Wire checkboxes for bulk selection
+        const grid = document.getElementById('search-grid');
+        if (grid) {
+            grid.addEventListener('change', (e) => {
+                if (!e.target.classList.contains('card-checkbox')) return;
+                const siren = e.target.dataset.siren;
+                if (e.target.checked) {
+                    selectedSirens.add(siren);
+                } else {
+                    selectedSirens.delete(siren);
+                }
+                updateBulkBar();
+            });
         }
     }
 
@@ -289,6 +395,22 @@ export async function renderSearch(container) {
 
     filterSector.addEventListener('change', () => {
         currentSector = filterSector.value;
+        currentOffset = 0;
+        updateFilterPills();
+        const q = input.value.trim();
+        if (q) doSearch(q, 0);
+    });
+
+    filterRating.addEventListener('change', () => {
+        currentMinRating = filterRating.value;
+        currentOffset = 0;
+        updateFilterPills();
+        const q = input.value.trim();
+        if (q) doSearch(q, 0);
+    });
+
+    filterReviews.addEventListener('change', () => {
+        currentMinReviews = filterReviews.value;
         currentOffset = 0;
         updateFilterPills();
         const q = input.value.trim();

@@ -153,6 +153,7 @@ export async function getJobQuality(queryId) {
 // ── Companies ────────────────────────────────────────────────────
 export async function searchCompanies(query, {
     limit = 50, offset = 0, sortBy = '', order = '', department = '', sector = '',
+    minRating = '', minReviews = '',
 } = {}) {
     const params = new URLSearchParams({
         q: query,
@@ -163,6 +164,8 @@ export async function searchCompanies(query, {
     if (order) params.set('order', order);
     if (department) params.set('department', department);
     if (sector) params.set('sector', sector);
+    if (minRating) params.set('min_rating', minRating);
+    if (minReviews) params.set('min_reviews', minReviews);
     return await request(`/companies/search?${params}`);
 }
 

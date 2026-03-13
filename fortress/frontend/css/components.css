@@ -642,6 +642,47 @@
     box-shadow: var(--shadow-glow);
 }
 
+.card-remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    opacity: 0;
+    flex-shrink: 0;
+}
+
+.company-card:hover .card-remove-btn {
+    opacity: 1;
+}
+
+.card-remove-btn:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger, #ef4444);
+}
+
+.card-fade-out {
+    animation: cardFadeOut 0.3s ease forwards;
+}
+
+@keyframes cardFadeOut {
+    to {
+        opacity: 0;
+        transform: scale(0.95) translateY(-4px);
+        max-height: 0;
+        padding: 0;
+        margin: 0;
+        overflow: hidden;
+    }
+}
+
 .company-card-header {
     display: flex;
     align-items: flex-start;
