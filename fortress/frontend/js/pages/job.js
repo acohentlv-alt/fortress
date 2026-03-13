@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, deleteJob, untagCompany } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 
 export async function renderJob(container, queryId) {
