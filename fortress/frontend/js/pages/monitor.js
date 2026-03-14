@@ -165,9 +165,9 @@ async function renderJobMonitor(container, queryId) {
             <div id="mon-wave"></div>
         </div>
 
-        <!-- Triage -->
+        <!-- Pool Breakdown -->
         <div class="card" style="margin-bottom:var(--space-xl)">
-            <h3 class="detail-section-title">Triage</h3>
+            <h3 class="detail-section-title">Répartition du pool</h3>
             <div id="mon-triage">—</div>
         </div>
 

@@ -470,6 +470,7 @@ async def enrich_companies(
     source_email: Counter[str] = Counter()
     replaced_count = 0
     rejected_count = 0  # Track how many SIRENs were rejected
+    seen_phones: set[str] = set()  # Intra-batch phone dedup
 
     while len(contacts) < target_count and candidates and len(tried_sirens) < max_attempts:
         company = candidates.popleft()
@@ -723,6 +724,22 @@ async def _enrich_one(
             [maps_result["phone"]] if maps_result.get("phone") else [],
             siren,
         )
+        # ── Intra-batch phone dedup ───────────────────────────────────
+        # If this phone was already assigned to another company in this batch,
+        # strip it. Prevents "2H TRANSPORTS" and "2H TRANSPORT" from sharing
+        # identical contact data from the same Maps business.
+        if maps_phone and maps_phone in seen_phones:
+            log.warning(
+                "enricher.duplicate_phone_stripped",
+                siren=siren,
+                denomination=denomination,
+                phone=maps_phone,
+                reason="Phone already assigned to another company in this batch",
+            )
+            maps_phone = None
+            maps_result.pop("phone", None)
+        elif maps_phone:
+            seen_phones.add(maps_phone)
         raw_website = maps_result.get("website")
         if raw_website and not is_directory_url(raw_website):
             # Normalise to base URL
