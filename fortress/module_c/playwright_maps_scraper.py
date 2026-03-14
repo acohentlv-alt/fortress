@@ -123,6 +123,7 @@ class PlaywrightMapsScraper:
         self._page: Any = None
         self._lock = asyncio.Lock()
         self._consent_done = False
+        self._search_count = 0  # Track searches to force reload
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -276,6 +277,16 @@ class PlaywrightMapsScraper:
 
         async with self._lock:
             try:
+                self._search_count += 1
+                if self._search_count % 10 == 0:
+                    log.info("maps_scraper.memory_flush", count=self._search_count)
+                    await self._page.reload(wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
+                    # Maps clears consent on reload sometimes
+                    await self._handle_consent()
+
+                    import gc
+                    gc.collect()
+
                 return await asyncio.wait_for(
                     self._do_search(denomination, department, siren),
                     timeout=_HARD_TIMEOUT,
