@@ -4,7 +4,7 @@ Everything the frontend agent needs to build. Backend endpoints are listed where
 
 ---
 
-# Task 1: Login Page
+# Task 1: Login Page ✅ DONE
 
 ## What this does (plain English)
 
@@ -30,7 +30,7 @@ When someone opens Fortress, the first thing they see is a login page — a simp
 
 ---
 
-# Task 2: Delete / Cancel / Rerun Buttons
+# Task 2: Delete / Cancel / Rerun Buttons ✅ DONE
 
 ## What this does (plain English)
 
@@ -150,7 +150,7 @@ One button: "🚀 Lancer l'enrichissement". No checkboxes.
 
 ---
 
-# Task 4: Dashboard 3-Tab Structure
+# Task 4: Dashboard 3-Tab Structure ✅ DONE
 
 ## What this does (plain English)
 
@@ -176,7 +176,7 @@ Search history timeline — every batch you've launched, sorted by date. Each ca
 
 ---
 
-# Task 5: Monitor Page — "Live Factory" Feel
+# Task 5: Monitor Page — "Live Factory" Feel 🔨 (Partially Done - Animated Counters)
 
 ## What this does (plain English)
 

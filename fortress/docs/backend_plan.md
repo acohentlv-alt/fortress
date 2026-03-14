@@ -20,7 +20,7 @@ Not test results — these are **runtime files** created when the pipeline runs.
 
 ---
 
-# Task 1: Authentication System
+# Task 1: Authentication System ✅ DONE
 
 ## What this does (plain English)
 
@@ -88,7 +88,7 @@ The auth system I'm building works on both your laptop (for testing) and on a cl
 
 ---
 
-# Task 2: Delete / Cancel / Rerun Endpoints
+# Task 2: Delete / Cancel / Rerun Endpoints ✅ DONE
 
 ## What this does (plain English)
 
@@ -146,7 +146,7 @@ And one check in `batch_processor.py`: before each new wave, read this flag. If 
 
 ---
 
-# Task 3: Maps Name Matching
+# Task 3: Maps Name Matching ✅ DONE
 
 ## What this does (plain English)
 
@@ -180,7 +180,7 @@ So you can review what Maps actually returned for each company.
 
 ---
 
-# Task 4: Dashboard Sector Grouping Data
+# Task 4: Dashboard Sector Grouping Data ✅ DONE
 
 ## What this does (plain English)
 
@@ -193,7 +193,7 @@ The frontend wants to group batches by **industry type** (transport, logistics, 
 
 ---
 
-# Implementation Order
+# Implementation Order (Historical)
 
 | Phase | Tasks | Depends on |
 |-------|-------|-----------|

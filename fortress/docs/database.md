@@ -199,10 +199,13 @@ This is a **data-quality guard**, not proof that the schema column is nullable.
 | `id`                | `SERIAL`      |       NO | auto    | PK                          |
 | `query_id`          | `TEXT`        |       NO | —       | External batch identifier   |
 | `query_name`        | `TEXT`        |       NO | —       | Human query                 |
+| `worker_id`         | `TEXT`        |      YES | `NULL`  | Processing worker ID        |
+| `user_id`           | `INTEGER`     |      YES | `NULL`  | Requesting user ID          |
 | `status`            | `VARCHAR(20)` |       NO | `'new'` | Job state                   |
 | `batch_size`        | `INTEGER`     |      YES | `0`     | Requested target count      |
 | `total_companies`   | `INTEGER`     |      YES | `0`     | Candidate pool size         |
 | `companies_scraped` | `INTEGER`     |      YES | `0`     | Progress numerator          |
+| `companies_qualified`| `INTEGER`    |      YES | `0`     | Phone-confirmed count (MVP) |
 | `companies_failed`  | `INTEGER`     |      YES | `0`     | Failed enrichments          |
 | `replaced_count`    | `INTEGER`     |      YES | `0`     | Replacements used           |
 | `wave_current`      | `INTEGER`     |      YES | `0`     | Current wave                |

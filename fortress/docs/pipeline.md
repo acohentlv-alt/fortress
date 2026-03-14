@@ -80,9 +80,9 @@ These rules are non-negotiable. Any code change that violates them is a regressi
 |-------|-----------|--------|
 | **BLACK** | SIREN in `blacklisted_sirens` | Skip entirely |
 | **BLUE** | SIREN in `client_sirens` | Skip (client already owns) |
-| **GREEN** | Phone + website + email all exist | Tag immediately, no scraping |
-| **YELLOW** | Some MVP fields present | Queue for targeted enrichment |
-| **RED** | Never enriched | Queue for full pipeline |
+| **GREEN** | All MVP fields exist in **Data Bank** | Tag immediately, no scraping (Smart Reuse) |
+| **YELLOW** | Partial data in Data Bank | Queue for targeted enrichment |
+| **RED** | Never enriched (not in Data Bank)| Queue for full pipeline |
 
 **Post-triage:**
 - Scrape queue = `YELLOW + RED` (YELLOW first — cheaper)
@@ -127,12 +127,16 @@ The enricher processes companies sequentially from a candidate deque. For each c
 Maps search → assess confidence → qualify or replace
 ```
 
-**Qualification rule (current code):**
+**Qualification rule (MVP Phone Gate):**
 ```python
-qualified = contact is not None and match_confidence != "none"
+qualified = (
+    contact is not None
+    and match_confidence != "none"
+    and contact.phone is not None  # MVP: phone required
+)
 ```
 
-A company is qualified if Maps returned **any** data (high or low confidence). A company is replaced only when Maps returned **nothing**.
+A company is qualified only if Maps returned **a valid phone number** (high or low confidence, as long as a phone is present). A company is replaced when Maps returned **nothing** or **no phone**.
 
 **Replacement mechanics:**
 - Replacement pool pre-fetched in bulk at enrichment start: `target_count × 3` candidates
@@ -235,6 +239,7 @@ A company is qualified if Maps returned **any** data (high or low confidence). A
 | `wave_total` | after triage | `runner.py` |
 | `wave_current` | after each wave completes | `runner.py` (via `enrich_fn` closure) |
 | `companies_scraped` | after each company decision | `runner.py` (via `on_progress` callback) |
+| `companies_qualified`| after each company decision | `runner.py` |
 | `replaced_count` | after each replacement | `runner.py` (via `on_progress` callback) |
 | `updated_at` | every 60s + every status write | heartbeat task + `_update_job_safe` |
 
@@ -291,21 +296,23 @@ Match confidence is assessed by comparing Maps-returned address against the comp
 
 **Application rule:** `_assess_match()` in `enricher.py` is the sole confidence assessor.
 
-## 5.2 Qualification Rule
+## 5.2 Qualification Rule (MVP Phone Gate)
 
 ```python
-qualified = contact is not None and match_confidence != "none"
+qualified = contact is not None and match_confidence != "none" and contact.phone is not None
 ```
 
 This means:
-- `high` confidence → qualified ✅
-- `low` confidence → qualified ✅ (but phone discarded — see 5.1)
-- `none` → not qualified, replaced
+- `high` confidence + has phone → qualified ✅
+- `low` confidence + has phone → qualified ✅
+- `high` or `low` confidence, but **no phone** → not qualified, replaced ❌
+- `none` → not qualified, replaced ❌
 
 ## 5.3 Replacement Trigger
 
 A company is replaced when:
 - Maps returned zero results (`match_confidence == "none"` and `contact is None`)
+- Maps returned data but no phone number (fails MVP gate)
 - OR per-company enrichment threw an exception
 
 Replacement is **not** triggered for:

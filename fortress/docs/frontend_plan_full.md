@@ -21,7 +21,7 @@
 
 ---
 
-## Task 1: Login Page 🔨
+## Task 1: Login Page ✅ DONE
 
 **Backend**: ✅ Already built (`auth.py` — username/password login with bcrypt, session cookie).
 
@@ -44,7 +44,7 @@
 
 ---
 
-## Task 2: Delete / Cancel / Rerun Buttons 🔨
+## Task 2: Delete / Cancel / Rerun Buttons ✅ DONE
 
 **Backend**: ✅ All endpoints already built (B4–B9).
 **API client**: ✅ `deleteJob()`, `cancelJob()`, `untagCompany()` already in `api.js`.
@@ -89,7 +89,7 @@ showConfirmModal({
 
 ---
 
-## Task 4: Dashboard 3-Tab Structure 🔨
+## Task 4: Dashboard 3-Tab Structure ✅ DONE (Data Bank approach)
 
 **Current**: 2 tabs — "Par Localisation" + "Par Job" (which is actually search history).
 
@@ -116,7 +116,7 @@ GET /api/dashboard/by-sector
 
 ---
 
-## Task 5: Monitor Page — "Live Factory" 🔨
+## Task 5: Monitor Page — "Live Factory" 🔨 (Partially Done - Animated progress and Live Polish)
 
 **Current state**: Polling works, pipeline stages exist, triage bar exists, company cards render.
 

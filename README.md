@@ -7,7 +7,8 @@ B2B lead collection and enrichment system for France. Operates on a PostgreSQL d
 Fortress discovers, filters, enriches, and exports French company contact data through a web UI and background batch pipeline.
 
 * **Input:** A search query like "transport 66" (transport companies in département 66)
-* **Output:** Enriched company records with phone, email, website, Google Maps rating, social links
+* **Output:** Enriched company records with **phone (MVP requirement)**, email, website, Google Maps rating, social links
+* **Data Bank:** Features a centralized Multi-Worker Data Bank that reuses previously enriched contacts (Smart Reuse) to save scraping time and avoid redundant calls.
 
 ## Source of Truth
 
@@ -54,8 +55,12 @@ cp .env.example .env   # Edit with your DB credentials
 
 ```bash
 python3 -m fortress.api.main
-# API + frontend at http://localhost:8080
+# API + frontend at http://localhost:8080 (or $PORT on Render)
 ```
+
+### Render Deployment
+
+Fortress is deployed on Render via Docker to supply the necessary OS-level dependencies for Playwright (headless Chromium). Render automatically deploys the `main` branch on push.
 
 ---
 
@@ -121,8 +126,8 @@ Full details in [Pipeline Contract](fortress/docs/pipeline.md).
 | Stage | Module | Purpose |
 |-------|--------|---------|
 | 1. Interpret | `query_interpreter.py` | User input → SQL on 14.7M companies |
-| 2. Triage | `triage.py` | Classify: BLACK / BLUE / GREEN / YELLOW / RED |
-| 3. Enrich | `enricher.py` | Maps (Playwright) → website crawl (curl_cffi) |
+| 2. Triage | `triage.py` | Classify: BLACK / BLUE / GREEN (Data Bank) / YELLOW / RED |
+| 3. Enrich | `enricher.py` | Maps (Playwright) → website crawl (curl_cffi). **MVP Phone Gate** enforced here. |
 | 4. Wave Process | `batch_processor.py` | Per-company save, checkpoint, cooldown |
 | 5. Complete | `runner.py` | Status → completed, Chrome cleanup |
 
