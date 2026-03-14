@@ -39,7 +39,8 @@ export async function renderMonitor(container, queryId) {
 
 async function renderMonitorList(container) {
     const jobs = await getJobs();
-    const runningJobs = (jobs || []).filter(j =>
+    const jobsList = Array.isArray(jobs) ? jobs : [];
+    const runningJobs = jobsList.filter(j =>
         j.status === 'in_progress' || j.status === 'queued' || j.status === 'triage'
     );
 
@@ -85,12 +86,12 @@ async function renderMonitorList(container) {
             </div>
         `}
 
-        ${(jobs || []).filter(j => j.status === 'completed').length > 0 ? `
+        ${jobsList.filter(j => j.status === 'completed').length > 0 ? `
             <h2 style="font-size:var(--font-lg); font-weight:600; margin-top:var(--space-2xl); margin-bottom:var(--space-lg)">
                 Terminés récemment
             </h2>
             <div class="job-list">
-                ${(jobs || []).filter(j => j.status === 'completed').slice(0, 5).map(j => `
+                ${jobsList.filter(j => j.status === 'completed').slice(0, 5).map(j => `
                     <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.query_id)}'">
                         <div class="job-card-info">
                             <div class="job-card-name">${escapeHtml(j.query_name)}</div>

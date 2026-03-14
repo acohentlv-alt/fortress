@@ -511,21 +511,21 @@ async def enrich_companies(
         source_counts[source_label] += 1
 
         # ── Qualification decision ────────────────────────────────────
-        # KEEP: Maps confirmed the company (high confidence) AND found phone
-        # REPLACE: Maps found nothing, wrong city, or no phone number
-        # Phone is the MVP field — users expect actionable contact data.
+        # KEEP: Maps confirmed the company (confidence != none) AND found
+        #       at least one actionable contact field (phone, email, or website).
+        # REPLACE: Maps returned nothing or zero useful data.
         qualified = (
             contact is not None
             and match_confidence != "none"
-            and contact.phone is not None  # MVP: phone required
+            and any([contact.phone, contact.email, contact.website])
         )
 
         if not qualified:
             replaced_count += 1
             if match_confidence == "none":
                 reason = "no_maps_data"
-            elif contact is not None and contact.phone is None:
-                reason = "no_phone"
+            elif contact is not None and not any([contact.phone, contact.email, contact.website]):
+                reason = "no_useful_data"
             else:
                 reason = "low_confidence"
             rejected_count += 1
