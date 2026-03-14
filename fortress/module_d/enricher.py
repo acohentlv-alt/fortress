@@ -144,7 +144,8 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     if maps_joined in denom_joined or denom_joined in maps_joined:
         return True
 
-    # Token overlap: ≥50% of denomination tokens found in maps name
+    # Token overlap: ≥70% of denomination tokens found in maps name
+    # AND at least 2 matching tokens to prevent single-word false positives.
     overlap = sum(1 for t in denom_tokens if t in maps_tokens)
 
     # Single-token guard: if denomination is just 1 word (e.g. "TAXI"),
@@ -153,7 +154,8 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     if len(denom_tokens) == 1:
         return denom_tokens[0] == maps_tokens[0]
 
-    threshold = max(1, len(denom_tokens) * 0.5)
+    # Multi-word: require at least 2 tokens AND 70% overlap (was 50%)
+    threshold = max(2, len(denom_tokens) * 0.7)
     return overlap >= threshold
 
 
@@ -699,19 +701,23 @@ async def _enrich_one(
             maps_rating=maps_result.get("rating"),
         )
 
-        # If confidence is low, discard phone to prevent false positives
-        # (e.g., 18 companies all getting the same Bordeaux phone number).
-        # Keep address/rating/maps_url if available — they're informational.
-        if match_confidence == "low" and maps_result.get("phone"):
-            log.warning(
-                "enricher.maps_false_positive_filtered",
-                siren=siren,
-                denomination=denomination,
-                maps_address=maps_result.get("address"),
-                expected_ville=company.ville,
-                expected_cp=company.code_postal,
-            )
-            maps_result.pop("phone", None)
+        # ── STRICT: If confidence is not HIGH, discard ALL Maps data ──────
+        # "low" = Maps returned a DIFFERENT business (wrong name).
+        # We MUST NOT use their phone, website, email, address, or anything.
+        # This prevents "2 M FINANCE" from getting data from "2M Consulting"
+        # or "12.5" from getting data from "Parking Douzep".
+        if match_confidence != "high":
+            if maps_result:
+                log.warning(
+                    "enricher.maps_mismatch_discarded",
+                    siren=siren,
+                    denomination=denomination,
+                    maps_name=maps_result.get("maps_name"),
+                    maps_address=maps_result.get("address"),
+                    expected_ville=company.ville,
+                    reason="Name mismatch — discarding ALL Maps data",
+                )
+            maps_result = {}  # Wipe everything
 
         maps_phone = _best_phone(
             [maps_result["phone"]] if maps_result.get("phone") else [],
