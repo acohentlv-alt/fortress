@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, untagCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 
 export async function renderJob(container, queryId) {
@@ -26,7 +26,8 @@ export async function renderJob(container, queryId) {
 
     const batchSize = job.batch_size || job.total_companies || 1;
     const scraped = job.companies_scraped || 0;
-    const progressPct = Math.min(100, Math.round((scraped / batchSize) * 100));
+    const qualified = job.companies_qualified || 0;
+    const progressPct = Math.min(100, Math.round((qualified / batchSize) * 100));
     const q = quality || {};
 
     container.innerHTML = `
@@ -51,6 +52,7 @@ export async function renderJob(container, queryId) {
                 <a href="${getExportUrl(queryId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
                 <a href="${getExportUrl(queryId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
                 ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
+                ${job.status === 'failed' ? `<button id="btn-retry" class="btn btn-primary" title="Réessayer ce batch">🔁 Réessayer</button>` : ''}
                 <button id="btn-delete-job" class="btn btn-secondary" title="Supprimer ce batch" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
             `<a href="#/monitor/${encodeURIComponent(queryId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
@@ -62,7 +64,7 @@ export async function renderJob(container, queryId) {
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-weight:600">Progression — ${batchSize} entreprises</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
-                    <span style="color:var(--text-secondary)">${scraped}/${batchSize} (${progressPct}%)</span>
+                    <span style="color:var(--text-secondary)">${qualified}/${batchSize} qualifiées (${scraped} tentées)</span>
                     <button id="toggle-provenance" title="D'où viennent ces données ?" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
                 </div>
             </div>
@@ -218,6 +220,30 @@ export async function renderJob(container, queryId) {
                 if (f.city) params.set('city', f.city);
             }
             window.location.hash = `#/new-batch?${params.toString()}`;
+        });
+    }
+
+    // Retry button (for failed jobs — resets and re-runs same job)
+    const retryBtn = document.getElementById('btn-retry');
+    if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+            showConfirmModal({
+                title: '🔁 Réessayer ce batch ?',
+                body: `<p>Le batch <strong>${escapeHtml(job.query_name)}</strong> sera relancé avec les mêmes paramètres.</p>
+                       <p>⚠️ La progression sera réinitialisée à 0.</p>
+                       <p>✅ Les données déjà collectées restent dans la base.</p>`,
+                confirmLabel: 'Réessayer',
+                danger: false,
+                onConfirm: async () => {
+                    const result = await retryJob(queryId);
+                    if (result && result.retried) {
+                        showToast('Batch relancé avec succès', 'success');
+                        window.location.hash = `#/monitor/${encodeURIComponent(queryId)}`;
+                    } else {
+                        showToast(result?.error || 'Erreur lors du retry', 'error');
+                    }
+                },
+            });
         });
     }
 }

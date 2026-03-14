@@ -115,6 +115,89 @@ async def cancel_job(query_id: str):
     return {"cancelled": True, "query_id": query_id}
 
 
+@router.post("/{query_id}/retry")
+async def retry_job(query_id: str):
+    """Retry a failed or completed batch.
+
+    Resets progress counters, flips status back to 'queued',
+    and spawns a fresh runner subprocess.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    async with get_conn() as conn:
+        row = await (await conn.execute(
+            "SELECT status, query_name FROM scrape_jobs WHERE query_id = %s",
+            (query_id,),
+        )).fetchone()
+
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
+
+        current_status = row[0]
+        if current_status in ("in_progress", "queued", "triage", "new"):
+            return JSONResponse(status_code=409, content={
+                "error": "Le batch est déjà en cours",
+                "current_status": current_status,
+            })
+
+        # Reset the job for re-execution
+        await conn.execute(
+            """UPDATE scrape_jobs SET
+                status = 'queued',
+                companies_scraped = 0,
+                companies_qualified = 0,
+                companies_failed = 0,
+                replaced_count = 0,
+                wave_current = 0,
+                cancel_requested = FALSE,
+                updated_at = NOW()
+            WHERE query_id = %s""",
+            (query_id,),
+        )
+        await conn.commit()
+
+    # Spawn a new runner subprocess (same pattern as batch.py)
+    fortress_root = Path(__file__).resolve().parent.parent.parent  # fortress/
+    log_dir = fortress_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{query_id}.log"
+
+    runner_cmd = [sys.executable, "-m", "fortress.runner", query_id]
+
+    # Sandbox workaround
+    launcher = Path("/tmp/fortress_launcher.py")
+    if launcher.exists():
+        runner_cmd = [sys.executable, str(launcher), "runner", query_id]
+
+    try:
+        log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        process = subprocess.Popen(
+            runner_cmd,
+            cwd=str(fortress_root.parent),
+            stdout=log_fd,
+            stderr=log_fd,
+            close_fds=False,
+            start_new_session=True,
+        )
+        os.close(log_fd)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to spawn runner: {exc}", "query_id": query_id},
+        )
+
+    return {
+        "retried": True,
+        "query_id": query_id,
+        "pid": process.pid,
+        "status": "queued",
+        "message": f"Batch {query_id} relancé (PID {process.pid})",
+    }
+
+
 @router.get("/{query_id}")
 async def get_job(query_id: str):
     """Single job detail with progress info."""

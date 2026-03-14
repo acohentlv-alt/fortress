@@ -80,6 +80,16 @@ async def run_query(
         async with pool.connection() as conn:
             green_sirens = [c.siren for c in triage_result.green]
             await bulk_tag_query(conn, green_sirens, query_name)
+            for siren in green_sirens:
+                await log_audit(
+                    conn,
+                    query_id=query_id,
+                    siren=siren,
+                    action="sirene",
+                    result="success",
+                    source_url=None,
+                    duration_ms=0,
+                )
         log.info(
             "batch.green_tagged",
             count=len(triage_result.green),

@@ -165,51 +165,7 @@ class PlaywrightMapsScraper:
                 locale="fr-FR",
                 timezone_id="Europe/Paris",
             )
-            self._page = await self._context.new_page()
-            self._page.set_default_timeout(_SELECTOR_TIMEOUT)
-
-            # ── Remove webdriver flag (anti-detection) ────────────────
-            await self._page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
-
-            # ── Block heavy resources (images, fonts, media) ────────────
-            # We only need DOM text for data extraction. Blocking these
-            # cuts ~40% of network traffic and speeds up page loads.
-            # NOTE: stylesheets MUST remain — Google Maps uses CSS z-index
-            # to position the search box above the canvas. Without CSS,
-            # the canvas intercepts all clicks.
-            _BLOCKED_TYPES = frozenset({"image", "media", "font"})
-
-            async def _intercept(route):
-                if route.request.resource_type in _BLOCKED_TYPES:
-                    await route.abort()
-                else:
-                    await route.continue_()
-
-            await self._page.route("**/*", _intercept)
-
-            # ── Navigate to Maps homepage and handle consent ──────────
-            await self._page.goto(
-                "https://www.google.com/maps?hl=fr",
-                wait_until="domcontentloaded",
-                timeout=_PAGE_TIMEOUT,
-            )
-            await self._page.wait_for_timeout(800)
-            await self._handle_consent()
-
-            # Verify we're on Maps after consent
-            current_url = self._page.url
-            if "maps" not in current_url:
-                log.info("maps_scraper.re_navigating_after_consent")
-                await self._page.goto(
-                    "https://www.google.com/maps?hl=fr",
-                    wait_until="domcontentloaded",
-                    timeout=_PAGE_TIMEOUT,
-                )
-                await self._page.wait_for_timeout(2000)
+            await self._setup_page()
 
             # Verify search box is available
             search_box = await self._page.query_selector(
@@ -226,6 +182,59 @@ class PlaywrightMapsScraper:
                 await self._playwright.stop()
                 self._playwright = None
             raise RuntimeError(f"Chromium stealth failed to start: {exc}") from exc
+
+    async def _setup_page(self) -> None:
+        """Create a fresh Page with stealth config and navigate to Maps.
+
+        Called once during start() and again every 50 searches to flush
+        Chromium's DOM memory without pausing the Python event loop.
+        The BrowserContext is reused (preserves cookies/session).
+        """
+        self._page = await self._context.new_page()
+        self._page.set_default_timeout(_SELECTOR_TIMEOUT)
+
+        # ── Remove webdriver flag (anti-detection) ────────────────
+        await self._page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+
+        # ── Block heavy resources (images, fonts, media) ──────────
+        # We only need DOM text for data extraction. Blocking these
+        # cuts ~40% of network traffic and speeds up page loads.
+        # NOTE: stylesheets MUST remain — Google Maps uses CSS z-index
+        # to position the search box above the canvas. Without CSS,
+        # the canvas intercepts all clicks.
+        _BLOCKED_TYPES = frozenset({"image", "media", "font"})
+
+        async def _intercept(route):
+            if route.request.resource_type in _BLOCKED_TYPES:
+                await route.abort()
+            else:
+                await route.continue_()
+
+        await self._page.route("**/*", _intercept)
+
+        # ── Navigate to Maps homepage and handle consent ──────────
+        await self._page.goto(
+            "https://www.google.com/maps?hl=fr",
+            wait_until="domcontentloaded",
+            timeout=_PAGE_TIMEOUT,
+        )
+        await self._page.wait_for_timeout(800)
+        await self._handle_consent()
+
+        # Verify we're on Maps after consent
+        current_url = self._page.url
+        if "maps" not in current_url:
+            log.info("maps_scraper.re_navigating_after_consent")
+            await self._page.goto(
+                "https://www.google.com/maps?hl=fr",
+                wait_until="domcontentloaded",
+                timeout=_PAGE_TIMEOUT,
+            )
+            await self._page.wait_for_timeout(2000)
 
     async def close(self) -> None:
         """Stop Chromium and release Playwright resources."""
@@ -278,14 +287,11 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 self._search_count += 1
-                if self._search_count % 10 == 0:
-                    log.info("maps_scraper.memory_flush", count=self._search_count)
-                    await self._page.reload(wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
-                    # Maps clears consent on reload sometimes
-                    await self._handle_consent()
-
-                    import gc
-                    gc.collect()
+                if self._search_count % 50 == 0:
+                    log.info("maps_scraper.memory_flush",
+                             count=self._search_count, method="page_cycle")
+                    await self._page.close()
+                    await self._setup_page()
 
                 return await asyncio.wait_for(
                     self._do_search(denomination, department, siren),

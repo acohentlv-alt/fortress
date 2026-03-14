@@ -136,6 +136,10 @@ export async function cancelJob(queryId) {
     return await request(`/jobs/${encodeURIComponent(queryId)}/cancel`, { method: 'POST' });
 }
 
+export async function retryJob(queryId) {
+    return await request(`/jobs/${encodeURIComponent(queryId)}/retry`, { method: 'POST' });
+}
+
 export async function untagCompany(siren, queryName) {
     return await request(`/companies/${siren}/tags/${encodeURIComponent(queryName)}`, { method: 'DELETE' });
 }

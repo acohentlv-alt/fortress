@@ -50,43 +50,8 @@ async def run_batch(body: BatchRunRequest, request: Request):
     dept = body.department.strip()
     query_name = f"{sector} {dept}"
 
-    # Determine the next batch number for this sector/dept
+    # Build base_id for batch numbering
     base_id = _build_query_id(sector, dept)
-
-    existing = await fetch_all(
-        "SELECT query_id FROM scrape_jobs WHERE query_id LIKE %s ORDER BY query_id DESC",
-        (f"{base_id}%",),
-    )
-
-    if not existing:
-        batch_number = 1
-        query_id = f"{base_id}_BATCH_001"
-    else:
-        # Extract highest batch number
-        max_num = 0
-        for row in existing:
-            qid = row["query_id"]
-            match = re.search(r"BATCH_(\d+)$", qid)
-            if match:
-                max_num = max(max_num, int(match.group(1)))
-        if max_num == 0:
-            # Legacy format without BATCH suffix
-            batch_number = 1
-            query_id = f"{base_id}_BATCH_001"
-        else:
-            batch_number = max_num + 1
-            query_id = f"{base_id}_BATCH_{batch_number:03d}"
-
-    # Calculate batch_offset for discovery mode
-    batch_offset = 0
-    if body.mode == "discovery":
-        # Count how many companies we already have for this query_name
-        count_row = await fetch_one(
-            "SELECT SUM(COALESCE(companies_scraped, 0)) AS total FROM scrape_jobs WHERE UPPER(query_name) = %s",
-            (query_name.upper(),),
-        )
-        if count_row and count_row["total"]:
-            batch_offset = count_row["total"]
 
     # Build filters_json from optional fields
     filters_dict = {}
@@ -94,9 +59,44 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["naf_code"] = body.naf_code.strip()
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
-    # Insert the job row
+    # Determine batch number + insert in ONE atomic connection
+    # to prevent TOCTOU race where two requests get the same number.
     try:
         async with get_conn() as conn:
+            # Lock existing rows for this base_id to prevent concurrent duplicates
+            rows = await conn.execute(
+                "SELECT query_id FROM scrape_jobs WHERE query_id LIKE %s ORDER BY query_id DESC FOR UPDATE",
+                (f"{base_id}%",),
+            )
+            existing = await rows.fetchall()
+
+            if not existing:
+                batch_number = 1
+                query_id = f"{base_id}_BATCH_001"
+            else:
+                max_num = 0
+                for row in existing:
+                    qid = row[0] if isinstance(row, tuple) else row["query_id"]
+                    match = re.search(r"BATCH_(\d+)$", qid)
+                    if match:
+                        max_num = max(max_num, int(match.group(1)))
+                if max_num == 0:
+                    batch_number = 1
+                    query_id = f"{base_id}_BATCH_001"
+                else:
+                    batch_number = max_num + 1
+                    query_id = f"{base_id}_BATCH_{batch_number:03d}"
+
+            # Calculate batch_offset for discovery mode
+            batch_offset = 0
+            if body.mode == "discovery":
+                count_row = await (await conn.execute(
+                    "SELECT SUM(COALESCE(companies_scraped, 0)) AS total FROM scrape_jobs WHERE UPPER(query_name) = %s",
+                    (query_name.upper(),),
+                )).fetchone()
+                if count_row and count_row[0]:
+                    batch_offset = count_row[0]
+
             # Get user_id from authenticated session (if present)
             user_id = getattr(request.state, 'user', None)
             user_id = user_id.id if user_id else None

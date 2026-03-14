@@ -428,19 +428,21 @@ These are tunable settings. Changes here do not affect architecture.
 
 # 9. Recommendations & Next Steps
 
-### Concurrency
-1. **Implement Semaphore(2) for Maps** — replace `asyncio.Lock()` with `asyncio.Semaphore(2)` in `playwright_maps_scraper.py` for ~2× throughput
+### Multi-Worker & Concurrency (High Priority)
+1. **Multi-Worker Job Locking (CRITICAL)** — The API endpoint that assigns jobs to workers MUST use atomic locking (`SELECT ... FOR UPDATE SKIP LOCKED` or explicit `worker_id` assignment) to prevent two workers from grabbing the same `new` job concurrently.
+2. **Page Pool for Maps Concurrency** — To achieve >1 concurrency in Maps without race conditions, refactor `PlaywrightMapsScraper` to manage a pool of independent `BrowserContext` or `Page` objects. **Do not** simply swap the `Lock` for a `Semaphore` on a single shared Page, as actions will collide and corrupt data.
 
-### Reliability
-2. **Per-company rejection persistence** — flush rejected SIRENs immediately instead of batch-end to prevent loss on crash
-3. **Add retry path for failed jobs** — define `failed → queued` transition with attempt counter
-4. **DB-enforce status transitions** — add `CHECK` constraint or trigger on `scrape_jobs.status`
+### Reliability & Resilience
+3. **Add Retry Path for Failed Jobs** — Add an API endpoint and UI "Retry" button to cleanly flip a job's status from `failed` to `new` (and clear the `data/checkpoints/{id}/` folder) so users can recover from SQL timeouts or machine reboots.
+4. **Playwright Memory Leak Mitigation** — In `playwright_maps_scraper.py`, instead of doing a hard `.reload()` and fully-blocking `gc.collect()` every 10 searches, simply `.close()` the `Page` and open a `new_page()` every 50 searches to drop the isolated DOM footprint without pausing the async event loop.
+5. **Per-Company Rejection Persistence** — Flush rejected SIRENs immediately (via `_on_save` logic) instead of batch-end to prevent repeating dead Maps queries if the pipeline drops mid-batch.
+6. **Playwright Fallback for Website Crawls** — If the `curl_cffi` crawler hits a 403 (Cloudflare/Datadome block) during website enrichment, hand the URL over to the already-warm Playwright Maps instance to bypass bot protection instead of abandoning the crawl.
 
 ### Data Quality
-5. **Replace contacts with raw-facts + resolved view** — separate observed facts from best-answer materialization
-6. **Add per-field confidence scoring** — track Maps match confidence at field level, not just company level
-7. **Implement "fresher wins" for rating/review_count** — these stale over time and should accept updates
+7. **Replace contacts with raw-facts + resolved view** — Separate observed facts from best-answer materialization.
+8. **Add per-field confidence scoring** — Track Maps match confidence at field level, not just company level.
+9. **Implement "fresher wins" for rating/review_count** — These grow stale over time and should accept updates instead of traditional `COALESCE` logic.
+10. **DB-Enforce Status Transitions (Optional)** — Add `CHECK` constraint or trigger on `scrape_jobs.status` (Low priority, as it might block manual admin overrides).
 
 ### Performance
-8. **Checkpoint intra-wave** — save checkpoint every N companies within a wave, not just at wave boundaries
-9. **Parallelize website crawl** — crawl can run concurrently across companies since there are no anti-bot concerns
+11. **Parallelize website crawl** — The crawl stage can run concurrently across companies since there are no IP anti-bot concerns with standard curl requests.

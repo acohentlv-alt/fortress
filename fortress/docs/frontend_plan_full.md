@@ -44,18 +44,19 @@
 
 ---
 
-## Task 2: Delete / Cancel / Rerun Buttons ✅ DONE
+## Task 2: Delete / Cancel / Rerun / Retry Buttons 🔨
 
-**Backend**: ✅ All endpoints already built (B4–B9).
+**Backend**: ✅ Most endpoints built. ⏳ `POST /jobs/{id}/retry` needs backend implementation.
 **API client**: ✅ `deleteJob()`, `cancelJob()`, `untagCompany()` already in `api.js`.
 
 | Item | Status | Work |
 |------|--------|------|
-| 2a. Delete button (job detail) | 🔨 | Add button to `job.js` header, trigger modal |
+| 2a. Delete button (job detail) | 🔨 | Add button to header, trigger modal |
 | 2b. Cancel button (monitor) | 🔨 | Add to `monitor.js`, visible only during `in_progress` |
 | 2c. Rerun button (job detail) | 🔨 | Read `filters_json` from job response, navigate to `#/new-batch` with pre-fill |
 | 2d. Remove company (× on cards) | 🔨 | Add × button to `companyCard()`, call `untagCompany()`, animate out |
 | 2e. Confirmation modal | 🔨 | New reusable component in `components.js` |
+| 2f. Retry button (failed jobs) | 🔨 | Add to `job.js` header if status is `failed`. Calls `POST /jobs/{id}/retry` to flip back to `new` |
 
 #### `showConfirmModal()` spec
 ```javascript
@@ -127,8 +128,9 @@ GET /api/dashboard/by-sector
 | Live company card feed | 🔨 | New cards slide in with CSS animation instead of full re-render |
 | Rich cards with all data | 🔨 | Show phone, email, rating stars, social links on each card |
 | Stage indicator | ✅ Done | `renderPipelineStages()` exists |
-| Triage bar | ✅ Done | Fixed color (Nouveau = accent blue, not red) |
+| Triage bar | 🔨 | Upgrade GREEN to show "Data Bank (Instant Reuse)" badge |
 | Cancel button | 🔨 | Part of Task 2b |
+| Worker ID indicator | 🔨 | Show which worker machine is currently processing the batch |
 
 #### Key constraint
 Monitor polls every 1.5s. **Do not rebuild DOM on each poll.** Use surgical patching:

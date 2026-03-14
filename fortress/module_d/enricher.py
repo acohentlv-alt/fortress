@@ -467,7 +467,7 @@ async def enrich_companies(
     source_phone: Counter[str] = Counter()
     source_email: Counter[str] = Counter()
     replaced_count = 0
-    rejected_batch: list[tuple[str, str]] = []  # (siren, reason) to persist
+    rejected_count = 0  # Track how many SIRENs were rejected
 
     while len(contacts) < target_count and candidates and len(tried_sirens) < max_attempts:
         company = candidates.popleft()
@@ -487,6 +487,15 @@ async def enrich_companies(
             )
             source_counts["error"] += 1
             # Error → replace from pre-fetched pool
+            if not replacement_pool and naf_prefix and dept:
+                try:
+                    more_repl = await _fetch_replacement_companies(
+                        pool, tried_sirens, reference_company, target_count * 5
+                    )
+                    replacement_pool.extend(more_repl)
+                except Exception as pool_exc:
+                    log.debug("enricher.replacement_refill_error", error=str(pool_exc))
+            
             if replacement_pool:
                 repl = replacement_pool.popleft()
                 tried_sirens.add(repl.siren)
@@ -519,7 +528,23 @@ async def enrich_companies(
                 reason = "no_phone"
             else:
                 reason = "low_confidence"
-            rejected_batch.append((company.siren, reason))
+            rejected_count += 1
+
+            # Persist rejection IMMEDIATELY so it survives crashes
+            if naf_prefix and dept:
+                try:
+                    async with pool.connection() as conn:
+                        await conn.execute(
+                            """
+                            INSERT INTO rejected_sirens (siren, naf_prefix, departement, reason)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (siren, naf_prefix, departement) DO NOTHING
+                            """,
+                            (company.siren, naf_prefix, dept, reason),
+                        )
+                except Exception as rej_exc:
+                    log.debug("enricher.rejected_persist_error", siren=company.siren, error=str(rej_exc))
+
             log.info(
                 "enricher.company_replaced",
                 siren=company.siren,
@@ -529,7 +554,16 @@ async def enrich_companies(
                 qualified_so_far=len(contacts),
                 target=target_count,
             )
-            # Pop replacement from pre-fetched pool (instant, no DB query)
+            # Pop replacement from pre-fetched pool (instant if full, fetches if empty)
+            if not replacement_pool and naf_prefix and dept:
+                try:
+                    more_repl = await _fetch_replacement_companies(
+                        pool, tried_sirens, reference_company, target_count * 5
+                    )
+                    replacement_pool.extend(more_repl)
+                except Exception as pool_exc:
+                    log.debug("enricher.replacement_refill_error", error=str(pool_exc))
+            
             if replacement_pool:
                 repl = replacement_pool.popleft()
                 tried_sirens.add(repl.siren)
@@ -580,27 +614,8 @@ async def enrich_companies(
             int((time.monotonic() - _t0) * 1000),
         )
 
-    # ── Persist rejected SIRENs ────────────────────────────────────────────
-    if rejected_batch and naf_prefix and dept:
-        try:
-            async with pool.connection() as conn:
-                for rej_siren, rej_reason in rejected_batch:
-                    await conn.execute(
-                        """
-                        INSERT INTO rejected_sirens (siren, naf_prefix, departement, reason)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (siren, naf_prefix, departement) DO NOTHING
-                        """,
-                        (rej_siren, naf_prefix, dept, rej_reason),
-                    )
-            log.info(
-                "enricher.rejected_persisted",
-                count=len(rejected_batch),
-                naf_prefix=naf_prefix,
-                dept=dept,
-            )
-        except Exception as exc:
-            log.debug("enricher.rejected_persist_error", error=str(exc))
+    # (rejected SIRENs are now persisted immediately per-company above)
+
 
     # ── Summary stats ─────────────────────────────────────────────────────
     total_tried = len(tried_sirens)
@@ -810,9 +825,54 @@ async def _enrich_one(
                 pages=pages_visited,
             )
 
-        # Playwright website crawl fallback removed (2026-03-11).
-        # curl_cffi handles 99%+ of company websites; Playwright fallback
-        # added ~10-15s per attempt with <1% data gain.
+        # ── Playwright fallback for bot-blocked sites (403/Cloudflare) ────
+        # If curl got zero usable pages AND it's not a DNS/SSL issue,
+        # try the already-running stealth Playwright to render the page.
+        # This is "free" — the browser is already warm for Google Maps.
+        if not curl_success and not curl_infra_failure and maps_scraper is not None:
+            try:
+                log.info(
+                    "enricher.playwright_crawl_fallback",
+                    siren=siren, url=root_url,
+                )
+                async with maps_scraper._lock:
+                    page = maps_scraper._page
+                    if page is not None:
+                        await page.goto(
+                            root_url,
+                            wait_until="domcontentloaded",
+                            timeout=10000,
+                        )
+                        html = await page.content()
+                        if html and len(html) > 500:
+                            all_emails.extend(_extract_emails(html))
+                            all_phones.extend(_extract_phones(html))
+                            page_social = _extract_social(html)
+                            all_social.update(page_social)
+                            pages_visited += 1
+                            crawl_result = {
+                                "emails": list(set(all_emails)),
+                                "phones": list(set(all_phones)),
+                                "social": all_social,
+                                "pages_visited": pages_visited,
+                            }
+                            curl_success = True
+                            log.info(
+                                "enricher.playwright_crawl_ok",
+                                siren=siren, url=root_url,
+                                emails=len(crawl_result["emails"]),
+                            )
+                        # Navigate back to Maps so the next search works
+                        await page.goto(
+                            "https://www.google.com/maps?hl=fr",
+                            wait_until="domcontentloaded",
+                            timeout=10000,
+                        )
+            except Exception as pw_exc:
+                log.debug(
+                    "enricher.playwright_crawl_error",
+                    siren=siren, url=root_url, error=str(pw_exc),
+                )
 
         raw_emails: list[str] = crawl_result.get("emails", [])
         clean_emails = [e for e in raw_emails if not is_junk_email(e)]

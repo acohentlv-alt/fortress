@@ -329,7 +329,7 @@ async function renderJobMonitor(container, queryId) {
         }
 
         // ── Metric Counters — animate only on change ────────────
-        if (scraped !== previousValues.scraped) {
+        if (qualified !== previousValues.scraped) {
             previousValues.scraped = qualified;  // Show qualified count as "Complétées"
             animateCounter($.scraped, qualified);
         }
@@ -392,9 +392,9 @@ async function renderJobMonitor(container, queryId) {
             $.completion.style.display = 'block';
             $.completion.innerHTML = `
                 <div class="completion-card">
-                    <div class="completion-icon">🎉</div>
-                    <div class="completion-title">Batch terminé !</div>
-                    <div class="completion-subtitle">${scraped} entreprises enrichies avec succès</div>
+                    <div class="completion-icon">${qualified > 0 ? '🎉' : '⚠️'}</div>
+                    <div class="completion-title">${qualified > 0 ? 'Batch terminé !' : 'Batch terminé — aucun résultat qualifié'}</div>
+                    <div class="completion-subtitle">${qualified} entreprises qualifiées sur ${scraped} tentées</div>
                     <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-primary">📋 Voir les résultats</a>
                 </div>
             `;
