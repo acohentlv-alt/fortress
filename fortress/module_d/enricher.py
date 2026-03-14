@@ -615,15 +615,50 @@ async def _enrich_one(
     siren = company.siren
     denomination = company.denomination or ""
 
+    # ── Clean denomination for Maps search ─────────────────────────────────
+    # Strip legal form prefixes that pollute Google Maps queries.
+    # SIRENE: "SARL DUPONT TRANSPORT" → Maps search: "DUPONT TRANSPORT"
+    _LEGAL_PREFIXES = (
+        "SARL", "SAS", "SASU", "EURL", "SA", "SCI", "SNC", "SELARL",
+        "SELAFA", "SCP", "SEL", "GFA", "GIE", "EARL", "GAEC", "SCOP",
+        "SEM", "SELAS", "SELURL", "SPL", "SPLA", "SICAV", "FCP",
+        "SCCV", "SCPI", "SCM", "SEP", "SCEA",
+    )
+    maps_denomination = denomination
+    upper = denomination.upper().strip()
+    for prefix in _LEGAL_PREFIXES:
+        if upper.startswith(prefix + " "):
+            maps_denomination = denomination[len(prefix):].strip()
+            break
+
+    # ── Skip Maps for legal forms that never have public presence ──────────
+    # SCI (Société Civile Immobilière) = property management shells
+    # GFA (Groupement Foncier Agricole) = agricultural land holding
+    # SEP (Société en Participation) = silent partnerships
+    _SKIP_MAPS_FORMS = {"SCI", "GFA", "SEP", "SCCV", "SCPI", "FCP", "SICAV"}
+    skip_maps = False
+    forme = (company.forme_juridique or "").upper()
+    if any(f in upper[:10] for f in _SKIP_MAPS_FORMS) or any(f in forme for f in _SKIP_MAPS_FORMS):
+        skip_maps = True
+        log.info(
+            "enricher.skip_maps_legal_form",
+            siren=siren,
+            denomination=denomination,
+            forme_juridique=company.forme_juridique,
+            reason="Legal form has no public Maps presence",
+        )
+
     # ── Per-company start log ──────────────────────────────────────────────
     log.info(
         "enricher.company_start",
         siren=siren,
         denomination=denomination,
+        maps_denomination=maps_denomination,
         ville=company.ville,
         departement=company.departement,
         code_postal=company.code_postal,
         is_individual=_is_individual_operator(denomination),
+        skip_maps=skip_maps,
     )
 
     # ── Step 1: Google Maps (Playwright) ───────────────────────────────────
@@ -633,13 +668,13 @@ async def _enrich_one(
     maps_website: str | None = None
     match_confidence: str = "none"  # Default: no Maps data
 
-    if maps_scraper is not None:
-        # Build a richer Maps query: "denomination ville" or "denomination code_postal"
-        # Using ville (city name) gives Maps the best geographic context.
+    if maps_scraper is not None and not skip_maps:
+        # Build a richer Maps query using cleaned denomination + city name.
+        # "DUPONT TRANSPORT PERPIGNAN" instead of "SARL DUPONT TRANSPORT PERPIGNAN"
         search_location = company.ville or company.code_postal or company.departement or ""
         try:
             maps_result = await maps_scraper.search(
-                denomination,
+                maps_denomination,
                 search_location,
                 siren=siren,
             )
