@@ -510,85 +510,46 @@ async def enrich_companies(
         contact, source_label, match_confidence, maps_name = result
         source_counts[source_label] += 1
 
-        # ── Qualification decision ────────────────────────────────────
-        # KEEP: Maps confirmed the company (confidence != none) AND found
-        #       at least one actionable contact field (phone, email, or website).
-        # REPLACE: Maps returned nothing or zero useful data.
-        qualified = (
+        # ── ALWAYS ACCEPT — Maps is enrichment, not a gatekeeper ──────
+        # Every SIRENE company is a valid B2B lead by default.
+        # Maps data makes it BETTER (phone, website, email), but its
+        # absence never disqualifies a real registered business.
+        has_enrichment = (
             contact is not None
             and match_confidence != "none"
             and any([contact.phone, contact.email, contact.website])
         )
 
-        if not qualified:
+        if not has_enrichment:
+            # Maps didn't find useful data — still keep the company,
+            # just create a minimal contact from SIRENE data.
             replaced_count += 1
-            if match_confidence == "none":
-                reason = "no_maps_data"
-            elif contact is not None and not any([contact.phone, contact.email, contact.website]):
-                reason = "no_useful_data"
-            else:
-                reason = "low_confidence"
-            rejected_count += 1
-
-            # Persist rejection IMMEDIATELY so it survives crashes
-            if naf_prefix and dept:
-                try:
-                    async with pool.connection() as conn:
-                        await conn.execute(
-                            """
-                            INSERT INTO rejected_sirens (siren, naf_prefix, departement, reason)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (siren, naf_prefix, departement) DO NOTHING
-                            """,
-                            (company.siren, naf_prefix, dept, reason),
-                        )
-                except Exception as rej_exc:
-                    log.debug("enricher.rejected_persist_error", siren=company.siren, error=str(rej_exc))
-
             log.info(
-                "enricher.company_replaced",
+                "enricher.company_no_maps_data",
                 siren=company.siren,
                 denomination=company.denomination,
                 match_confidence=match_confidence,
-                reason=reason,
                 qualified_so_far=len(contacts),
                 target=target_count,
             )
-            # Pop replacement from pre-fetched pool (instant if full, fetches if empty)
-            if not replacement_pool and naf_prefix and dept:
-                try:
-                    more_repl = await _fetch_replacement_companies(
-                        pool, tried_sirens, reference_company, target_count * 5
-                    )
-                    replacement_pool.extend(more_repl)
-                except Exception as pool_exc:
-                    log.debug("enricher.replacement_refill_error", error=str(pool_exc))
-            
-            if replacement_pool:
-                repl = replacement_pool.popleft()
-                tried_sirens.add(repl.siren)
-                candidates.append(repl)
-                log.debug(
-                    "enricher.replacement_fetched",
-                    new_siren=repl.siren,
-                    new_name=repl.denomination,
-                )
-            # Notify runner of incremental progress
-            if on_progress:
-                await on_progress(len(tried_sirens), replaced_count, len(contacts))
-            # Log for admin
-            await _log_enrichment(
-                pool, query_id, company, "replaced", match_confidence, None, None, maps_name, 0, reason,
-                int((time.monotonic() - _t0) * 1000),
+            # Build a SIRENE-only contact (no phone/email but still valid)
+            from fortress.models import ContactSource
+            contact = Contact(
+                siren=company.siren,
+                source=ContactSource.SIRENE,
+                address=company.adresse,
+                website=None,
+                phone=None,
+                email=None,
             )
-            continue
+        else:
+            if contact.phone:
+                source_phone[source_label] += 1
+            if contact.email:
+                source_email[source_label] += 1
 
-        # ── Qualified → add to output + persist immediately ───────────
+        # ── Always add to output + persist immediately ────────────────
         contacts.append(contact)
-        if contact.phone:
-            source_phone[source_label] += 1
-        if contact.email:
-            source_email[source_label] += 1
 
         # Real-time save: persist this company+contact to DB immediately
         # so data survives even if the wave is interrupted.
@@ -607,8 +568,9 @@ async def enrich_companies(
             await on_progress(len(tried_sirens), replaced_count, len(contacts))
 
         # Log for admin
+        outcome = "qualified" if has_enrichment else "sirene_only"
         await _log_enrichment(
-            pool, query_id, company, "qualified", match_confidence,
+            pool, query_id, company, outcome, match_confidence,
             contact.phone, contact.website, maps_name,
             1 if contact.email else 0, None,
             int((time.monotonic() - _t0) * 1000),
