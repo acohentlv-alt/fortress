@@ -20,7 +20,11 @@ async def list_jobs(request: Request):
 
     base_query = """
         SELECT
-            sj.query_id, sj.query_name, sj.status,
+            sj.query_id, sj.query_name, 
+            CASE 
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                ELSE sj.status 
+            END AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,
@@ -116,7 +120,11 @@ async def get_job(query_id: str):
     """Single job detail with progress info."""
     job = await fetch_one("""
         SELECT
-            sj.query_id, sj.query_name, sj.status,
+            sj.query_id, sj.query_name, 
+            CASE 
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                ELSE sj.status 
+            END AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,

@@ -61,7 +61,7 @@ async def get_stats(request: Request):
             (SELECT COUNT(*) FROM scrape_jobs
              WHERE status = 'completed' {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS completed_jobs,
             (SELECT COUNT(*) FROM scrape_jobs
-             WHERE status = 'in_progress' {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS running_jobs
+             WHERE status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180 {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS running_jobs
         FROM enriched
     """, scope_params)
     return stats or {}
@@ -75,7 +75,11 @@ async def get_recent_activity(request: Request):
 
     if is_admin:
         rows = await fetch_all("""
-            SELECT query_id, query_name, status,
+            SELECT query_id, query_name, 
+                   CASE 
+                       WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
+                       ELSE status 
+                   END AS status,
                    total_companies, companies_scraped, companies_failed,
                    wave_current, wave_total,
                    triage_black, triage_green, triage_yellow, triage_red,
@@ -87,7 +91,11 @@ async def get_recent_activity(request: Request):
     else:
         user_id = user.id if user else -1
         rows = await fetch_all("""
-            SELECT query_id, query_name, status,
+            SELECT query_id, query_name, 
+                   CASE 
+                       WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
+                       ELSE status 
+                   END AS status,
                    total_companies, companies_scraped, companies_failed,
                    wave_current, wave_total,
                    triage_black, triage_green, triage_yellow, triage_red,
@@ -134,7 +142,11 @@ async def get_stats_by_job(request: Request):
     all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.query_name) AS group_key,
-            sj.query_id, sj.query_name, sj.status,
+            sj.query_id, sj.query_name, 
+            CASE 
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                ELSE sj.status 
+            END AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
             sj.total_companies, sj.wave_current, sj.wave_total,
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,

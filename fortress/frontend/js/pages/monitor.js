@@ -398,12 +398,26 @@ async function renderJobMonitor(container, queryId) {
                     <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-primary">📋 Voir les résultats</a>
                 </div>
             `;
+        } else if (!isRunning && job.status === 'failed') {
+             $.completion.style.display = 'block';
+             $.completion.innerHTML = `
+                 <div class="completion-card" style="border-left: 4px solid var(--danger); background: color-mix(in srgb, var(--bg-surface) 90%, var(--danger));">
+                     <div class="completion-icon" style="background:var(--danger-bg); color:var(--danger)">⚠️</div>
+                     <div class="completion-title" style="color:var(--danger)">Batch interrompu</div>
+                     <div class="completion-subtitle">Le processus s'est arrêté de manière inattendue. Les ${qualified} entreprises qualifiées ont été conservées.</div>
+                     <a href="#/job/${encodeURIComponent(queryId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">📋 Voir les résultats partiels</a>
+                 </div>
+             `;
         }
 
         // ── Footer ──────────────────────────────────────────────
-        $.footer.textContent = isRunning
-            ? `Actualisation automatique · ${formatDateTime(job.updated_at)}`
-            : `Batch terminé · ${formatDateTime(job.updated_at)}`;
+        let footerText = `Actualisation automatique · ${formatDateTime(job.updated_at)}`;
+        if (!isRunning) {
+            footerText = job.status === 'failed' 
+                ? `Batch interrompu · ${formatDateTime(job.updated_at)}` 
+                : `Batch terminé · ${formatDateTime(job.updated_at)}`;
+        }
+        $.footer.textContent = footerText;
 
         // ── Company Cards — append-only (track rendered SIRENs) ──
         $.cardsTitle.textContent = `📋 Entreprises collectées (${qualified})`;
