@@ -155,6 +155,20 @@ class PlaywrightMapsScraper:
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-blink-features=AutomationControlled",
+                    # ── Memory reduction flags (critical for Render) ──
+                    "--single-process",               # Avoid multi-process overhead
+                    "--disable-renderer-backgrounding",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-ipc-flooding-protection",
+                    "--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process",
+                    "--js-flags=--max-old-space-size=128",  # Cap V8 heap at 128MB
+                    "--disable-hang-monitor",
+                    "--disable-component-update",
+                    "--disable-default-apps",
+                    "--disable-domain-reliability",
+                    "--metrics-recording-only",
+                    "--mute-audio",
+                    "--no-first-run",
                 ],
             )
 
@@ -287,7 +301,7 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 self._search_count += 1
-                if self._search_count % 50 == 0:
+                if self._search_count % 10 == 0:
                     log.info("maps_scraper.memory_flush",
                              count=self._search_count, method="page_cycle")
                     await self._page.close()
