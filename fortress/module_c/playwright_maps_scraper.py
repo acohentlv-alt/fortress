@@ -413,13 +413,11 @@ class PlaywrightMapsScraper:
           4. Detect: business panel vs result list vs geographic entity
           5. Extract via query_selector_all (direct DOM, no Locator overhead)
         """
-        # Append query domain hint (e.g. "camping") + "France" for better Maps accuracy.
-        # User testing showed this finds campings that were previously missed.
-        hint_parts = [denomination, department]
-        if query_hint:
-            hint_parts.append(query_hint)
-        hint_parts.append("France")
-        query = " ".join(hint_parts)
+        # Query construction: denomination + location (city/postal/dept)
+        # NOTE: Adding domain hints (e.g. "camping") or "France" was tested and
+        # caused 0% hit rates — Maps interprets "CAMPING BOUIX ... camping France"
+        # as a category search (all campings in France) instead of the specific business.
+        query = f"{denomination} {department}"
         page = self._page
 
         # ── Step 1: Focus and type into search box (natural) ──────────
