@@ -297,6 +297,7 @@ class PlaywrightMapsScraper:
         department: str,
         *,
         siren: str = "",
+        query_hint: str = "",
     ) -> dict[str, Any]:
         """Search Google Maps for a company and return contact data.
 
@@ -318,7 +319,7 @@ class PlaywrightMapsScraper:
                     await self._setup_page()
 
                 return await asyncio.wait_for(
-                    self._do_search(denomination, department, siren),
+                    self._do_search(denomination, department, siren, query_hint),
                     timeout=_HARD_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -400,7 +401,8 @@ class PlaywrightMapsScraper:
         self._consent_done = True  # Don't retry forever
 
     async def _do_search(
-        self, denomination: str, department: str, siren: str
+        self, denomination: str, department: str, siren: str,
+        query_hint: str = "",
     ) -> dict[str, Any]:
         """Search Maps and extract data — mega scrapper strategy.
 
@@ -411,7 +413,13 @@ class PlaywrightMapsScraper:
           4. Detect: business panel vs result list vs geographic entity
           5. Extract via query_selector_all (direct DOM, no Locator overhead)
         """
-        query = f"{denomination} {department}"
+        # Append query domain hint (e.g. "camping") + "France" for better Maps accuracy.
+        # User testing showed this finds campings that were previously missed.
+        hint_parts = [denomination, department]
+        if query_hint:
+            hint_parts.append(query_hint)
+        hint_parts.append("France")
+        query = " ".join(hint_parts)
         page = self._page
 
         # ── Step 1: Focus and type into search box (natural) ──────────

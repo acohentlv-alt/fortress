@@ -407,6 +407,7 @@ async def enrich_companies(
     on_progress: Any | None = None,
     on_save: Any | None = None,
     query_id: str = "",
+    query_domain: str = "",
 ) -> tuple[list[Contact], int]:
     """Qualify-or-replace enrichment pipeline.
 
@@ -508,6 +509,7 @@ async def enrich_companies(
                 company,
                 curl_client=curl_client,
                 maps_scraper=maps_scraper,
+                query_domain=query_domain,
             )
         except Exception as exc:
             log.warning(
@@ -636,6 +638,7 @@ async def _enrich_one(
     *,
     curl_client: CurlClient,
     maps_scraper: Any | None = None,
+    query_domain: str = "",
 ) -> tuple[Contact | None, str, str, str | None]:
     """Enrich a single company: Maps first, then website crawl.
 
@@ -723,6 +726,7 @@ async def _enrich_one(
                 search_name,
                 search_location,
                 siren=siren,
+                query_hint=query_domain,
             )
         except Exception as exc:
             log.debug(

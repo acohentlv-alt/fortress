@@ -380,6 +380,14 @@ async def run(query_id: str) -> None:
 
                     async with CurlClient() as curl_client:
 
+                        # Extract domain/sector keywords from query_name
+                        # e.g. "camping 66" → "camping", "LOGISTIQUE 75" → "LOGISTIQUE"
+                        _domain_words = [
+                            w for w in query_name.split()
+                            if not w.isdigit() and len(w) > 1
+                        ]
+                        _query_domain = " ".join(_domain_words)
+
                         async def enrich_fn(companies, on_save=None):  # noqa: ANN001, ANN202
                             nonlocal wave_counter, companies_scraped, total_replaced
 
@@ -404,6 +412,7 @@ async def run(query_id: str) -> None:
                                 on_progress=_on_progress,
                                 on_save=on_save,
                                 query_id=query_id,
+                                query_domain=_query_domain,
                             )
                             wave_counter += 1
                             total_replaced = replaced
