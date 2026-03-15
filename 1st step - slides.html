@@ -27,6 +27,7 @@
   .highlight { color: #00d4ff; font-weight: bold; }
   .accent { color: #7b2ff7; font-weight: bold; }
   .warn { color: #ff6b6b; font-weight: bold; }
+  .green { color: #c3e88d; font-weight: bold; }
 
   .diagram {
     background: #111130; border: 1px solid #333; border-radius: 12px;
@@ -88,10 +89,10 @@
   .stage-flow { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 20px 0; }
   .stage-box {
     background: #1a1a3a; border: 2px solid #7b2ff7; border-radius: 10px;
-    padding: 12px 20px; text-align: center; min-width: 130px;
+    padding: 12px 18px; text-align: center; min-width: 120px;
   }
-  .stage-box h3 { margin: 0 0 5px; font-size: 1.1em; }
-  .stage-box p { font-size: 0.9em; color: #aaa; margin: 0; }
+  .stage-box h3 { margin: 0 0 5px; font-size: 1.05em; }
+  .stage-box p { font-size: 0.85em; color: #aaa; margin: 0; }
   .stage-arrow { color: #7b2ff7; font-size: 2em; }
 
   @media (max-width: 900px) {
@@ -110,69 +111,73 @@
 
 <div class="progress-bar" id="progressBar"></div>
 
+<!-- ============================================================ -->
 <!-- SLIDE 1: Title -->
+<!-- ============================================================ -->
 <div class="slide active full-center" id="slide-1">
   <h1>1st Step</h1>
   <p class="subtitle">Learning Code Through the Fortress Project</p>
   <p style="font-size:1.3em; margin-top: 30px;">A macro-to-micro guide for complete beginners</p>
-  <p style="color: #666; margin-top: 40px;">7 levels: from "what is software?" to watching a live factory</p>
+  <p style="color: #666; margin-top: 40px;">7 levels &mdash; from "what is software?" to watching a live factory</p>
 </div>
 
-<!-- SLIDE 2: What is Software? (4 layers) -->
+<!-- ============================================================ -->
+<!-- SLIDE 2: Level 1 — What is Software? (The Restaurant) -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-2">
   <h2>Level 1: What Is Software?</h2>
-  <p style="margin-bottom: 25px;">Fortress is made of <span class="highlight">4 layers</span> that each do a different job:</p>
+  <p style="margin-bottom: 20px;">Software isn't magic &mdash; it's simply a system of <span class="highlight">specialized workers talking to each other</span>. To understand Fortress, imagine a highly efficient restaurant.</p>
   <div class="card-row">
     <div class="card">
       <h3>Frontend</h3>
-      <p>What the user <strong>sees and clicks</strong></p>
-      <p style="color:#888; margin-top:10px;">Vanilla JS SPA (Single Page App)</p>
-      <p style="margin-top:10px;">Dashboard, progress bars, export buttons</p>
+      <p><strong>The Dining Room &amp; Menu</strong></p>
+      <p>Everything you see and click on screen. You sit down and place your order: "Find me transport companies in region 66."</p>
+      <p style="color:#888; margin-top:10px;">Vanilla JS Single Page App (SPA)</p>
     </div>
     <div class="card">
       <h3>Backend API</h3>
-      <p>The <strong>traffic cop</strong> between user and system</p>
-      <p style="color:#888; margin-top:10px;">Python + FastAPI</p>
-      <p style="margin-top:10px;">Login, start jobs, serve data</p>
+      <p><strong>The Waiter</strong></p>
+      <p>Takes your order from the dining room, checks your credentials, and hands your request to the back of the house.</p>
+      <p style="color:#888; margin-top:10px;">Python + FastAPI (async)</p>
     </div>
     <div class="card">
       <h3>Pipeline</h3>
-      <p>The <strong>factory worker</strong> that finds data</p>
-      <p style="color:#888; margin-top:10px;">Python (background process)</p>
-      <p style="margin-top:10px;">Scrapes Maps, crawls websites</p>
+      <p><strong>The Kitchen &amp; Delivery Drivers</strong></p>
+      <p>When the pantry doesn't have a phone number, the kitchen drives out to the internet (Google Maps, company websites) to find it.</p>
+      <p style="color:#888; margin-top:10px;">Python background subprocess</p>
     </div>
     <div class="card">
       <h3>Database</h3>
-      <p>The <strong>memory</strong> that stores everything</p>
+      <p><strong>The Giant Pantry</strong></p>
+      <p>A massive, organized vault storing 14.7 million French companies permanently.</p>
       <p style="color:#888; margin-top:10px;">PostgreSQL</p>
-      <p style="margin-top:10px;">14.7 million French companies</p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 3: How They Talk -->
+<!-- ============================================================ -->
+<!-- SLIDE 3: Level 1 — The Golden Rule + Flow -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-3">
-  <h2>Level 1: How the 4 Layers Communicate</h2>
-  <p style="margin-bottom: 20px;">Think of a restaurant with a dining room, a waiter, a kitchen, and a pantry:</p>
-  <div class="diagram" style="text-align:center;">
-  User clicks "Search bakeries in Paris"
-         |
-  [ FRONTEND ]  ---request--->  [ BACKEND API ]  ---"start job"--->  [ PIPELINE ]
-   (dining room)                  (waiter)                           (kitchen)
-         |                           |                                   |
-         |      <---"here's the      |        scrapes Google Maps        |
-         |        latest data"---    |        crawls websites            |
-         |                           |                                   |
-  Shows results                 Serves data                     [ DATABASE ]
-  live on screen               back and forth                    (the pantry)
-  without reloading                                          14.7M companies stored</div>
-  <p style="margin-top: 20px;"><strong>Key insight:</strong> The Pipeline runs <span class="highlight">separately</span> from the Backend API. The API handles user requests. The Pipeline does heavy scraping in the background. They don't block each other.</p>
+  <h2>Level 1: The Golden Rule of the Restaurant</h2>
+  <p style="margin-bottom: 15px;">The Pipeline runs as a <span class="warn">separate background process</span> from the Backend API. Why?</p>
+  <p style="margin-bottom: 25px;">Imagine if the Waiter had to personally drive to Google Maps to find a phone number. They'd be gone for 10 seconds &mdash; and the entire restaurant would <span class="warn">freeze</span>. Because the Waiter and Kitchen work independently, the Waiter never stops serving tables while the Kitchen is cooking.</p>
+  <div class="diagram" style="text-align:center; font-size:1em;">
+  1. You click "Search transport 66"
+  2. <span style="color:#00d4ff">FRONTEND</span> sends request to <span style="color:#00d4ff">BACKEND API</span>
+  3. API logs the order and tells the <span style="color:#7b2ff7">PIPELINE</span> to start
+  4. Pipeline scrapes Google Maps + company websites
+  5. The moment a phone is found &rarr; saved to <span style="color:#c3e88d">DATABASE</span> instantly
+  6. Frontend asks the API every 1.5 seconds: "Any new data?"
+  7. New company cards <span style="color:#00d4ff">slide onto screen in real time</span></div>
 </div>
 
-<!-- SLIDE 4: File Organization -->
+<!-- ============================================================ -->
+<!-- SLIDE 4: Level 2 — Why Split Into Files? -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-4">
-  <h2>Level 2: Why Split Code Into Files?</h2>
-  <p style="margin-bottom: 25px;">Imagine a company where HR, sales, and accounting share <span class="warn">one giant notebook</span>. Chaos.</p>
+  <h2>Level 2: Why Not One Big File?</h2>
+  <p style="margin-bottom: 25px;">Imagine a massive company where HR, Sales, Accounting, and Security all share a <span class="warn">single million-page notebook</span>. If a security guard needs to update a password, they flip through thousands of sales records just to find the right spot. Chaos!</p>
   <div class="two-col">
     <div>
       <h3>The Problem</h3>
@@ -186,126 +191,143 @@
     <div>
       <h3>The Solution</h3>
       <ul>
-        <li>Split by <span class="highlight">responsibility</span></li>
-        <li>Each file does <strong>one job</strong></li>
-        <li>Files talk to each other via <code>import</code></li>
-        <li>Fix one "department" without touching others</li>
+        <li><span class="highlight">Independence:</span> fix scraper without breaking login</li>
+        <li><span class="highlight">Teamwork:</span> multiple devs work in parallel</li>
+        <li><span class="highlight">Readability:</span> know exactly where to look</li>
+        <li><span class="highlight">Reusability:</span> <code>curl_client.py</code> used by any file that needs to visit a webpage</li>
       </ul>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 5: Folder Structure -->
+<!-- ============================================================ -->
+<!-- SLIDE 5: Level 2 — Fortress Folder Map -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-5">
-  <h2>Level 2: Fortress Folder Map</h2>
+  <h2>Level 2: The Fortress Company Map</h2>
   <div class="diagram" style="font-size:1em;">fortress/
-  config/        <span style="color:#00d4ff">Manager's Rulebook</span>     (settings, passwords)
-  api/           <span style="color:#00d4ff">Front Desk</span>             (web server, login, routes)
-  database/      <span style="color:#00d4ff">Blueprint Room</span>         (table definitions)
-  module_a/      <span style="color:#7b2ff7">Sorting Hat</span>            (search interpreter, triage)
-  module_c/      <span style="color:#7b2ff7">Field Workers</span>          (Maps scraper, website crawler)
-  module_d/      <span style="color:#7b2ff7">Assembly Line</span>          (enricher, batch processor)
-  frontend/      <span style="color:#00d4ff">Storefront</span>             (SPA dashboard UI)
-  data/          <span style="color:#00d4ff">Storage Room</span>           (checkpoints, logs, exports)
-  runner.py      <span style="color:#ff6b6b">Factory Manager</span>        (orchestrates the pipeline)</div>
-  <p style="margin-top:15px;"><strong>Notice:</strong> There's no <code>module_b/</code> — the modules jump from a to c to d. Each module is a team: <span class="accent">module_a</span> decides what to scrape, <span class="accent">module_c</span> does the scraping, <span class="accent">module_d</span> processes and saves results.</p>
+  config/        <span style="color:#00d4ff">Manager's Rulebook</span>     settings, passwords, environment rules
+  api/           <span style="color:#00d4ff">Front Desk</span>             web server, login, route addresses
+    main.py        traffic cop &mdash; sets up the server
+    db.py          database operator &mdash; manages connections
+    auth.py        security guard &mdash; usernames, passwords, sessions
+    routes/        specific web addresses the frontend can call
+  database/      <span style="color:#00d4ff">Blueprint Room</span>         schema.sql = definitive table structure
+  module_a/      <span style="color:#7b2ff7">Sorting Hat</span>            query_interpreter.py + triage.py
+  module_c/      <span style="color:#7b2ff7">Field Workers</span>          Maps scraper + website crawler
+  module_d/      <span style="color:#7b2ff7">Assembly Line</span>          enricher + batch processor + deduplicator
+  frontend/      <span style="color:#00d4ff">Storefront</span>             SPA dashboard (app.js = router)
+  data/          <span style="color:#00d4ff">Storage Room</span>           checkpoints, logs, exports
+  runner.py      <span style="color:#ff6b6b">Factory Manager</span>        orchestrates the entire pipeline</div>
+  <p style="margin-top:12px;">There is <strong>no <code>module_b/</code></strong> &mdash; modules jump a &rarr; c &rarr; d. In real-world coding, folders get renamed or removed over time.</p>
 </div>
 
-<!-- SLIDE 6: The 5-Stage Pipeline -->
+<!-- ============================================================ -->
+<!-- SLIDE 6: Level 3 — The 5-Stage Pipeline -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-6">
-  <h2>Level 3: The 5-Stage Pipeline</h2>
-  <p style="margin-bottom: 15px;">When a user clicks "Search," Fortress runs this <span class="highlight">assembly line</span> — each stage hands off to the next:</p>
+  <h2>Level 3: The 5-Stage Assembly Line</h2>
+  <p style="margin-bottom: 10px;">When you click "Search," <code>runner.py</code> (the Factory Manager) runs these 5 stages in order:</p>
   <div class="stage-flow">
     <div class="stage-box">
       <h3>1. Interpret</h3>
-      <p>Translates "bakeries in Paris" into a database query</p>
+      <p>"bakeries Paris" &rarr; database query</p>
     </div>
     <span class="stage-arrow">&rarr;</span>
     <div class="stage-box">
       <h3>2. Triage</h3>
-      <p>Sorts companies into buckets: reuse, skip, or scrape</p>
+      <p>Sort: reuse, scrape, or skip</p>
     </div>
     <span class="stage-arrow">&rarr;</span>
     <div class="stage-box">
       <h3>3. Enrich</h3>
-      <p>Scrapes Maps &amp; websites for phone, email, socials</p>
+      <p>Scrape Maps &amp; websites</p>
     </div>
     <span class="stage-arrow">&rarr;</span>
     <div class="stage-box">
       <h3>4. Wave Process</h3>
-      <p>Saves in batches of 50 with crash-recovery checkpoints</p>
+      <p>Save in batches of 50</p>
     </div>
     <span class="stage-arrow">&rarr;</span>
     <div class="stage-box">
       <h3>5. Complete</h3>
-      <p>Cleanup, close browsers, mark job as done</p>
+      <p>Cleanup &amp; mark done</p>
     </div>
   </div>
-  <p style="margin-top: 15px;"><strong>The MVP Phone Gate:</strong> During Stage 3, if no phone number is found after all sources are tried, the company is <span class="warn">rejected and replaced</span>. A phone number is the minimum requirement.</p>
+  <p style="margin-top: 15px;"><span class="warn">The MVP Phone Gate</span> fires during Stage 3: if the scraper finds <em>zero</em> results or no phone number after trying all data sources, the company is <strong>instantly rejected and replaced</strong> with a new one. A phone number is the minimum viable product &mdash; the one piece of data that <em>must</em> exist.</p>
 </div>
 
-<!-- SLIDE 7: The Pipeline in the Folders -->
+<!-- ============================================================ -->
+<!-- SLIDE 7: Level 3 — Which Folder Runs Which Stage? -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-7">
   <h2>Level 3: Which Folder Runs Which Stage?</h2>
-  <p style="margin-bottom: 20px;">Now we can connect the <span class="highlight">folder map</span> to the <span class="highlight">pipeline stages</span>:</p>
+  <p style="margin-bottom: 15px;">Now you can see how the <span class="highlight">folder map</span> and the <span class="highlight">assembly line</span> connect:</p>
   <table>
-    <tr><th>Pipeline Stage</th><th>File</th><th>Folder</th><th>What It Does</th></tr>
-    <tr><td><span class="accent">1. Interpret</span></td><td>query_interpreter.py</td><td>module_a/</td><td>Turns plain text into a database search</td></tr>
-    <tr><td><span class="accent">2. Triage</span></td><td>triage.py</td><td>module_a/</td><td>Color-codes companies: green (reuse), yellow (scrape), black (skip)</td></tr>
+    <tr><th>Stage</th><th>File</th><th>Folder</th><th>What It Does</th></tr>
+    <tr><td><span class="accent">1. Interpret</span></td><td>query_interpreter.py</td><td>module_a/</td><td>Translates plain text into a database search</td></tr>
+    <tr><td><span class="accent">2. Triage</span></td><td>triage.py</td><td>module_a/</td><td>Color-codes companies: <span class="green">GREEN</span>=reuse, YELLOW=scrape, BLACK=skip</td></tr>
     <tr><td><span class="accent">3. Enrich</span></td><td>enricher.py</td><td>module_d/</td><td>Coordinates scraping, enforces the Phone Gate</td></tr>
     <tr><td><span class="accent">3. Enrich</span></td><td>playwright_maps_scraper.py</td><td>module_c/</td><td>Opens invisible Chrome, searches Google Maps</td></tr>
-    <tr><td><span class="accent">3. Enrich</span></td><td>curl_client.py</td><td>module_c/</td><td>Crawls company websites for email/socials</td></tr>
-    <tr><td><span class="accent">4. Wave</span></td><td>batch_processor.py</td><td>module_d/</td><td>Groups into waves of 50, saves checkpoints</td></tr>
+    <tr><td><span class="accent">3. Enrich</span></td><td>curl_client.py</td><td>module_c/</td><td>Crawls company websites for email &amp; socials</td></tr>
+    <tr><td><span class="accent">4. Wave</span></td><td>batch_processor.py</td><td>module_d/</td><td>Groups into waves of 50, saves checkpoint to disk</td></tr>
     <tr><td><span class="accent">4. Wave</span></td><td>deduplicator.py</td><td>module_d/</td><td>Saves data without creating duplicates</td></tr>
-    <tr><td><span class="accent">All</span></td><td>runner.py</td><td>root</td><td>The boss — calls each stage in order</td></tr>
+    <tr><td><span class="accent">All</span></td><td>runner.py</td><td>root</td><td>The boss &mdash; calls each stage in order</td></tr>
   </table>
 </div>
 
-<!-- SLIDE 8: Variables & Conditionals -->
+<!-- ============================================================ -->
+<!-- SLIDE 8: Level 4 — Variables & Conditionals -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-8">
-  <h2>Level 4: Variables & Conditionals</h2>
+  <h2>Level 4: Variables &amp; Conditionals</h2>
   <div class="two-col">
     <div>
       <h3>Variables = Labeled Boxes</h3>
-      <p>Store information the program needs to remember</p>
-      <div class="code-block"><span class="fn">batch_size</span> = <span class="num">50</span>          <span class="cmt"># companies per wave</span>
-<span class="fn">wave_current</span> = <span class="num">3</span>        <span class="cmt"># which batch now</span>
+      <p>Scoreboards that hold numbers and text that change over time.</p>
+      <div class="code-block"><span class="fn">batch_size</span> = <span class="num">50</span>          <span class="cmt"># total companies requested</span>
+<span class="fn">wave_current</span> = <span class="num">3</span>        <span class="cmt"># which chunk we're on now</span>
 <span class="fn">company_name</span> = <span class="str">"GEODIS"</span> <span class="cmt"># name to look up</span>
 <span class="fn">phone</span> = <span class="kw">None</span>            <span class="cmt"># empty box (not found yet)</span></div>
+      <p style="margin-top:10px; color:#888;">The pipeline constantly updates <code>wave_current</code> so the frontend can display a live progress bar.</p>
     </div>
     <div>
       <h3>Conditionals = If/Then Decisions</h3>
-      <p>The program makes choices based on rules</p>
+      <p>A strict bouncer checking IDs at the door.</p>
       <div class="code-block"><span class="kw">if</span> phone <span class="kw">is not None</span>:
     <span class="cmt"># Phone found! Company is qualified</span>
     save_to_database(company)
 <span class="kw">else</span>:
     <span class="cmt"># No phone = reject and replace</span>
     replace_with_next_company()</div>
-      <p style="margin-top:10px; color:#ff6b6b;">This is the "MVP Phone Gate" — Fortress's most important decision</p>
+      <p style="margin-top:10px; color:#ff6b6b;">This is the "MVP Phone Gate" &mdash; Fortress's most important decision. It guarantees the user only gets usable data.</p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 9: Loops & Functions -->
+<!-- ============================================================ -->
+<!-- SLIDE 9: Level 4 — Loops & Functions -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-9">
-  <h2>Level 4: Loops & Functions</h2>
+  <h2>Level 4: Loops &amp; Functions</h2>
   <div class="two-col">
     <div>
-      <h3>Loops = Repeat Until Done</h3>
-      <p>"Do this for every company in the batch"</p>
+      <h3>Loops = Assembly Line Worker</h3>
+      <p>Repeating the exact same actions until the daily quota is met.</p>
       <div class="code-block"><span class="kw">for</span> company <span class="kw">in</span> wave_companies:
     data = scrape_maps(company)
     <span class="kw">if</span> data.phone:
-        save(data)     <span class="cmt"># Keep it</span>
+        save(data)       <span class="cmt"># Keep it</span>
     <span class="kw">else</span>:
         replace(company) <span class="cmt"># Swap it</span>
 
-<span class="cmt"># After 50 companies: save checkpoint!</span></div>
+<span class="cmt"># After 50 companies: save checkpoint!</span>
+<span class="cmt"># Power goes out? Resume right here.</span></div>
+      <p style="margin-top:10px; color:#888;">The wave loop breaks a massive job into safe, bite-sized pieces.</p>
     </div>
     <div>
       <h3>Functions = Reusable Mini-Programs</h3>
-      <p>Write once, call by name whenever needed</p>
+      <p>A specific action verb that takes inputs and hands back an answer.</p>
       <div class="code-block"><span class="kw">def</span> <span class="fn">_assess_match</span>(maps_name, registry_name):
     <span class="cmt">"""Is this the right business?"""</span>
     <span class="kw">if</span> names_match <span class="kw">and</span> cities_match:
@@ -314,17 +336,20 @@
         <span class="kw">return</span> <span class="str">"low"</span>     <span class="cmt"># Maybe branch</span>
     <span class="kw">else</span>:
         <span class="kw">return</span> <span class="str">"none"</span>    <span class="cmt"># Wrong business</span></div>
+      <p style="margin-top:10px; color:#888;">Centralizes logic so the system safely decides: keep the phone number or discard it to prevent a false positive.</p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 10: Classes & Imports -->
+<!-- ============================================================ -->
+<!-- SLIDE 10: Level 4 — Classes & Imports -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-10">
-  <h2>Level 4: Classes & Imports</h2>
+  <h2>Level 4: Classes &amp; Imports</h2>
   <div class="two-col">
     <div>
-      <h3>Classes = Blueprints for Complex Tools</h3>
-      <p>A function is a <em>verb</em>. A class is a <em>noun</em> with memory.</p>
+      <h3>Classes = Machine Blueprints</h3>
+      <p>A function is a <em>verb</em>. A class is a <em>noun</em> &mdash; a complex machine with its own dials, settings, and memory.</p>
       <div class="code-block"><span class="kw">class</span> <span class="fn">CurlClient</span>:
     timeout = <span class="num">8</span>        <span class="cmt"># Max 8s per page</span>
     delay = <span class="num">0.4</span>        <span class="cmt"># Wait between visits</span>
@@ -333,11 +358,11 @@
     <span class="kw">def</span> <span class="fn">get</span>(self, url):
         <span class="cmt"># Visit webpage using these rules</span>
         ...</div>
-      <p style="margin-top:10px;">The CurlClient <em>remembers</em> its settings across every page it visits</p>
+      <p style="margin-top:10px;">CurlClient <em>remembers</em> its settings across every page. It carries a cryptographic disguise to sneak past bot detection.</p>
     </div>
     <div>
-      <h3>Imports = Files Talking to Each Other</h3>
-      <p>One file borrows code from another</p>
+      <h3>Imports = Calling Another Department</h3>
+      <p>Picking up the phone and asking a specialized department for help.</p>
       <div class="code-block"><span class="cmt"># Inside runner.py (the boss):</span>
 <span class="kw">from</span> fortress.module_a <span class="kw">import</span> interpret
 <span class="kw">from</span> fortress.module_a <span class="kw">import</span> triage
@@ -345,56 +370,66 @@
 
 <span class="cmt"># runner.py doesn't know HOW to scrape</span>
 <span class="cmt"># It delegates to specialist files</span></div>
-      <p style="margin-top:10px;">Each file focuses on <strong>one job</strong>. The boss just coordinates.</p>
+      <p style="margin-top:10px;">Each file focuses on <strong>one job</strong>. The boss just coordinates &mdash; no copy-pasting code everywhere.</p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 11: Async -->
+<!-- ============================================================ -->
+<!-- SLIDE 11: Level 4 — Async/Await -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-11">
   <h2>Level 4: Async/Await (Multitasking)</h2>
-  <p>Normal code: waits for Google Maps to load <span class="flow-arrow">&rarr;</span> <span class="warn">entire system freezes</span></p>
-  <p>Async code: starts the request, does other work while waiting <span class="flow-arrow">&rarr;</span> <span class="highlight">keeps serving users</span></p>
-  <div class="code-block" style="margin: 25px 0;"><span class="kw">async def</span> <span class="fn">enrich_company</span>(company):
+  <p><strong>Analogy:</strong> Starting the laundry and walking away to wash the dishes while it runs &mdash; instead of staring blankly at the washing machine for an hour.</p>
+  <div style="margin: 20px 0;">
+    <p>Normal code: waits for Google Maps to load <span class="flow-arrow">&rarr;</span> <span class="warn">entire system freezes for 3 seconds</span></p>
+    <p>Async code: starts the request, does other work while waiting <span class="flow-arrow">&rarr;</span> <span class="highlight">keeps serving users</span></p>
+  </div>
+  <div class="code-block"><span class="kw">async def</span> <span class="fn">enrich_company</span>(company):
     data = <span class="kw">await</span> scrape_google_maps(company)   <span class="cmt"># Start scraping, don't freeze!</span>
     <span class="cmt"># While Maps loads (3 seconds), the server can:</span>
-    <span class="cmt">#   - Update the user's dashboard</span>
-    <span class="cmt">#   - Answer another user's request</span>
+    <span class="cmt">#   - Answer the frontend's "any new data?" poll</span>
+    <span class="cmt">#   - Update another user's dashboard</span>
     <span class="cmt">#   - Process other database queries</span>
     <span class="kw">await</span> save_to_database(data)               <span class="cmt"># Save when Maps responds</span></div>
-  <p><strong>Why Fortress needs this:</strong> The Pipeline talks to Google Maps, crawls websites, and queries a 14.7M-row database. The Backend API must keep answering the frontend's requests while all of this happens. Without async, every network request would freeze <em>everything</em>.</p>
+  <p style="margin-top: 15px;"><strong>Why Fortress needs this:</strong> Web scraping is incredibly slow. Async ensures the Backend API (the waiter) can continuously answer the frontend's requests while the Pipeline (the kitchen) does the heavy lifting in the background.</p>
 </div>
 
-<!-- SLIDE 12: Database Basics -->
+<!-- ============================================================ -->
+<!-- SLIDE 12: Level 5 — Database Basics -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-12">
-  <h2>Level 5: Database = Organized Filing Cabinet</h2>
+  <h2>Level 5: Database = A Giant Filing Cabinet</h2>
+  <p style="margin-bottom: 15px;">Instead of throwing everything into one giant Word document, programmers use a database to keep millions of pieces of information <span class="highlight">instantly searchable</span>.</p>
   <div class="card-row">
     <div class="card">
       <h3>Table</h3>
-      <p>One spreadsheet tab. Holds one type of thing. "Companies" table, "Contacts" table, etc.</p>
+      <p>A single drawer in the filing cabinet. Only holds one type of thing &mdash; you wouldn't mix company addresses with pipeline progress reports.</p>
     </div>
     <div class="card">
       <h3>Column</h3>
-      <p>A category header: Name, Phone, City. Defines what kind of data each position holds.</p>
+      <p>The category labels inside the drawer: Name, Phone, City. Defines what kind of data each position holds.</p>
     </div>
     <div class="card">
       <h3>Row</h3>
-      <p>One entry. One specific company. 14.7 million rows = 14.7 million companies.</p>
+      <p>One actual entry. One specific company. 14.7 million rows = 14.7 million companies.</p>
     </div>
     <div class="card">
       <h3>Primary Key</h3>
-      <p>A unique ID for each row. Two bakeries named "Paul"? The SIREN number tells them apart.</p>
+      <p>A unique ID that guarantees no two rows are confused. Two bakeries named "Paul"? The SIREN number tells them apart.</p>
     </div>
   </div>
-  <p style="margin-top:15px;"><span class="highlight">Foreign Key</span> = a link connecting tables. The <code>contacts</code> table stores the company's <code>siren</code> so the system knows "this phone number belongs to company #123456789."</p>
+  <p style="margin-top:12px;"><span class="highlight">Foreign Key</span> = a digital bridge connecting two tables. The <code>contacts</code> table stores the company's <code>siren</code> so the system knows "this phone number belongs to company #123456789."</p>
 </div>
 
-<!-- SLIDE 13: Fortress Tables -->
+<!-- ============================================================ -->
+<!-- SLIDE 13: Level 5 — Fortress Tables -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-13">
   <h2>Level 5: Fortress Database Tables</h2>
   <div class="diagram" style="font-size:0.95em;">             ┌──────────────────────────────────────────┐
              |          <span style="color:#ff6b6b">companies</span> (14.7M rows)          |
-             |   MASTER REGISTRY - <span style="color:#ff6b6b">IDENTITY PROTECTED</span>    |
+             |   MASTER REGISTRY &mdash; <span style="color:#ff6b6b">IDENTITY PROTECTED</span>    |
              |   siren (PK) | denomination | ville      |
              └──────────────┬───────────────────────────┘
                             | siren (Foreign Key)
@@ -409,95 +444,105 @@
 
      ┌─────────────────────────────────────┐
      |          <span style="color:#7b2ff7">scrape_jobs</span>                 |
-     |   Tracks pipeline progress          |
+     |   The Manager's Clipboard           |
      |   query_id | status | scraped/total |
      └─────────────────────────────────────┘</div>
-  <p style="margin-top:10px;"><strong>Key rule:</strong> The <code>companies</code> table's identity fields (name, address, SIREN) are <span class="warn">protected</span> — the pipeline never changes who a company <em>is</em>. All enriched data (phone, email) goes into <code>contacts</code>, linked by SIREN.</p>
+  <p style="margin-top:10px;"><strong>The rule:</strong> The pipeline is <span class="warn">never allowed</span> to modify the identity fields of <code>companies</code> (name, address, SIREN). All enriched data (phone, email, website) goes into <code>contacts</code>, linked by the company's SIREN. Think of <code>query_tags</code> as sticky notes &mdash; a single company can have multiple tags if found in different searches.</p>
 </div>
 
-<!-- SLIDE 14: Architectural Decisions -->
+<!-- ============================================================ -->
+<!-- SLIDE 14: Level 6 — Why These Tools? -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-14">
   <h2>Level 6: Why These Tools?</h2>
-  <p style="margin-bottom:15px;">Every tool choice solves a <strong>specific problem</strong>:</p>
+  <p style="margin-bottom:12px;">Programmers don't pick tools at random &mdash; they choose them to solve <strong>specific problems</strong>:</p>
   <table>
-    <tr><th>Decision</th><th>The Problem</th><th>Why This Solution</th></tr>
-    <tr><td><span class="highlight">PostgreSQL</span></td><td>14.7M rows to search</td><td>Advanced indexing — don't scan every row</td></tr>
-    <tr><td><span class="highlight">FastAPI</span></td><td>Server freezes while waiting</td><td>Async framework — serve users while scraping</td></tr>
-    <tr><td><span class="highlight">curl_cffi</span></td><td>Websites block bots</td><td>Mimics Chrome's fingerprint — looks human</td></tr>
-    <tr><td><span class="highlight">Playwright</span></td><td>Maps needs JavaScript</td><td>Runs real Chrome — can load dynamic pages</td></tr>
-    <tr><td><span class="highlight">Vanilla JS SPA</span></td><td>Dashboard must update live</td><td>Hash routing + DOM patching — no page reloads</td></tr>
-    <tr><td><span class="highlight">Waves of 50</span></td><td>Crash = lose progress</td><td>Checkpoint after each wave — resume on restart</td></tr>
-    <tr><td><span class="highlight">Connection pool</span></td><td>DB connections are slow to open</td><td>Keep 5 warm — borrow and return</td></tr>
+    <tr><th>Tool</th><th>The Problem</th><th>Why This Solution</th></tr>
+    <tr><td><span class="highlight">PostgreSQL</span></td><td>14.7M rows to search</td><td>Indexes find bakeries in Paris instantly &mdash; without reading all 14.7M rows</td></tr>
+    <tr><td><span class="highlight">FastAPI</span></td><td>Server freezes while waiting</td><td>Async framework &mdash; waiter keeps serving while kitchen cooks</td></tr>
+    <tr><td><span class="highlight">curl_cffi</span></td><td>Websites block bots</td><td>Mimics Chrome's cryptographic handshake &mdash; sneaks past firewalls</td></tr>
+    <tr><td><span class="highlight">Playwright</span></td><td>Maps needs JavaScript</td><td>Launches invisible Chrome that "sees" pages like a human</td></tr>
+    <tr><td><span class="highlight">Vanilla JS SPA</span></td><td>Dashboard must update live</td><td>DOM patching slides new cards in without reloading the page</td></tr>
+    <tr><td><span class="highlight">Waves of 50</span></td><td>Crash = lose progress</td><td>Checkpoint after each wave &mdash; resume on restart, zero lost work</td></tr>
+    <tr><td><span class="highlight">Connection Pool</span></td><td>DB connections are slow to open</td><td>Keep 5 warm connections &mdash; workers borrow and return</td></tr>
   </table>
 </div>
 
-<!-- SLIDE 15: Design Patterns -->
+<!-- ============================================================ -->
+<!-- SLIDE 15: Level 6 — Design Patterns -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-15">
-  <h2>Level 6: Design Patterns</h2>
+  <h2>Level 6: Design Patterns (Smart Business Rules)</h2>
   <div class="card-row">
     <div class="card">
       <h3>Checkpoint / Resume</h3>
-      <p>Save progress to disk after every 50 companies. Crash? Read the file, resume at wave N+1. <span class="highlight">Zero lost work.</span></p>
+      <p>After every 50 companies, save a physical bookmark file to disk. Power goes out? Read the file, resume at wave N+1. <span class="highlight">Zero lost work.</span></p>
     </div>
     <div class="card">
       <h3>Seen Set</h3>
-      <p>A list of already-processed company IDs in the checkpoint. On restart, skip anything already done. <span class="highlight">No duplicates.</span></p>
+      <p>The checkpoint includes a list of every SIREN already processed. On restart, skip anything already done. <span class="highlight">No accidental duplicates.</span></p>
     </div>
     <div class="card">
       <h3>Data Bank (Smart Reuse)</h3>
-      <p>Already scraped a company last week? Skip scraping, instantly reuse. <span class="highlight">Massive time savings.</span></p>
+      <p>Company scraped last week? Triage tags it <span class="green">GREEN</span> &mdash; instantly reuse, skip scraping. <span class="highlight">Massive time savings.</span></p>
     </div>
   </div>
   <div class="card-row">
     <div class="card">
       <h3>Waterfall + Fast-Fail</h3>
-      <p>Try every data source in order. If <em>none</em> find a phone: <span class="warn">reject immediately</span>. Don't waste time on dead ends.</p>
+      <p>Try data sources in strict order: Maps first, then website crawl. If <em>none</em> find a phone: <span class="warn">reject immediately</span>. Don't waste time on dead ends.</p>
     </div>
     <div class="card">
-      <h3>Rate Limiting</h3>
-      <p>One Maps search at a time. Random delays. Chrome impersonation. <span class="highlight">Act human, don't get banned.</span></p>
+      <h3>Rate Limiting (Be Polite)</h3>
+      <p>100 pages/second = banned IP. <code>asyncio.Lock()</code> forces one Maps search at a time. Random 2-3s delays. Chrome impersonation. <span class="highlight">Act human.</span></p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 16: The Live Factory -->
+<!-- ============================================================ -->
+<!-- SLIDE 16: Level 7 — The Live Factory -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-16">
   <h2>Level 7: The Live Factory</h2>
-  <p style="margin-bottom: 15px;">This is where <span class="highlight">everything connects</span>. Three things happen simultaneously:</p>
+  <p style="margin-bottom: 15px;">How does invisible backend code make the progress bar move on your screen <span class="highlight">in real time</span>? Three processes fire <strong>simultaneously</strong>:</p>
   <div class="card-row">
     <div class="card" style="border-color: #ff6b6b;">
       <h3 style="color: #ff6b6b;">1. Immediate Save</h3>
       <p><strong>The Kitchen Worker</strong></p>
-      <p>The moment a company passes the Phone Gate, it is saved to the database <em>instantly</em> — not after the whole batch finishes. This is the <code>on_save</code> rule.</p>
+      <p>The pipeline doesn't wait to finish baking all 50 cookies to tell you. The <em>exact millisecond</em> a company passes the Phone Gate, <code>on_save</code> fires and permanently saves that single company to the database.</p>
     </div>
     <div class="card" style="border-color: #00d4ff;">
       <h3 style="color: #00d4ff;">2. Polling</h3>
-      <p><strong>The Waiter Checking the Kitchen</strong></p>
-      <p>The frontend sends a request to the backend every <strong>1.5 seconds</strong>, asking: "Any new companies yet?" This is a timer (<code>setInterval</code>) running in JavaScript.</p>
+      <p><strong>The Heartbeat</strong></p>
+      <p>Your browser doesn't wait for the server to call it. The frontend JavaScript runs a timer (<code>setInterval</code>) that asks the backend every <strong>1.5 seconds</strong>: "Do you have any new data yet?"</p>
     </div>
     <div class="card" style="border-color: #7b2ff7;">
       <h3 style="color: #7b2ff7;">3. DOM Patching</h3>
-      <p><strong>The Assembly Line Display</strong></p>
-      <p>When the backend says "yes, 1 new bakery," the frontend doesn't reload the page. It <em>surgically</em> slides the new company card onto the screen and ticks up the progress counter.</p>
+      <p><strong>The Magic Trick</strong></p>
+      <p>When the backend says "yes, 1 new bakery!" &mdash; the frontend doesn't redraw the whole screen. It <em>surgically</em> slides the new company card onto the screen and ticks the progress counter up by one. No page reload.</p>
     </div>
   </div>
 </div>
 
-<!-- SLIDE 17: Why the Live Factory Matters -->
+<!-- ============================================================ -->
+<!-- SLIDE 17: Level 7 — Why This Ties Everything Together -->
+<!-- ============================================================ -->
 <div class="slide" id="slide-17">
-  <h2>Level 7: Why This Ties Everything Together</h2>
-  <p style="margin-bottom: 25px;">The Live Factory is why every earlier concept exists:</p>
+  <h2>Level 7: The "Aha!" Moment</h2>
+  <p style="margin-bottom: 20px;">If you understand the Live Factory, <span class="accent">you understand software engineering</span>. Every earlier concept exists to make this work:</p>
   <table>
-    <tr><th>Concept</th><th>Without It</th><th>With It</th></tr>
-    <tr><td><span class="highlight">Async</span> (Level 4)</td><td>Backend freezes while Pipeline scrapes — can't answer the frontend's polls</td><td>Backend serves polls while Pipeline scrapes in parallel</td></tr>
-    <tr><td><span class="highlight">SPA</span> (Level 6)</td><td>Every update reloads the whole page — white flash, scroll reset, terrible UX</td><td>New cards slide in smoothly, counters animate, no reload</td></tr>
-    <tr><td><span class="highlight">on_save</span> (Level 6)</td><td>User waits for entire wave of 50 before seeing anything</td><td>Companies appear one-by-one, like an assembly line</td></tr>
-    <tr><td><span class="highlight">4 Layers</span> (Level 1)</td><td>Pipeline inside the API = one slow request blocks everything</td><td>Pipeline runs separately — API stays fast for the user</td></tr>
+    <tr><th>Concept You Learned</th><th>Without It</th><th>With It</th></tr>
+    <tr><td><span class="highlight">Async</span> (Level 4)</td><td>Backend freezes while Pipeline scrapes &mdash; can't answer the frontend's 1.5s polls</td><td>Backend serves polls while Pipeline scrapes in parallel</td></tr>
+    <tr><td><span class="highlight">SPA</span> (Level 6)</td><td>Every update reloads the page &mdash; white flash, scroll reset, terrible experience</td><td>Cards animate in smoothly, counters tick up, no reload</td></tr>
+    <tr><td><span class="highlight">on_save</span> (Level 7)</td><td>User stares at blank screen for 10 minutes waiting for the whole batch</td><td>Companies appear one-by-one like an assembly line</td></tr>
+    <tr><td><span class="highlight">4 Layers</span> (Level 1)</td><td>Pipeline inside the API = one slow scrape blocks everything</td><td>Pipeline runs separately &mdash; API stays fast for the user</td></tr>
   </table>
-  <p style="margin-top: 25px; font-size: 1.2em;">The user sees companies <span class="accent">sliding onto the screen in real time</span> — and now you understand <em>every piece of code</em> that makes that happen.</p>
+  <p style="margin-top: 25px; font-size: 1.2em;">The user sees companies <span class="accent">sliding onto the screen in real time</span> &mdash; and now you understand <em>every piece of code</em> that makes that happen.</p>
 </div>
 
+<!-- ============================================================ -->
 <!-- SLIDE 18: Summary -->
+<!-- ============================================================ -->
 <div class="slide full-center" id="slide-18">
   <h2>The Learning Path</h2>
   <div class="diagram" style="text-align:left; display:inline-block; font-size:1.15em;">
@@ -509,6 +554,7 @@ Level 5  <span style="color:#00d4ff">How is data stored?</span>         <span st
 Level 6  <span style="color:#00d4ff">Why these specific tools?</span>    <span style="color:#666">&rarr;</span>  Each tool solves a real problem + design patterns
 Level 7  <span style="color:#00d4ff">How does it all connect?</span>     <span style="color:#666">&rarr;</span>  The Live Factory: save &rarr; poll &rarr; patch &rarr; real-time</div>
   <p style="margin-top:40px; font-size:1.3em;">Each level builds on the one before.<br>Every concept is grounded in something <span class="accent">Fortress actually does</span>.</p>
+  <p style="margin-top:20px; color:#666;">Content generated with NotebookLM from Fortress project sources</p>
 </div>
 
 <!-- Navigation -->

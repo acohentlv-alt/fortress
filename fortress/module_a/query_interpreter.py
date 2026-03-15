@@ -29,9 +29,12 @@ from fortress.models import Company, CompanyStatus, QueryResult
 log = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
-# NAF code pattern: digits, dot, digits, letter(s)  e.g. "62.01Z", "10.71A"
+# NAF code patterns:
+#   Full subclass: 62.01Z, 10.71A           (exact match in DB)
+#   Hierarchical prefix: 01, 01.2, 01.24    (LIKE prefix match in DB)
 # ---------------------------------------------------------------------------
 _NAF_CODE_RE = re.compile(r"^\d{2}\.\d{2}[A-Z]$", re.IGNORECASE)
+_NAF_PREFIX_RE = re.compile(r"^\d{2}(?:\.\d{1,2}[A-Z]?)?$", re.IGNORECASE)
 
 # Fuzzy thresholds
 _INDUSTRY_FUZZY_THRESHOLD = 75
@@ -181,10 +184,12 @@ def _resolve_industry_token(token: str) -> tuple[str, list[str]] | None:
     """
     normalized = token.strip().lower()
 
-    # 1. Direct NAF code format
-    if _NAF_CODE_RE.match(token):
-        code = token.upper()
-        return (code, [code])
+    # 1. Direct NAF code or hierarchical prefix (01, 01.2, 01.24, 01.24Z)
+    if _NAF_PREFIX_RE.match(token):
+        code = token.upper().rstrip(".")
+        # Full subclass → exact match label; prefix → LIKE label
+        label = code if _NAF_CODE_RE.match(code) else f"{code}*"
+        return (label, [code])
 
     # 2. Exact alias match
     if normalized in INDUSTRY_ALIASES:
