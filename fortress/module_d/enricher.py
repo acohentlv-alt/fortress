@@ -526,7 +526,9 @@ async def enrich_companies(
         if not has_enrichment:
             # Maps didn't find useful data — still keep the company,
             # just create a minimal contact from SIRENE data.
-            replaced_count += 1
+            # NOTE: This is NOT a "replacement" — the company stays as-is.
+            # replaced_count only increments for actual pool replacements
+            # (in the error handler above, not here).
             log.info(
                 "enricher.company_no_maps_data",
                 siren=company.siren,

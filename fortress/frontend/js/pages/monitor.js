@@ -148,11 +148,11 @@ async function renderJobMonitor(container, queryId) {
                         </div>
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-batch">0</div>
-                            <div class="monitor-metric-label">Batch</div>
+                            <div class="monitor-metric-label">Cible</div>
                         </div>
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-replaced">0</div>
-                            <div class="monitor-metric-label">Remplacées</div>
+                            <div class="monitor-metric-label">Substitutions</div>
                         </div>
                     </div>
                 </div>

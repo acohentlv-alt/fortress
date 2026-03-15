@@ -94,7 +94,7 @@ export async function renderJob(container, queryId) {
                 ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
             </div>
             <div style="text-align:center; font-size:var(--font-sm); color:var(--text-muted); margin-top:var(--space-lg)">
-                ${q.total || 0} entreprises au total
+                ${batchSize} entreprises collectées
             </div>
         </div>
 
