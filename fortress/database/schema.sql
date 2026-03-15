@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS companies (
     siren               VARCHAR(9)      PRIMARY KEY,
     siret_siege         VARCHAR(14),
     denomination        TEXT            NOT NULL,
+    enseigne            TEXT,                                    -- commercial/trade name (from SIRENE StockEtablissement)
     naf_code            VARCHAR(10),
     naf_libelle         TEXT,
     forme_juridique     TEXT,
@@ -259,3 +260,8 @@ ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES user
 
 -- Worker tracking: which machine ran this batch
 ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(50);
+
+-- Enseigne: commercial/trade name from SIRENE StockEtablissement
+-- This is the name on the business sign (e.g. "Camping La Marende")
+-- vs the legal denomination ("SCI LA MARENDE").
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS enseigne TEXT;

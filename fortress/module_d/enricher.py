@@ -689,9 +689,14 @@ async def _enrich_one(
     siren = company.siren
     denomination = company.denomination or ""
 
-    # ── Clean denomination for Maps search ─────────────────────────────────
-    # Strip legal form prefixes that pollute Google Maps queries.
-    # SIRENE: "SARL DUPONT TRANSPORT" → Maps search: "DUPONT TRANSPORT"
+    # ── Pick the best name for Maps search ─────────────────────────────────
+    # Priority: enseigne (commercial sign) > denomination (legal name).
+    # Enseigne is what appears on business signs and Google Maps, e.g.
+    # "Camping La Marende ****" vs the legal denomination "SCI LA MARENDE".
+    raw_search_name = company.enseigne or denomination
+
+    # ── Clean search name — strip legal form prefixes ──────────────────────
+    # "SARL DUPONT TRANSPORT" → "DUPONT TRANSPORT"
     _LEGAL_PREFIXES = (
         "SARL", "SAS", "SASU", "EURL", "SA", "SCI", "SNC", "SELARL",
         "SELAFA", "SCP", "SEL", "GFA", "GIE", "EARL", "GAEC", "SCOP",
@@ -699,11 +704,11 @@ async def _enrich_one(
         "SCCV", "SCPI", "SCM", "SEP", "SCEA",
         "INDIVISION",  # Legal property term — confuses Maps
     )
-    maps_denomination = denomination
-    upper = denomination.upper().strip()
+    maps_denomination = raw_search_name
+    upper = raw_search_name.upper().strip()
     for prefix in _LEGAL_PREFIXES:
         if upper.startswith(prefix + " "):
-            maps_denomination = denomination[len(prefix):].strip()
+            maps_denomination = raw_search_name[len(prefix):].strip()
             break
 
     # ── Skip Maps for legal forms that never have public presence ──────────
@@ -728,7 +733,8 @@ async def _enrich_one(
         "enricher.company_start",
         siren=siren,
         denomination=denomination,
-        maps_denomination=maps_denomination,
+        enseigne=company.enseigne,
+        maps_search_name=maps_denomination,
         ville=company.ville,
         departement=company.departement,
         code_postal=company.code_postal,

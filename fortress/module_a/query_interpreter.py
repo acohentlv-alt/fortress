@@ -350,7 +350,7 @@ async def _query_companies(
     _limit_clause = f"LIMIT {limit}" if limit is not None else ""
     _offset_clause = f"OFFSET {offset}" if offset > 0 else ""
     sample_sql = f"""
-        SELECT siren, siret_siege, denomination, naf_code, naf_libelle,
+        SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
                forme_juridique, adresse, code_postal, ville, departement,
                region, statut, date_creation, tranche_effectif,
                latitude, longitude, fortress_id

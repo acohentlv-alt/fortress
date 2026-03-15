@@ -53,6 +53,7 @@ class Company(BaseModel):
     siren: str
     siret_siege: str | None = None
     denomination: str
+    enseigne: str | None = None  # Commercial/trade name (from SIRENE StockEtablissement)
     naf_code: str | None = None
     naf_libelle: str | None = None
     forme_juridique: str | None = None
