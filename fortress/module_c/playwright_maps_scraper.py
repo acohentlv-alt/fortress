@@ -67,7 +67,10 @@ def _name_similarity(maps_name: str, denomination: str) -> float:
         return 0.0
 
     def _tokens(name: str) -> list[str]:
-        t = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
+        import unicodedata
+        nfkd = unicodedata.normalize('NFKD', name.lower())
+        ascii_name = ''.join(c for c in nfkd if not unicodedata.combining(c))
+        t = re.sub(r'[^a-z0-9\s]', '', ascii_name).split()
         filtered = [w for w in t if w not in _LEGAL_FORMS]
         if not filtered:
             return []

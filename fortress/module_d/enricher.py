@@ -114,12 +114,16 @@ _LEGAL_FORMS = frozenset({
 
 
 def _normalize_name(name: str) -> list[str]:
-    """Normalize a business name: lowercase, strip legal forms.
+    """Normalize a business name: lowercase, strip accents + legal forms.
 
     Keeps single-char tokens when the name is mostly initials/acronyms
     (e.g. "A T N" → ["a", "t", "n"], not []).
     """
-    tokens = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
+    import unicodedata
+    # Strip accents: é→e, à→a, ç→c, etc.
+    nfkd = unicodedata.normalize('NFKD', name.lower())
+    ascii_name = ''.join(c for c in nfkd if not unicodedata.combining(c))
+    tokens = re.sub(r'[^a-z0-9\s]', '', ascii_name).split()
     filtered = [t for t in tokens if t not in _LEGAL_FORMS]
     if not filtered:
         return []
