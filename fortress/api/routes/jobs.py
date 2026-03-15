@@ -292,7 +292,7 @@ async def get_job_companies(
                 c2.siren,
                 c2.phone, c2.email, c2.email_type, c2.website,
                 c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.source AS contact_source
+                c2.rating, c2.review_count, c2.maps_url, c2.source AS contact_source
             FROM contacts c2
             WHERE c2.siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)
             ORDER BY c2.siren,
@@ -307,7 +307,7 @@ async def get_job_companies(
             co.tranche_effectif, co.fortress_id,
             bc.phone, bc.email, bc.email_type, bc.website,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source,
+            bc.rating, bc.review_count, bc.maps_url, bc.contact_source,
             CASE WHEN bc.phone IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN bc.email IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN bc.website IS NOT NULL THEN 1 ELSE 0 END AS completude

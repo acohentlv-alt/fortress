@@ -12,7 +12,7 @@
 import { getCompany, enrichCompany, getCompanyEnrichHistory, extractApiError } from '../api.js';
 import {
     breadcrumb, formatSiren, formatSiret, formatDate,
-    statutBadge, formeJuridiqueBadge, escapeHtml, renderGauge, showToast,
+    statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
 } from '../components.js';
 
 // Effectif labels (INSEE codes)
@@ -95,15 +95,7 @@ export async function renderCompany(container, siren) {
     const officers = data.officers || [];
     const tags = data.query_tags || [];
 
-    // Compute completude score (out of available fields)
-    const checkFields = [
-        mc.phone, mc.email, mc.website, mc.address,
-        mc.rating, mc.maps_url,
-        co.siret_siege, co.naf_code, co.forme_juridique,
-        co.tranche_effectif, officers.length > 0,
-    ];
-    const filledCount = checkFields.filter(Boolean).length;
-    const completudePct = Math.round((filledCount / checkFields.length) * 100);
+
 
     container.innerHTML = `
         ${breadcrumb([
@@ -131,18 +123,19 @@ export async function renderCompany(container, siren) {
                     ${mc.rating ? `<span class="badge badge-accent">⭐ ${mc.rating}</span>` : ''}
                 </div>
 
-                <!-- Completude Gauge -->
-                <div style="margin-top: var(--space-2xl)">
-                    <div style="display:flex; justify-content:center; margin-bottom:var(--space-lg)">
-                        ${renderGauge(completudePct, '📊 Complétude')}
+                <!-- Google Maps Link (prominent) -->
+                ${mc.maps_url ? `
+                    <div style="margin-top: var(--space-2xl); text-align:center">
+                        <a href="${mc.maps_url}" target="_blank" rel="noopener"
+                           style="display:inline-flex; align-items:center; gap:var(--space-sm);
+                                  padding:var(--space-md) var(--space-xl);
+                                  background:var(--surface-raised); border:1px solid var(--border);
+                                  border-radius:var(--radius-lg); color:var(--accent);
+                                  font-weight:600; text-decoration:none; transition:all 0.2s">
+                            🗺️ Voir sur Google Maps ↗
+                        </a>
                     </div>
-                    <div style="display:flex; justify-content:center; gap:var(--space-xl); flex-wrap:wrap">
-                        ${renderGauge(mc.phone ? 100 : 0, '📞 Tél.')}
-                        ${renderGauge(mc.email ? 100 : 0, '✉️ Email')}
-                        ${renderGauge(mc.website ? 100 : 0, '🌐 Web')}
-                        ${renderGauge(co.siret_siege ? 100 : 0, '🏢 SIRET')}
-                    </div>
-                </div>
+                ` : ''}
 
                 <!-- Tags -->
                 ${tags.length > 0 ? `

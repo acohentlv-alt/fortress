@@ -794,9 +794,9 @@ class PlaywrightMapsScraper:
                     except ValueError:
                         log.debug("maps_scraper.rating_body_parse_error", raw=body_match.group(1), siren=siren)
                     try:
-                        result["review_count"] = int(
-                            body_match.group(2).replace(' ', '')
-                        )
+                        rc_val = int(body_match.group(2).replace(' ', ''))
+                        if rc_val > 0:  # Only store if actually > 0
+                            result["review_count"] = rc_val
                     except ValueError:
                         log.debug("maps_scraper.review_body_parse_error", raw=body_match.group(2), siren=siren)
         except Exception as exc:

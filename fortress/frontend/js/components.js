@@ -180,20 +180,20 @@ export function companyCard(company, opts = {}) {
             <div class="company-card company-card-compact" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'"
                  style="padding:var(--space-md) var(--space-lg); min-height:auto">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-md)">
-                    <div style="display:flex; align-items:center; gap:var(--space-lg); flex:1; min-width:0">
-                        <div style="min-width:0; flex:1">
-                            <span class="company-card-name" style="font-size:var(--font-sm)">${escapeHtml(company.denomination || '—')}</span>
-                            <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:var(--space-sm)">${formatSiren(siren)}</span>
+                    <div style="min-width:0; flex:1">
+                        <div style="display:flex; align-items:baseline; gap:var(--space-sm); min-width:0">
+                            <span class="company-card-name" style="font-size:var(--font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1">${escapeHtml(company.denomination || '—')}</span>
+                            <span style="color:var(--text-muted); font-size:var(--font-xs); white-space:nowrap; flex-shrink:0">${formatSiren(siren)}</span>
                         </div>
-                        <span style="color:var(--text-secondary); font-size:var(--font-xs); white-space:nowrap">
-                            📍 ${escapeHtml(company.ville || '—')}${company.departement ? ` (${company.departement})` : ''}
-                        </span>
-                        ${company.naf_libelle ? `<span style="color:var(--text-muted); font-size:var(--font-xs); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px">${escapeHtml(company.naf_libelle)}</span>` : ''}
+                        <div style="display:flex; gap:var(--space-sm); margin-top:2px; font-size:var(--font-xs); color:var(--text-secondary)">
+                            <span style="white-space:nowrap">📍 ${escapeHtml(company.ville || '—')}${company.departement ? ` (${company.departement})` : ''}</span>
+                            ${company.naf_libelle ? `<span style="color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px">· ${escapeHtml(company.naf_libelle)}</span>` : ''}
+                        </div>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
                         ${removeBtn}
+                        ${company.maps_url ? `<a href="${company.maps_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Google Maps" style="color:var(--text-muted);text-decoration:none;font-size:14px">🗺️</a>` : ''}
                         ${statutBadge(company.statut)}
-                        ${formeJuridiqueBadge(company.forme_juridique)}
                     </div>
                 </div>
             </div>
