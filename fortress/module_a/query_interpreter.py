@@ -513,10 +513,14 @@ async def interpret_query(
             filters=filters,
         )
     except Exception as exc:
+        error_str = str(exc).lower()
+        # Re-raise timeout and critical errors — runner must handle them
+        # as job failures. Only swallow non-critical errors for CLI usage.
+        if "timeout" in error_str or "cancel" in error_str:
+            log.error("interpret_query_timeout", error=str(exc), raw_query=raw_query)
+            raise  # Let runner mark job as 'failed'
         log.error("interpret_query_db_error", error=str(exc), raw_query=raw_query)
-        # Return a result with 0 companies rather than crashing the CLI
-        total_count = 0
-        sample = []
+        raise  # Don't silently hide DB errors — they mask real failures
 
     log.info(
         "interpret_query_done",
