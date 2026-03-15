@@ -292,83 +292,104 @@ async def ingest_etablissement(
     await init_db()
     pool = await get_pool()
 
-    # ── 3. Build lazy frame ──────────────────────────────────────────────
-    print("  🔍 Scanning Parquet (HQ + active only)...", flush=True)
-    lf = _build_lazy_frame(etab_path, limit)
+    # ── 3. Read Parquet in chunks (low memory) ───────────────────────────
+    # PyArrow reads row groups without loading the whole file into RAM.
+    # This keeps memory under ~200 MB even for the 2 GB file.
+    import pyarrow.parquet as pq
 
-    # ── 4. Collect with streaming ────────────────────────────────────────
-    print("  ⏳ Loading data (streaming)...", flush=True)
-    try:
-        df = lf.collect(engine="streaming")
-    except TypeError:
-        try:
-            df = lf.collect(streaming=True)
-        except TypeError:
-            log.warning("polars_streaming_unsupported", fallback="collect()")
-            df = lf.collect()
+    print("  🔍 Reading Parquet in chunks (memory-safe)...", flush=True)
 
-    total_rows = len(df)
-    print(f"  📊 {total_rows:,} HQ establishments to process", flush=True)
+    # Columns we need (only read what we use)
+    wanted_cols = [c for c in ETAB_COLUMNS]
 
-    # ── 5. Transform and batch-update ────────────────────────────────────
-    rows_iter = df.iter_rows(named=True)
+    # Detect available columns
+    schema = pq.read_schema(str(etab_path))
+    available = set(schema.names)
+    read_cols = [c for c in wanted_cols if c in available]
+
+    parquet_file = pq.ParquetFile(str(etab_path))
+    CHUNK_SIZE = 100_000  # rows per chunk — keeps RAM ~100-200 MB
+
+    # ── 4. Process chunks ────────────────────────────────────────────────
     batch: list[tuple[str, str | None, str | None, str | None, str | None, str | None]] = []
     total_processed = 0
     total_updated = 0
     total_skipped = 0
-
     total_errors = 0
 
     async with pool.connection() as conn:
-        for raw_row in rows_iter:
-            total_processed += 1
+        for arrow_batch in parquet_file.iter_batches(
+            batch_size=CHUNK_SIZE,
+            columns=read_cols,
+        ):
+            # Convert to Python dicts
+            chunk_df = arrow_batch.to_pydict()
+            n_rows = len(chunk_df.get("siren", []))
 
-            try:
-                siren = _coerce_str(raw_row.get("siren"))
-                if not siren:
-                    total_skipped += 1
-                    continue
+            for i in range(n_rows):
+                total_processed += 1
 
-                siren = siren.zfill(9)
-                code_postal = _sanitize_code_postal(
-                    raw_row.get("codePostalEtablissement")
-                )
-                ville = _coerce_str(raw_row.get("libelleCommuneEtablissement"))
-                adresse = _build_adresse(raw_row)
-                departement = _derive_departement(code_postal)
+                try:
+                    raw_row = {col: chunk_df[col][i] for col in read_cols if col in chunk_df}
 
-                # Enseigne: prefer enseigne1Etablissement, fallback to denominationUsuelle
-                enseigne = _coerce_str(raw_row.get("enseigne1Etablissement"))
-                if not enseigne:
-                    enseigne = _coerce_str(raw_row.get("denominationUsuelleEtablissement"))
+                    # Filter: HQ only + active only
+                    if "etablissementSiege" in raw_row:
+                        is_siege = raw_row["etablissementSiege"]
+                        if is_siege is not True and str(is_siege).lower() != "true":
+                            total_skipped += 1
+                            continue
 
-                # Skip rows with no useful location data AND no enseigne
-                if not code_postal and not ville and not adresse and not enseigne:
-                    total_skipped += 1
-                    continue
+                    if "etatAdministratifEtablissement" in raw_row:
+                        etat = raw_row.get("etatAdministratifEtablissement")
+                        if etat and str(etat).strip() != "A":
+                            total_skipped += 1
+                            continue
 
-                batch.append((siren, code_postal, ville, adresse, departement, enseigne))
-            except (ValueError, TypeError, KeyError) as exc:
-                total_errors += 1
-                if total_errors <= 20:  # Log first 20 only
-                    log.warning(
-                        "row_transform_error",
-                        siren=raw_row.get("siren"),
-                        error=str(exc),
+                    siren = _coerce_str(raw_row.get("siren"))
+                    if not siren:
+                        total_skipped += 1
+                        continue
+
+                    siren = siren.zfill(9)
+                    code_postal = _sanitize_code_postal(
+                        raw_row.get("codePostalEtablissement")
                     )
-                continue
+                    ville = _coerce_str(raw_row.get("libelleCommuneEtablissement"))
+                    adresse = _build_adresse(raw_row)
+                    departement = _derive_departement(code_postal)
 
-            if len(batch) >= BATCH_SIZE:
-                updated = await _update_batch(conn, batch)
-                total_updated += updated
-                batch.clear()
+                    # Enseigne: prefer enseigne1Etablissement, fallback to denominationUsuelle
+                    enseigne = _coerce_str(raw_row.get("enseigne1Etablissement"))
+                    if not enseigne:
+                        enseigne = _coerce_str(raw_row.get("denominationUsuelleEtablissement"))
 
-                print(
-                    f"  ✅ Processed: {total_processed:>10,}"
-                    f"  Updated: {total_updated:>10,}"
-                    f"  Skipped: {total_skipped:>8,}",
-                    flush=True,
-                )
+                    # Skip rows with no useful data at all
+                    if not code_postal and not ville and not adresse and not enseigne:
+                        total_skipped += 1
+                        continue
+
+                    batch.append((siren, code_postal, ville, adresse, departement, enseigne))
+                except (ValueError, TypeError, KeyError) as exc:
+                    total_errors += 1
+                    if total_errors <= 20:  # Log first 20 only
+                        log.warning(
+                            "row_transform_error",
+                            siren=raw_row.get("siren") if 'raw_row' in dir() else "?",
+                            error=str(exc),
+                        )
+                    continue
+
+                if len(batch) >= BATCH_SIZE:
+                    updated = await _update_batch(conn, batch)
+                    total_updated += updated
+                    batch.clear()
+
+                    print(
+                        f"  ✅ Processed: {total_processed:>10,}"
+                        f"  Updated: {total_updated:>10,}"
+                        f"  Skipped: {total_skipped:>8,}",
+                        flush=True,
+                    )
 
         # Flush last batch
         if batch:
