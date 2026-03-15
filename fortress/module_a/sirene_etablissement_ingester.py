@@ -67,6 +67,7 @@ ETAB_COLUMNS: list[str] = [
     "complementAdresseEtablissement",
     "enseigne1Etablissement",             # Commercial sign name ("Camping La Marende")
     "denominationUsuelleEtablissement",   # Trade/usage name ("La Marende")
+    "trancheEffectifsEtablissement",      # Employee headcount range at this location
 ]
 
 
@@ -198,13 +199,13 @@ def _build_lazy_frame(path: Path, limit: int | None) -> pl.LazyFrame:
 
 async def _update_batch(
     conn: psycopg.AsyncConnection,
-    batch: list[tuple[str, str | None, str | None, str | None, str | None, str | None]],
+    batch: list[tuple[str, str | None, str | None, str | None, str | None, str | None, str | None]],
 ) -> int:
     """Insert batch into a temp table, then UPDATE companies via JOIN.
 
     This is ~100x faster than individual UPDATE statements.
 
-    Tuple format: (siren, code_postal, ville, adresse, departement, enseigne)
+    Tuple format: (siren, code_postal, ville, adresse, departement, enseigne, tranche_effectif)
     """
     if not batch:
         return 0
@@ -213,36 +214,38 @@ async def _update_batch(
         # Create temp table (lives only for this transaction)
         await cur.execute("""
             CREATE TEMP TABLE IF NOT EXISTS _etab_staging (
-                siren       VARCHAR(9)  NOT NULL,
-                code_postal VARCHAR(10),
-                ville       TEXT,
-                adresse     TEXT,
-                departement VARCHAR(3),
-                enseigne    TEXT
+                siren             VARCHAR(9)  NOT NULL,
+                code_postal       VARCHAR(10),
+                ville             TEXT,
+                adresse           TEXT,
+                departement       VARCHAR(3),
+                enseigne          TEXT,
+                tranche_effectif  VARCHAR(10)
             ) ON COMMIT DELETE ROWS
         """)
 
         # Bulk insert into temp table using executemany
         await cur.executemany(
-            "INSERT INTO _etab_staging (siren, code_postal, ville, adresse, departement, enseigne) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO _etab_staging (siren, code_postal, ville, adresse, departement, enseigne, tranche_effectif) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             batch,
         )
 
         # UPDATE companies from staging — only fill NULL fields (never overwrite)
         result = await cur.execute("""
             UPDATE companies c SET
-                code_postal = COALESCE(c.code_postal, s.code_postal),
-                ville       = COALESCE(c.ville,       s.ville),
-                adresse     = COALESCE(c.adresse,     s.adresse),
-                departement = COALESCE(c.departement,  s.departement),
-                enseigne    = COALESCE(c.enseigne,     s.enseigne),
-                updated_at  = NOW()
+                code_postal      = COALESCE(c.code_postal,      s.code_postal),
+                ville            = COALESCE(c.ville,            s.ville),
+                adresse          = COALESCE(c.adresse,          s.adresse),
+                departement      = COALESCE(c.departement,      s.departement),
+                enseigne         = COALESCE(c.enseigne,         s.enseigne),
+                tranche_effectif = COALESCE(c.tranche_effectif, s.tranche_effectif),
+                updated_at       = NOW()
             FROM _etab_staging s
             WHERE c.siren = s.siren
               AND (c.code_postal IS NULL OR c.ville IS NULL
                    OR c.adresse IS NULL OR c.departement IS NULL
-                   OR c.enseigne IS NULL)
+                   OR c.enseigne IS NULL OR c.tranche_effectif IS NULL)
         """)
 
         updated = result.rowcount if result and hasattr(result, 'rowcount') else 0
@@ -363,12 +366,15 @@ async def ingest_etablissement(
                     if not enseigne:
                         enseigne = _coerce_str(raw_row.get("denominationUsuelleEtablissement"))
 
+                    # Tranche effectifs (employee headcount range at this location)
+                    tranche_effectif = _coerce_str(raw_row.get("trancheEffectifsEtablissement"))
+
                     # Skip rows with no useful data at all
                     if not code_postal and not ville and not adresse and not enseigne:
                         total_skipped += 1
                         continue
 
-                    batch.append((siren, code_postal, ville, adresse, departement, enseigne))
+                    batch.append((siren, code_postal, ville, adresse, departement, enseigne, tranche_effectif))
                 except (ValueError, TypeError, KeyError) as exc:
                     total_errors += 1
                     if total_errors <= 20:  # Log first 20 only
