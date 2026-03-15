@@ -462,12 +462,26 @@ class PlaywrightMapsScraper:
             )
             return {}
 
-        # ── Step 3b: Wait for Maps JS to render (networkidle) ─────────
+        # ── Step 3b: Wait for Maps JS to render (smart wait) ─────────
+        # Google Maps is a heavy SPA — the business panel with phone/website
+        # buttons takes 1-3s AFTER the load event to render, especially for
+        # hospitality businesses (campings, hotels) that show a hotel preview
+        # carousel before the contact info. We wait for actual DOM elements.
         try:
             await page.wait_for_load_state("load", timeout=5000)
         except Exception as exc:
             log.debug("maps_scraper.load_state_timeout", error=str(exc), siren=siren)
-        await page.wait_for_timeout(500)
+        # Smart wait: look for ANY sign of a rendered business panel or result list
+        _PANEL_SELECTOR = (
+            'button[data-item-id^="phone"], '  # Phone button (direct panel)
+            'a.hfpxzc, '                        # Result list item
+            'h1.DUwDvf, '                       # Business name heading
+            'button[data-item-id="address"]'    # Address button (panel loaded)
+        )
+        try:
+            await page.wait_for_selector(_PANEL_SELECTOR, timeout=5000)
+        except Exception:
+            log.debug("maps_scraper.panel_not_detected", siren=siren, denomination=denomination)
 
         # ── Step 4: Detect result type (query_selector — fast) ────────
         # Check for direct business panel with phone button
@@ -515,7 +529,11 @@ class PlaywrightMapsScraper:
                           denomination=denomination, siren=siren)
                 try:
                     await best_result.click()
-                    await page.wait_for_timeout(600)
+                    # Wait for panel to render after click (not blind 600ms)
+                    try:
+                        await page.wait_for_selector('h1.DUwDvf', timeout=3000)
+                    except Exception:
+                        await page.wait_for_timeout(600)  # Fallback
                 except Exception as exc:
                     log.debug("maps_scraper.click_result_failed",
                               error=str(exc), siren=siren)

@@ -633,6 +633,45 @@ async def enrich_companies(
     return contacts, replaced_count
 
 
+def _is_residential_address(adresse: str) -> bool:
+    """Detect if a SIRENE address looks residential (owner's home, PO box, etc.).
+
+    Residential addresses should NOT be used in Maps queries because they
+    point to the owner's home when they registered the business, not the
+    actual business location. Maps would find the building, not the company.
+
+    Patterns detected:
+        CHEZ ...          — living at someone's address
+        DOMICILE ...      — registered at home
+        DOMICILIATION ... — registered via a domiciliation service
+        BP / BOITE POSTALE — PO box
+        APT / APPT / APPARTEMENT — apartment
+        ETAGE / ESC / BAT — floor/staircase/building indicators
+        RESIDENCE ...     — residential complex
+    """
+    if not adresse:
+        return False
+    upper = adresse.upper().strip()
+    _RESIDENTIAL_PREFIXES = (
+        "CHEZ ", "DOMICILE", "DOMICILIATION",
+        "BP ", "BOITE POSTALE", "B.P.",
+        "APT ", "APPT ", "APPARTEMENT ",
+        "RESIDENCE ", "RES ",
+    )
+    _RESIDENTIAL_KEYWORDS = (
+        " CHEZ ", " ETAGE ", " ESC ", " ESCALIER ",
+        " BAT ", " BATIMENT ", " LOGE ",
+        " APPT ", " APT ",
+    )
+    for prefix in _RESIDENTIAL_PREFIXES:
+        if upper.startswith(prefix):
+            return True
+    for kw in _RESIDENTIAL_KEYWORDS:
+        if kw in upper:
+            return True
+    return False
+
+
 async def _enrich_one(
     company: Company,
     *,
@@ -658,6 +697,7 @@ async def _enrich_one(
         "SELAFA", "SCP", "SEL", "GFA", "GIE", "EARL", "GAEC", "SCOP",
         "SEM", "SELAS", "SELURL", "SPL", "SPLA", "SICAV", "FCP",
         "SCCV", "SCPI", "SCM", "SEP", "SCEA",
+        "INDIVISION",  # Legal property term — confuses Maps
     )
     maps_denomination = denomination
     upper = denomination.upper().strip()
@@ -721,6 +761,9 @@ async def _enrich_one(
         if alpha_words and all(len(w) == 1 for w in alpha_words):
             search_name = "".join(words)
 
+        # ── 2-try Maps query strategy ─────────────────────────────────
+        # Try 1 (broad): name + city + postal → catches moved businesses
+        # Try 2 (fallback): name + full SIRENE address → pinpoints exact location
         try:
             maps_result = await maps_scraper.search(
                 search_name,
@@ -735,6 +778,38 @@ async def _enrich_one(
                 error=str(exc),
             )
             maps_result = {}
+
+        # Try 2: If broad search returned nothing, retry with full address
+        has_useful_data = maps_result.get("phone") or maps_result.get("website")
+        if not has_useful_data and company.adresse and not _is_residential_address(company.adresse):
+            addr_location = " ".join(filter(None, [
+                company.adresse, company.ville, company.code_postal,
+            ]))
+            log.info(
+                "enricher.maps_retry_with_address",
+                siren=siren,
+                denomination=search_name,
+                location=addr_location,
+                reason="Broad search returned no useful data, retrying with full address",
+            )
+            try:
+                maps_result_2 = await maps_scraper.search(
+                    search_name,
+                    addr_location,
+                    siren=siren,
+                    query_hint=query_domain,
+                )
+                # Use retry result only if it has more data
+                if maps_result_2.get("phone") or maps_result_2.get("website"):
+                    maps_result = maps_result_2
+                    log.info(
+                        "enricher.maps_retry_success",
+                        siren=siren,
+                        has_phone=bool(maps_result_2.get("phone")),
+                        has_website=bool(maps_result_2.get("website")),
+                    )
+            except Exception as exc:
+                log.debug("enricher.maps_retry_error", siren=siren, error=str(exc))
 
         # ── Validate Maps match ───────────────────────────────────────
         match_confidence = _assess_match(maps_result, company)
