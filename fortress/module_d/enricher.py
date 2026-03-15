@@ -114,9 +114,20 @@ _LEGAL_FORMS = frozenset({
 
 
 def _normalize_name(name: str) -> list[str]:
-    """Normalize a business name: lowercase, strip legal forms, keep tokens > 1 char."""
+    """Normalize a business name: lowercase, strip legal forms.
+
+    Keeps single-char tokens when the name is mostly initials/acronyms
+    (e.g. "A T N" → ["a", "t", "n"], not []).
+    """
     tokens = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
-    return [t for t in tokens if t not in _LEGAL_FORMS and len(t) > 1]
+    filtered = [t for t in tokens if t not in _LEGAL_FORMS]
+    if not filtered:
+        return []
+    # If >50% of tokens are single chars, it's an acronym — keep all tokens
+    single_chars = sum(1 for t in filtered if len(t) == 1)
+    if single_chars > len(filtered) / 2:
+        return filtered
+    return [t for t in filtered if len(t) > 1]
 
 
 def _names_match(maps_name: str, denomination: str) -> bool:
@@ -144,6 +155,14 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     if maps_joined in denom_joined or denom_joined in maps_joined:
         return True
 
+    # Acronym-join: "A T N" → "atn", check if any Maps token starts with it
+    # Handles Maps returning "ATN Transport" for SIRENE denomination "A T N"
+    if all(len(t) == 1 for t in denom_tokens) and len(denom_tokens) >= 2:
+        joined_acronym = "".join(denom_tokens)
+        if any(t.startswith(joined_acronym) or joined_acronym.startswith(t)
+               for t in maps_tokens if len(t) >= 2):
+            return True
+
     # Token overlap: ≥70% of denomination tokens found in maps name
     # AND at least 2 matching tokens to prevent single-word false positives.
     overlap = sum(1 for t in denom_tokens if t in maps_tokens)
@@ -154,7 +173,11 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     if len(denom_tokens) == 1:
         return denom_tokens[0] == maps_tokens[0]
 
-    # Multi-word: require at least 2 tokens AND 70% overlap (was 50%)
+    # 2-word names: 1 match is sufficient (geo-check in _assess_match is safety net)
+    if len(denom_tokens) == 2:
+        return overlap >= 1
+
+    # 3+ words: require at least 2 tokens AND 70% overlap
     threshold = max(2, len(denom_tokens) * 0.7)
     return overlap >= threshold
 
@@ -674,12 +697,26 @@ async def _enrich_one(
     match_confidence: str = "none"  # Default: no Maps data
 
     if maps_scraper is not None and not skip_maps:
-        # Build a richer Maps query using cleaned denomination + city name.
-        # "DUPONT TRANSPORT PERPIGNAN" instead of "SARL DUPONT TRANSPORT PERPIGNAN"
-        search_location = company.ville or company.code_postal or company.departement or ""
+        # Build a richer Maps query using cleaned denomination + city + postal.
+        # "DUPONT TRANSPORT PARIS 75001" instead of "SARL DUPONT TRANSPORT PARIS"
+        loc_parts = []
+        if company.ville:
+            loc_parts.append(company.ville)
+        if company.code_postal:
+            loc_parts.append(company.code_postal)
+        search_location = " ".join(loc_parts) or company.departement or ""
+
+        # Option D: join single-letter initials for better Maps search
+        # "A T N" → "ATN" (Google finds "ATN Transport" better than "A T N")
+        search_name = maps_denomination
+        words = maps_denomination.split()
+        alpha_words = [w for w in words if w.isalpha()]
+        if alpha_words and all(len(w) == 1 for w in alpha_words):
+            search_name = "".join(words)
+
         try:
             maps_result = await maps_scraper.search(
-                maps_denomination,
+                search_name,
                 search_location,
                 siren=siren,
             )

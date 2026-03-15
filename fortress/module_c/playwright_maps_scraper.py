@@ -68,7 +68,14 @@ def _name_similarity(maps_name: str, denomination: str) -> float:
 
     def _tokens(name: str) -> list[str]:
         t = re.sub(r'[^a-z0-9àâäéèêëïîôùûüÿçœæ\s]', '', name.lower()).split()
-        return [w for w in t if w not in _LEGAL_FORMS and len(w) > 1]
+        filtered = [w for w in t if w not in _LEGAL_FORMS]
+        if not filtered:
+            return []
+        # Keep single-char tokens for acronym names (>50% are single chars)
+        single_chars = sum(1 for w in filtered if len(w) == 1)
+        if single_chars > len(filtered) / 2:
+            return filtered
+        return [w for w in filtered if len(w) > 1]
 
     m_tok = _tokens(maps_name)
     d_tok = _tokens(denomination)
