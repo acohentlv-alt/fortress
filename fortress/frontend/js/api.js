@@ -193,15 +193,17 @@ export async function enrichCompany(siren, targetModules) {
 }
 
 // ── Batch Execution ──────────────────────────────────────────────
-export async function runBatch({ sector, department, size, mode, city, naf_code }) {
+export async function runBatch({ sector, department, size, mode, city, naf_code, strategy, search_queries }) {
     const body = {
         sector,
         department,
         size: parseInt(size, 10),
         mode,
         city: city || null,
+        strategy: strategy || 'sirene',
     };
     if (naf_code) body.naf_code = naf_code;
+    if (search_queries && search_queries.length > 0) body.search_queries = search_queries;
     return await postJSON('/batch/run', body);
 }
 
