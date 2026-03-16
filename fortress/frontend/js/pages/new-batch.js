@@ -371,7 +371,7 @@ export async function renderNewBatch(container) {
                 return;
             }
             payload.search_queries = queries;
-            payload.size = 500; // High marker — Maps-first collects everything
+            payload.size = 1; // Placeholder — maps runner updates batch_size dynamically
         }
 
         // Disable button and show loading state
