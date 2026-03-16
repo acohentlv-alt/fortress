@@ -345,81 +345,45 @@ async def run(query_id: str) -> None:
                 settings.db_url, min_size=1, max_size=5, open=True,
             ) as pool:
 
-                all_results: list[dict[str, Any]] = []
                 total_queries = len(search_queries)
                 companies_discovered = 0
-
-                # ── Phase 1: Maps Discovery ───────────────────────────
-                for q_idx, search_query in enumerate(search_queries, 1):
-                    log.info(
-                        "maps_discovery_runner.search_start",
-                        query=search_query,
-                        progress=f"{q_idx}/{total_queries}",
-                    )
-
-                    await _update_job_safe(
-                        conn_holder, query_id,
-                        wave_current=q_idx,
-                        wave_total=total_queries,
-                    )
-
-                    results = await maps_scraper.search_all(search_query)
-
-                    log.info(
-                        "maps_discovery_runner.search_done",
-                        query=search_query,
-                        results=len(results),
-                    )
-                    all_results.extend(results)
-
-                    # Small delay between searches to avoid detection
-                    if q_idx < total_queries:
-                        await asyncio.sleep(3)
-
-                # ── Deduplicate across all searches ───────────────────
-                seen_names: set[str] = set()
-                unique_results: list[dict[str, Any]] = []
-                for r in all_results:
-                    name = (r.get("maps_name") or "").lower().strip()
-                    addr = (r.get("address") or "").lower().strip()
-                    key = f"{name}|{addr}"
-                    if key not in seen_names and name:
-                        seen_names.add(key)
-                        unique_results.append(r)
-
-                total_found = len(unique_results)
-                log.info(
-                    "maps_discovery_runner.total_unique",
-                    total=total_found,
-                    raw_total=len(all_results),
-                )
-
-                await _update_job_safe(
-                    conn_holder, query_id,
-                    total_companies=total_found,
-                    batch_size=total_found,
-                )
-
-                # ── Phase 2: SIRENE Matching + DB Persistence ─────────
                 qualified = 0
-                for idx, maps_result in enumerate(unique_results, 1):
+                seen_names: set[str] = set()  # Cross-query dedup
+
+                # ── Inline persist callback ────────────────────────────
+                # This runs for EACH business extracted by search_all,
+                # ensuring data is saved to DB immediately (not after
+                # all queries finish). If Chrome crashes mid-batch,
+                # already-saved businesses are retained.
+
+                async def _persist_result(maps_result: dict[str, Any]) -> None:
+                    nonlocal companies_discovered, qualified
+
                     maps_name = maps_result.get("maps_name", "")
                     maps_address = maps_result.get("address")
                     maps_phone = maps_result.get("phone")
                     maps_website = maps_result.get("website")
 
-                    # Try to match to SIRENE
+                    # Cross-query dedup
+                    name_key = maps_name.lower().strip()
+                    addr_key = (maps_address or "").lower().strip()
+                    dedup_key = f"{name_key}|{addr_key}"
+                    if dedup_key in seen_names or not name_key:
+                        return
+                    seen_names.add(dedup_key)
+
+                    # SIRENE matching
                     async with pool.connection() as conn:
                         company = await _match_to_sirene(
                             conn, maps_name, maps_address, dept_filter,
                         )
 
+                    companies_discovered += 1
+                    idx = companies_discovered
+
                     if company:
-                        # Found in SIRENE — enrich the existing company
                         siren = company.siren
                     else:
-                        # Not in SIRENE — create a minimal company entry
-                        # Generate a temporary SIREN-like ID
                         siren = f"MAPS{idx:06d}"
                         company = Company(
                             siren=siren,
@@ -435,7 +399,7 @@ async def run(query_id: str) -> None:
                             temp_siren=siren,
                         )
 
-                    # Build contact from Maps data
+                    # Build contact
                     raw_rating = maps_result.get("rating")
                     contact = Contact(
                         siren=siren,
@@ -453,7 +417,7 @@ async def run(query_id: str) -> None:
                     if has_data:
                         qualified += 1
 
-                    # Persist to DB
+                    # Persist to DB immediately
                     async with pool.connection() as conn:
                         await upsert_company(conn, company)
                         await bulk_tag_query(conn, [siren], query_name)
@@ -468,37 +432,84 @@ async def run(query_id: str) -> None:
                             duration_ms=None,
                         )
 
-                    # Update progress
-                    companies_discovered = idx
+                    # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
                         conn_holder, query_id,
                         companies_scraped=companies_discovered,
                         companies_qualified=qualified,
+                        total_companies=companies_discovered,
+                        batch_size=companies_discovered,
                     )
 
                     if idx % 10 == 0:
                         log.info(
                             "maps_discovery_runner.progress",
                             processed=idx,
-                            total=total_found,
                             qualified=qualified,
                         )
 
+                # ── Maps Discovery (with inline persistence) ──────────
+                for q_idx, search_query in enumerate(search_queries, 1):
+                    log.info(
+                        "maps_discovery_runner.search_start",
+                        query=search_query,
+                        progress=f"{q_idx}/{total_queries}",
+                    )
+
+                    await _update_job_safe(
+                        conn_holder, query_id,
+                        wave_current=q_idx,
+                        wave_total=total_queries,
+                    )
+
+                    # search_all calls _persist_result for each business
+                    results = await maps_scraper.search_all(
+                        search_query, on_result=_persist_result,
+                    )
+
+                    log.info(
+                        "maps_discovery_runner.search_done",
+                        query=search_query,
+                        results=len(results),
+                        total_saved=companies_discovered,
+                        total_qualified=qualified,
+                    )
+
+                    # Small delay between searches to avoid detection
+                    if q_idx < total_queries:
+                        await asyncio.sleep(3)
+
                 # ── Phase 3: Website crawl for missing emails ─────────
-                # Only crawl if the company has a website but no email
-                crawl_targets = [
-                    (r, r.get("website"))
-                    for r in unique_results
-                    if r.get("website") and not r.get("email")
-                ]
+                # Find companies that need website crawling from DB
+                # (already persisted by _persist_result callback)
+                crawl_targets: list[tuple[str, str, str]] = []
+                async with pool.connection() as conn:
+                    rows = await conn.execute("""
+                        SELECT c.siren, ct.website, c.denomination
+                        FROM contacts ct
+                        JOIN companies c ON c.siren = ct.siren
+                        WHERE ct.siren IN (
+                            SELECT siren FROM query_tags WHERE query_name = %s
+                        )
+                        AND ct.source = 'google_maps'
+                        AND ct.website IS NOT NULL
+                        AND ct.website != ''
+                        AND NOT EXISTS (
+                            SELECT 1 FROM contacts ct2
+                            WHERE ct2.siren = ct.siren
+                            AND ct2.source = 'website_crawl'
+                        )
+                    """, (query_name,))
+                    for row in await rows.fetchall():
+                        crawl_targets.append((row[0], row[1], row[2]))
+
                 if crawl_targets:
                     log.info(
                         "maps_discovery_runner.crawl_phase",
                         targets=len(crawl_targets),
                     )
                     async with CurlClient() as curl_client:
-                        for r, website_url in crawl_targets:
-                            maps_name = r.get("maps_name", "")
+                        for siren, website_url, maps_name in crawl_targets:
                             try:
                                 crawl_result = await curl_client.crawl(
                                     website_url,
@@ -507,27 +518,18 @@ async def run(query_id: str) -> None:
                                 )
                                 if crawl_result and crawl_result.get("emails"):
                                     email = crawl_result["emails"][0]
-                                    # Find the SIREN for this entity
-                                    for ur in unique_results:
-                                        if ur.get("maps_name") == maps_name:
-                                            # Update the contact in DB
-                                            async with pool.connection() as conn:
-                                                siren_match = await _match_to_sirene(
-                                                    conn, maps_name, r.get("address"), dept_filter,
-                                                )
-                                                if siren_match:
-                                                    social = crawl_result.get("social") or {}
-                                                    crawl_contact = Contact(
-                                                        siren=siren_match.siren,
-                                                        source=ContactSource.WEBSITE_CRAWL,
-                                                        email=email,
-                                                        website=website_url,
-                                                        social_linkedin=social.get("linkedin"),
-                                                        social_facebook=social.get("facebook"),
-                                                        social_twitter=social.get("twitter"),
-                                                    )
-                                                    await upsert_contact(conn, crawl_contact)
-                                            break
+                                    social = crawl_result.get("social") or {}
+                                    crawl_contact = Contact(
+                                        siren=siren,
+                                        source=ContactSource.WEBSITE_CRAWL,
+                                        email=email,
+                                        website=website_url,
+                                        social_linkedin=social.get("linkedin"),
+                                        social_facebook=social.get("facebook"),
+                                        social_twitter=social.get("twitter"),
+                                    )
+                                    async with pool.connection() as conn:
+                                        await upsert_contact(conn, crawl_contact)
                             except Exception as exc:
                                 log.debug(
                                     "maps_discovery_runner.crawl_error",
