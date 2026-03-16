@@ -395,49 +395,93 @@ class PlaywrightMapsScraper:
         query: str,
         on_result: Any = None,
     ) -> list[dict[str, Any]]:
-        """Internal: perform generic Maps search and extract all results."""
+        """Internal: perform generic Maps search and extract all results.
+
+        Uses direct URL navigation (proven approach from local headed test)
+        instead of search box interaction which fails on Render.
+        """
+        import urllib.parse
+        from pathlib import Path
+
         page = self._page
         results: list[dict[str, Any]] = []
         seen_keys: set[str] = set()  # Dedup by name+address
 
-        # ── Step 1: Type query into search box ────────────────────────
-        search_box = await page.query_selector('input[name="q"], #searchboxinput')
-        if search_box:
+        # ── Step 1: Navigate directly to search URL ────────────────────
+        search_url = (
+            f"https://www.google.com/maps/search/"
+            f"{urllib.parse.quote_plus(query)}?hl=fr"
+        )
+        log.info("maps_discovery.navigating", query=query, url=search_url)
+
+        await page.goto(
+            search_url,
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+        await page.wait_for_timeout(3000)
+
+        # ── Step 2: Handle consent dialog (may appear on Render) ───────
+        _CONSENT_SELECTORS = [
+            'button:has-text("Tout accepter")',
+            'button:has-text("Accept all")',
+            'form[action*="consent"] button',
+        ]
+        for sel in _CONSENT_SELECTORS:
             try:
-                await search_box.click()
-                await page.wait_for_timeout(200)
-                await page.keyboard.press("Control+a")
-                await page.keyboard.press("Meta+a")
-                await search_box.fill(query)
-                await page.wait_for_timeout(300)
-            except Exception as exc:
-                log.debug("maps_discovery.search_box_failed", error=str(exc))
-                import urllib.parse
-                url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}?hl=fr"
-                await page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
-                await page.wait_for_timeout(1500)
-        else:
-            import urllib.parse
-            url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}?hl=fr"
-            await page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
-            await page.wait_for_timeout(1500)
+                btn = await page.query_selector(sel)
+                if btn:
+                    log.info("maps_discovery.consent_found", selector=sel)
+                    await btn.click()
+                    await page.wait_for_timeout(2000)
+                    # Re-navigate after consent redirect
+                    await page.goto(
+                        search_url,
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+                    await page.wait_for_timeout(3000)
+                    break
+            except Exception:
+                continue
 
-        # ── Step 2: Submit search ─────────────────────────────────────
-        if search_box:
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(2000)
-
-        # CAPTCHA check
+        # ── Step 3: CAPTCHA / error detection ──────────────────────────
         current_url = page.url
         if "sorry" in current_url or "recaptcha" in current_url:
-            log.warning("maps_discovery.captcha_detected", query=query)
+            log.warning("maps_discovery.captcha_detected", query=query, url=current_url)
+            # Save diagnostic screenshot
+            try:
+                debug_dir = Path("data/logs")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                safe_name = query.replace(" ", "_")[:30]
+                await page.screenshot(
+                    path=str(debug_dir / f"maps_debug_{safe_name}.png"),
+                )
+                log.info("maps_discovery.debug_screenshot_saved", query=query)
+            except Exception:
+                pass
             return []
 
-        # ── Step 3: Wait for result list ──────────────────────────────
+        # ── Step 4: Wait for result cards ──────────────────────────────
         try:
-            await page.wait_for_selector('a.hfpxzc', timeout=8000)
+            await page.wait_for_selector('a.hfpxzc', timeout=10000)
         except Exception:
             log.info("maps_discovery.no_results", query=query)
+            # Save diagnostic screenshot for debugging
+            try:
+                debug_dir = Path("data/logs")
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                safe_name = query.replace(" ", "_")[:30]
+                await page.screenshot(
+                    path=str(debug_dir / f"maps_debug_{safe_name}.png"),
+                )
+                log.info(
+                    "maps_discovery.debug_screenshot_saved",
+                    query=query,
+                    current_url=page.url,
+                )
+            except Exception:
+                pass
             # Maybe it landed on a single business panel — try extracting
             phone_btn = await page.query_selector('button[data-item-id^="phone"]')
             if phone_btn:

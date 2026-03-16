@@ -157,7 +157,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
             runner_cmd,
             cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
             stdout=log_fd,
-            stderr=log_fd,
+            stderr=None,      # Inherit parent stderr → visible in Render Logs
             close_fds=False,  # Let child inherit the fd
             start_new_session=True,  # Detach from parent process
         )
