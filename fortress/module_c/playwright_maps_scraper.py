@@ -165,13 +165,11 @@ class PlaywrightMapsScraper:
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-blink-features=AutomationControlled",
-                    # ── Memory reduction flags (critical for Render) ──
-                    "--single-process",               # Avoid multi-process overhead
+                    # ── Memory reduction flags (Render-safe) ───────────
                     "--disable-renderer-backgrounding",
                     "--disable-backgrounding-occluded-windows",
                     "--disable-ipc-flooding-protection",
-                    "--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process",
-                    "--js-flags=--max-old-space-size=128",  # Cap V8 heap at 128MB
+                    "--disable-features=TranslateUI,BlinkGenPropertyTrees",
                     "--disable-hang-monitor",
                     "--disable-component-update",
                     "--disable-default-apps",
