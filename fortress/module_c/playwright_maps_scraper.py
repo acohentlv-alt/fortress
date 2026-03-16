@@ -551,76 +551,56 @@ class PlaywrightMapsScraper:
                 )
                 await page.wait_for_timeout(1500)  # Wait for lazy-load
 
-        # ── Step 5: Collect all result cards ───────────────────────────
+        # ── Step 5: Collect all card hrefs FIRST ────────────────────────
+        # Each card is an <a> with an href to the business page.
+        # We collect all hrefs upfront so we can navigate to each one
+        # directly, getting a FULL fresh page load per business.
         all_cards = await page.query_selector_all('a.hfpxzc')
-        total_cards = len(all_cards)
+        card_data: list[tuple[str, str]] = []  # (href, label)
+        for card in all_cards:
+            href = await card.get_attribute("href") or ""
+            label = (await card.get_attribute("aria-label")) or ""
+            if href:
+                card_data.append((href, label))
+
+        total_cards = len(card_data)
         log.info(
             "maps_discovery.cards_found",
             total=total_cards,
             query=query,
         )
 
-        # ── Step 6: Click each card → extract → go back ───────────────
-        import json as _json
+        # Save the search results URL so we can return to it
+        search_url = page.url
 
-        prev_panel_name = ""  # Track previous panel h1 for change detection
-
-        for idx in range(total_cards):
+        # ── Step 6: Navigate to each business → extract → go back ──────
+        for idx, (card_href, card_label) in enumerate(card_data):
             try:
-                # Re-query cards (DOM may have changed after navigation)
-                cards = await page.query_selector_all('a.hfpxzc')
-                if idx >= len(cards):
-                    log.debug("maps_discovery.card_index_exceeded", idx=idx, available=len(cards))
-                    break
-
-                card = cards[idx]
-
-                # Get the card's aria-label (business name preview)
-                card_label = (await card.get_attribute("aria-label")) or ""
-
-                # ── FIX A: Capture current panel name BEFORE clicking ──
-                try:
-                    prev_panel_name = await page.evaluate(
-                        "() => document.querySelector('h1.DUwDvf')?.textContent || ''"
+                # ── FIX C: Skip "Sponsorisé" results ──────────────────
+                if "sponsoris" in card_label.lower() or "\ue5d4" in card_label:
+                    log.debug(
+                        "maps_discovery.sponsored_skipped",
+                        name=card_label,
                     )
-                except Exception:
-                    prev_panel_name = ""
+                    continue
 
-                # Click the card to open the business panel
-                await card.click()
+                # Navigate directly to the business page (full fresh load)
+                await page.goto(card_href, wait_until="domcontentloaded", timeout=15000)
 
-                # ── FIX A: Wait for h1 to CHANGE (not just exist) ──────
-                # This prevents extracting stale data from previous panel
+                # Wait for the business panel h1 to appear
                 try:
-                    escaped_prev = _json.dumps(prev_panel_name)
-                    await page.wait_for_function(
-                        f"() => {{ const h = document.querySelector('h1.DUwDvf'); "
-                        f"return h && h.textContent !== {escaped_prev}; }}",
-                        timeout=3000,
-                    )
+                    await page.wait_for_selector('h1.DUwDvf', timeout=5000)
                 except Exception:
-                    # Fallback: panel didn't change (maybe same business or slow)
-                    await page.wait_for_timeout(1200)
+                    await page.wait_for_timeout(1000)
 
-                # Extra settle time for phone/address/rating to load
-                # h1 changes fast but other panel elements lag behind
-                await page.wait_for_timeout(1200)
+                # Small settle for all data elements to load
+                await page.wait_for_timeout(800)
 
-                # Extract all data from the business panel
+                # Extract all data from the fully loaded business page
                 data = await self._extract_from_page(card_label, "", "discovery")
                 data["search_query"] = query
 
-                # ── FIX C: Skip "Sponsorisé" results ──────────────────
                 extracted_name = data.get("maps_name") or card_label
-                if "sponsoris" in extracted_name.lower() or "\ue5d4" in extracted_name:
-                    log.debug(
-                        "maps_discovery.sponsored_skipped",
-                        name=extracted_name,
-                    )
-                    # Navigate back and continue
-                    await page.keyboard.press("Escape")
-                    await page.wait_for_timeout(600)
-                    continue
 
                 # Dedup check: name + address
                 dedup_key = (
@@ -657,16 +637,9 @@ class PlaywrightMapsScraper:
                         name=extracted_name,
                     )
 
-                # Navigate back to the result list
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(600)
-
-                # Verify we're back on the result list
-                back_check = await page.query_selector('a.hfpxzc')
-                if not back_check:
-                    # Escape didn't work — try browser back
-                    await page.go_back()
-                    await page.wait_for_timeout(1000)
+                # Navigate back to the search results
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(500)
 
                 # Memory flush every 20 results
                 if (idx + 1) % 20 == 0:
