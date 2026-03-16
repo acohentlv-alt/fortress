@@ -384,7 +384,7 @@ async def run(query_id: str) -> None:
                     if company:
                         siren = company.siren
                     else:
-                        siren = f"MAPS{idx:06d}"
+                        siren = f"MAPS{idx:05d}"
                         company = Company(
                             siren=siren,
                             denomination=maps_name,

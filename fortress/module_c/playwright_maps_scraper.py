@@ -603,7 +603,8 @@ class PlaywrightMapsScraper:
                     await page.wait_for_timeout(1200)
 
                 # Extra settle time for phone/address/rating to load
-                await page.wait_for_timeout(300)
+                # h1 changes fast but other panel elements lag behind
+                await page.wait_for_timeout(1200)
 
                 # Extract all data from the business panel
                 data = await self._extract_from_page(card_label, "", "discovery")
