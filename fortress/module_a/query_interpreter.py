@@ -356,7 +356,15 @@ async def _query_companies(
                latitude, longitude, fortress_id
         FROM companies
         WHERE {where_sql}
-        ORDER BY denomination
+        ORDER BY
+            -- Tier 0: Companies with enseigne first (commercial name = highest Maps hit rate)
+            CASE WHEN enseigne IS NOT NULL AND enseigne != '' THEN 0 ELSE 1 END,
+            -- Tier 1: Non-sole-traders first (SARL/SAS/EARL/GAEC = companies, not person names)
+            CASE WHEN forme_juridique != '1000' THEN 0 ELSE 1 END,
+            -- Tier 2: Has a street address (physical location = Maps pin likely)
+            CASE WHEN adresse IS NOT NULL AND adresse != '' THEN 0 ELSE 1 END,
+            -- Tier 3: Shuffle within each tier to vary results across runs
+            RANDOM()
         {_limit_clause}
         {_offset_clause}
     """

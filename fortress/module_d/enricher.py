@@ -1207,12 +1207,10 @@ async def _fetch_replacement_companies(
                     rows = []
                 else:
                     # Step 2: pick a random offset within the pool
-                    import random as _random
-                    offset = _random.randint(0, max(0, pool_size - count))
                     await cur.execute(
                         """
                         SELECT siren, denomination, naf_code, departement,
-                               code_postal, ville, adresse, statut
+                               code_postal, ville, adresse, statut, enseigne
                         FROM companies
                         WHERE departement = %s
                           AND naf_code LIKE %s
@@ -1220,10 +1218,14 @@ async def _fetch_replacement_companies(
                           AND denomination != '[ND]'
                           AND denomination IS NOT NULL
                           AND siren != ALL(%s)
-                        OFFSET %s
+                        ORDER BY
+                            CASE WHEN enseigne IS NOT NULL AND enseigne != '' THEN 0 ELSE 1 END,
+                            CASE WHEN forme_juridique != '1000' THEN 0 ELSE 1 END,
+                            CASE WHEN adresse IS NOT NULL AND adresse != '' THEN 0 ELSE 1 END,
+                            RANDOM()
                         LIMIT %s
                         """,
-                        (dept, naf_prefix, list(tried_sirens), offset, count),
+                        (dept, naf_prefix, list(tried_sirens), count),
                     )
                     rows = await cur.fetchall()
 
@@ -1231,6 +1233,7 @@ async def _fetch_replacement_companies(
             Company(
                 siren=row["siren"],
                 denomination=row["denomination"],
+                enseigne=row.get("enseigne"),
                 naf_code=row["naf_code"],
                 departement=row["departement"],
                 code_postal=row.get("code_postal"),
