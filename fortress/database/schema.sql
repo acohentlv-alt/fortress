@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
     batch_size              INTEGER         DEFAULT 0,            -- user-requested company count (stays constant)
     replaced_count          INTEGER         DEFAULT 0,            -- companies replaced by qualify-or-replace loop
     companies_qualified     INTEGER         DEFAULT 0,            -- companies with confirmed phone (MVP field)
+    strategy                VARCHAR(10)     NOT NULL DEFAULT 'sirene', -- 'sirene' or 'maps'
+    search_queries          JSONB,                                 -- Maps-first: JSON array of search terms
     created_at              TIMESTAMP       NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMP       NOT NULL DEFAULT NOW()
 );

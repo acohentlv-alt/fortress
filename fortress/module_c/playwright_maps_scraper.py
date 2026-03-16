@@ -340,6 +340,299 @@ class PlaywrightMapsScraper:
                 return {}
 
     # ------------------------------------------------------------------
+    # Maps-first discovery — search_all
+    # ------------------------------------------------------------------
+
+    async def search_all(
+        self,
+        query: str,
+        *,
+        on_result: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Search Google Maps with a generic query and extract ALL results.
+
+        Unlike search() which looks for a specific company, this discovers
+        all businesses matching a generic query like "camping Perpignan".
+
+        Args:
+            query:     Generic search term, e.g. "camping Perpignan" or
+                       "transport logistique 66".
+            on_result: Optional async callback(result_dict) called after
+                       each business is extracted. Enables real-time DB
+                       persistence.
+
+        Returns:
+            List of dicts, each with: maps_name, phone, website, address,
+            rating, review_count, maps_url.  Duplicates are removed by
+            maps_name + address.
+        """
+        if self._page is None:
+            raise RuntimeError(
+                "PlaywrightMapsScraper not started — call start() first"
+            )
+
+        async with self._lock:
+            try:
+                return await asyncio.wait_for(
+                    self._do_search_all(query, on_result),
+                    timeout=300.0,  # 5 min max per search_all query
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "maps_discovery.timeout",
+                    query=query,
+                    timeout=300,
+                )
+                return []
+            except Exception as exc:
+                log.error(
+                    "maps_discovery.error",
+                    query=query,
+                    error=str(exc),
+                )
+                return []
+
+    async def _do_search_all(
+        self,
+        query: str,
+        on_result: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Internal: perform generic Maps search and extract all results."""
+        page = self._page
+        results: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()  # Dedup by name+address
+
+        # ── Step 1: Type query into search box ────────────────────────
+        search_box = await page.query_selector('input[name="q"], #searchboxinput')
+        if search_box:
+            try:
+                await search_box.click()
+                await page.wait_for_timeout(200)
+                await page.keyboard.press("Control+a")
+                await page.keyboard.press("Meta+a")
+                await search_box.fill(query)
+                await page.wait_for_timeout(300)
+            except Exception as exc:
+                log.debug("maps_discovery.search_box_failed", error=str(exc))
+                import urllib.parse
+                url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}?hl=fr"
+                await page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
+                await page.wait_for_timeout(1500)
+        else:
+            import urllib.parse
+            url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}?hl=fr"
+            await page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT)
+            await page.wait_for_timeout(1500)
+
+        # ── Step 2: Submit search ─────────────────────────────────────
+        if search_box:
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2000)
+
+        # CAPTCHA check
+        current_url = page.url
+        if "sorry" in current_url or "recaptcha" in current_url:
+            log.warning("maps_discovery.captcha_detected", query=query)
+            return []
+
+        # ── Step 3: Wait for result list ──────────────────────────────
+        try:
+            await page.wait_for_selector('a.hfpxzc', timeout=8000)
+        except Exception:
+            log.info("maps_discovery.no_results", query=query)
+            # Maybe it landed on a single business panel — try extracting
+            phone_btn = await page.query_selector('button[data-item-id^="phone"]')
+            if phone_btn:
+                data = await self._extract_from_page(query, "", "discovery")
+                if data.get("maps_name"):
+                    data["search_query"] = query
+                    results.append(data)
+                    if on_result:
+                        try:
+                            await on_result(data)
+                        except Exception:
+                            pass
+            return results
+
+        # ── Step 4: Scroll to load ALL results ────────────────────────
+        # Google Maps lazy-loads results as you scroll the sidebar panel.
+        # The scrollable container is div[role="feed"] or the results div.
+        _FEED_SELECTOR = 'div[role="feed"]'
+        feed = await page.query_selector(_FEED_SELECTOR)
+        if not feed:
+            # Fallback: find the scrollable results container
+            feed = await page.query_selector('div.m6QErb.DxyBCb')
+
+        if feed:
+            prev_count = 0
+            stale_rounds = 0
+            max_scrolls = 15  # Safety cap: max 15 scroll rounds
+
+            for scroll_round in range(max_scrolls):
+                # Count current results
+                current_results = await page.query_selector_all('a.hfpxzc')
+                current_count = len(current_results)
+
+                log.debug(
+                    "maps_discovery.scroll",
+                    round=scroll_round + 1,
+                    results_loaded=current_count,
+                    query=query,
+                )
+
+                if current_count == prev_count:
+                    stale_rounds += 1
+                    if stale_rounds >= 2:
+                        # No new results after 2 scrolls — we've loaded everything
+                        break
+                else:
+                    stale_rounds = 0
+                    prev_count = current_count
+
+                # Check if "end of list" marker is visible
+                end_marker = await page.query_selector(
+                    'span.HlvSq, '       # "Vous avez vu tous les résultats"
+                    'p.fontBodyMedium:has-text("résultat")'
+                )
+                if end_marker:
+                    try:
+                        end_text = await end_marker.inner_text()
+                        if "tous les" in end_text.lower() or "no more" in end_text.lower():
+                            log.debug("maps_discovery.end_of_list", query=query)
+                            break
+                    except Exception:
+                        pass
+
+                # Scroll the feed container down
+                await feed.evaluate(
+                    "el => el.scrollTo(0, el.scrollHeight)"
+                )
+                await page.wait_for_timeout(1500)  # Wait for lazy-load
+
+        # ── Step 5: Collect all result cards ───────────────────────────
+        all_cards = await page.query_selector_all('a.hfpxzc')
+        total_cards = len(all_cards)
+        log.info(
+            "maps_discovery.cards_found",
+            total=total_cards,
+            query=query,
+        )
+
+        # ── Step 6: Click each card → extract → go back ───────────────
+        for idx in range(total_cards):
+            try:
+                # Re-query cards (DOM may have changed after navigation)
+                cards = await page.query_selector_all('a.hfpxzc')
+                if idx >= len(cards):
+                    log.debug("maps_discovery.card_index_exceeded", idx=idx, available=len(cards))
+                    break
+
+                card = cards[idx]
+
+                # Get the card's aria-label (business name preview)
+                card_label = (await card.get_attribute("aria-label")) or ""
+
+                # Click the card to open the business panel
+                await card.click()
+                await page.wait_for_timeout(800)
+
+                # Wait for the business panel to render
+                try:
+                    await page.wait_for_selector(
+                        'h1.DUwDvf, button[data-item-id^="phone"], '
+                        'button[data-item-id="address"]',
+                        timeout=5000,
+                    )
+                except Exception:
+                    await page.wait_for_timeout(500)
+
+                # Extract all data from the business panel
+                data = await self._extract_from_page(card_label, "", "discovery")
+                data["search_query"] = query
+
+                # Dedup check: name + address
+                dedup_key = (
+                    (data.get("maps_name") or card_label).lower()
+                    + "|"
+                    + (data.get("address") or "").lower()
+                )
+                if dedup_key not in seen_keys:
+                    seen_keys.add(dedup_key)
+                    results.append(data)
+
+                    log.info(
+                        "maps_discovery.extracted",
+                        idx=idx + 1,
+                        total=total_cards,
+                        name=data.get("maps_name", card_label),
+                        has_phone=bool(data.get("phone")),
+                        has_website=bool(data.get("website")),
+                        query=query,
+                    )
+
+                    # Real-time callback for per-entity persistence
+                    if on_result:
+                        try:
+                            await on_result(data)
+                        except Exception as cb_exc:
+                            log.warning(
+                                "maps_discovery.on_result_error",
+                                error=str(cb_exc),
+                            )
+                else:
+                    log.debug(
+                        "maps_discovery.duplicate_skipped",
+                        name=data.get("maps_name", card_label),
+                    )
+
+                # Navigate back to the result list
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(600)
+
+                # Verify we're back on the result list
+                back_check = await page.query_selector('a.hfpxzc')
+                if not back_check:
+                    # Escape didn't work — try browser back
+                    await page.go_back()
+                    await page.wait_for_timeout(1000)
+
+                # Memory flush every 20 results
+                if (idx + 1) % 20 == 0:
+                    log.info(
+                        "maps_discovery.progress",
+                        processed=idx + 1,
+                        total=total_cards,
+                        found=len(results),
+                        query=query,
+                    )
+
+            except Exception as exc:
+                log.warning(
+                    "maps_discovery.card_error",
+                    idx=idx,
+                    error=str(exc),
+                    query=query,
+                )
+                # Try to recover back to the result list
+                try:
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(500)
+                except Exception:
+                    pass
+                continue
+
+        log.info(
+            "maps_discovery.search_complete",
+            query=query,
+            total_cards=total_cards,
+            unique_results=len(results),
+            with_phone=sum(1 for r in results if r.get("phone")),
+            with_website=sum(1 for r in results if r.get("website")),
+        )
+
+        return results
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

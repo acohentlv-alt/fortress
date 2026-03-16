@@ -27,10 +27,13 @@ class BatchRunRequest(BaseModel):
     """JSON body for POST /api/batch/run."""
     sector: str = Field(..., min_length=1, description="Sector name, e.g. 'agriculture'")
     department: str = Field(..., min_length=1, max_length=10, description="Department code (e.g. '66') or 'FR'/'ALL' for France-wide")
-    size: int = Field(20, ge=1, le=500, description="Number of entities to collect")
+    size: int = Field(20, ge=1, le=500, description="Number of entities to collect (SIRENE mode)")
     mode: str = Field("discovery", description="Mode: discovery or enrichment")
     city: str | None = Field(None, description="Optional city filter")
     naf_code: str | None = Field(None, description="Optional exact NAF code, e.g. '49.41A'")
+    strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
+    search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
+
 
 
 
@@ -57,7 +60,14 @@ async def run_batch(body: BatchRunRequest, request: Request):
     filters_dict = {}
     if body.naf_code:
         filters_dict["naf_code"] = body.naf_code.strip()
+    if body.department:
+        filters_dict["department"] = body.department.strip()
     filters_json = json.dumps(filters_dict) if filters_dict else None
+
+    # Build search_queries JSON for Maps-first mode
+    search_queries_json = None
+    if body.strategy == "maps" and body.search_queries:
+        search_queries_json = json.dumps(body.search_queries)
 
     # Determine batch number + insert in ONE atomic connection
     # to prevent TOCTOU race where two requests get the same number.
@@ -106,9 +116,9 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
             await conn.execute(
                 """INSERT INTO scrape_jobs
-                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s)""",
-                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id),
+                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json),
             )
             await conn.commit()
     except Exception as exc:
@@ -123,8 +133,14 @@ async def run_batch(body: BatchRunRequest, request: Request):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{query_id}.log"
 
+    # Choose the correct runner based on strategy
+    if body.strategy == "maps":
+        runner_module = "fortress.maps_discovery_runner"
+    else:
+        runner_module = "fortress.runner"
+
     runner_cmd = [
-        sys.executable, "-m", "fortress.runner", query_id,
+        sys.executable, "-m", runner_module, query_id,
     ]
 
     # Sandbox workaround: if launcher exists, use it to bypass .env stat()
