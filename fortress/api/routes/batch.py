@@ -152,16 +152,18 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
 
     try:
+        # Create log file (for future use), but let output flow to Render console
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.close(log_fd)  # Just create the file for now
+
         process = subprocess.Popen(
             runner_cmd,
             cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
-            stdout=log_fd,
-            stderr=None,      # Inherit parent stderr → visible in Render Logs
+            stdout=None,      # Inherit parent stdout → visible in Render Logs (structlog)
+            stderr=None,      # Inherit parent stderr → visible in Render Logs (warnings/errors)
             close_fds=False,  # Let child inherit the fd
             start_new_session=True,  # Detach from parent process
         )
-        os.close(log_fd)  # Safe to close in parent after Popen — child has its own fd copy
     except Exception as exc:
         return JSONResponse(
             status_code=500,
