@@ -561,6 +561,10 @@ class PlaywrightMapsScraper:
         )
 
         # ── Step 6: Click each card → extract → go back ───────────────
+        import json as _json
+
+        prev_panel_name = ""  # Track previous panel h1 for change detection
+
         for idx in range(total_cards):
             try:
                 # Re-query cards (DOM may have changed after navigation)
@@ -574,27 +578,52 @@ class PlaywrightMapsScraper:
                 # Get the card's aria-label (business name preview)
                 card_label = (await card.get_attribute("aria-label")) or ""
 
-                # Click the card to open the business panel
-                await card.click()
-                await page.wait_for_timeout(800)
-
-                # Wait for the business panel to render
+                # ── FIX A: Capture current panel name BEFORE clicking ──
                 try:
-                    await page.wait_for_selector(
-                        'h1.DUwDvf, button[data-item-id^="phone"], '
-                        'button[data-item-id="address"]',
-                        timeout=5000,
+                    prev_panel_name = await page.evaluate(
+                        "() => document.querySelector('h1.DUwDvf')?.textContent || ''"
                     )
                 except Exception:
-                    await page.wait_for_timeout(500)
+                    prev_panel_name = ""
+
+                # Click the card to open the business panel
+                await card.click()
+
+                # ── FIX A: Wait for h1 to CHANGE (not just exist) ──────
+                # This prevents extracting stale data from previous panel
+                try:
+                    escaped_prev = _json.dumps(prev_panel_name)
+                    await page.wait_for_function(
+                        f"() => {{ const h = document.querySelector('h1.DUwDvf'); "
+                        f"return h && h.textContent !== {escaped_prev}; }}",
+                        timeout=3000,
+                    )
+                except Exception:
+                    # Fallback: panel didn't change (maybe same business or slow)
+                    await page.wait_for_timeout(1200)
+
+                # Extra settle time for phone/address/rating to load
+                await page.wait_for_timeout(300)
 
                 # Extract all data from the business panel
                 data = await self._extract_from_page(card_label, "", "discovery")
                 data["search_query"] = query
 
+                # ── FIX C: Skip "Sponsorisé" results ──────────────────
+                extracted_name = data.get("maps_name") or card_label
+                if "sponsoris" in extracted_name.lower() or "\ue5d4" in extracted_name:
+                    log.debug(
+                        "maps_discovery.sponsored_skipped",
+                        name=extracted_name,
+                    )
+                    # Navigate back and continue
+                    await page.keyboard.press("Escape")
+                    await page.wait_for_timeout(600)
+                    continue
+
                 # Dedup check: name + address
                 dedup_key = (
-                    (data.get("maps_name") or card_label).lower()
+                    extracted_name.lower()
                     + "|"
                     + (data.get("address") or "").lower()
                 )
@@ -606,7 +635,7 @@ class PlaywrightMapsScraper:
                         "maps_discovery.extracted",
                         idx=idx + 1,
                         total=total_cards,
-                        name=data.get("maps_name", card_label),
+                        name=extracted_name,
                         has_phone=bool(data.get("phone")),
                         has_website=bool(data.get("website")),
                         query=query,
@@ -624,7 +653,7 @@ class PlaywrightMapsScraper:
                 else:
                     log.debug(
                         "maps_discovery.duplicate_skipped",
-                        name=data.get("maps_name", card_label),
+                        name=extracted_name,
                     )
 
                 # Navigate back to the result list
