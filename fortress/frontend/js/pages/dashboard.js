@@ -67,48 +67,32 @@ export async function renderDashboard(container) {
     if (!Array.isArray(jobs)) jobs = [];
 
     const s = stats || {};
+    const user = getCachedUser();
 
     container.innerHTML = `
-        <h1 class="page-title">Dashboard</h1>
-        <p class="page-subtitle">Vue d'ensemble de vos données B2B</p>
 
-        <!-- Stats Bar -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <span class="stat-card-icon">🏢</span>
-                <span class="stat-card-value">${(s.total_companies || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Entreprises</span>
+
+        <!-- Welcome Banner -->
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); margin-bottom:var(--space-xl); flex-wrap:wrap">
+            <div>
+                <h1 class="page-title" style="margin-bottom:var(--space-xs)">Bonjour${user ? ' ' + escapeHtml(user.display_name || user.username) : ''} 👋</h1>
+                <p class="page-subtitle" style="margin-bottom:0">
+                    ${(s.total_companies || 0).toLocaleString('fr-FR')} entreprises enrichies
+                </p>
             </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">📞</span>
-                <span class="stat-card-value">${(s.with_phone || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Téléphones</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">✉️</span>
-                <span class="stat-card-value">${(s.with_email || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Emails</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">🌐</span>
-                <span class="stat-card-value">${(s.with_website || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Sites web</span>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                <a href="#/new-batch" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-sm)">🚀 Nouvelle Recherche</a>
+                <a href="#/monitor" class="btn btn-secondary" style="display:flex; align-items:center; gap:var(--space-sm)">📡 Pipeline Live</a>
+                <button class="btn btn-secondary" id="btn-master-export" style="display:flex; align-items:center; gap:var(--space-sm)">📥 Exporter</button>
             </div>
         </div>
 
-        <!-- Master Export -->
-        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-xl)">
-            <button class="btn btn-primary" id="btn-master-export" style="display:flex; align-items:center; gap:var(--space-sm)">
-                📥 Télécharger l'export global
-            </button>
-        </div>
+
 
         <!-- View Toggle -->
         <div class="view-toggle">
             <button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>
-            <button class="view-toggle-btn" id="btn-by-location">📍 Par Localisation</button>
             <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
-            <button class="view-toggle-btn" id="btn-by-sector">🏭 Par Secteur</button>
         </div>
 
         <!-- View Container -->
@@ -129,11 +113,6 @@ export async function renderDashboard(container) {
         _loadAnalysisView(container);
     });
 
-    document.getElementById('btn-by-location').addEventListener('click', () => {
-        setActiveToggle('btn-by-location');
-        renderByLocation(departments, container);
-    });
-
     document.getElementById('btn-by-job').addEventListener('click', async () => {
         setActiveToggle('btn-by-job');
         const byJobData = await getDashboardStatsByJob();
@@ -141,18 +120,6 @@ export async function renderDashboard(container) {
             renderByJobFromAPI(byJobData, container);
         } else {
             renderByJob(jobs, container);
-        }
-    });
-
-    document.getElementById('btn-by-sector').addEventListener('click', async () => {
-        setActiveToggle('btn-by-sector');
-        const view = document.getElementById('dashboard-view');
-        view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-        const sectorData = await getSectorStats();
-        if (sectorData && Array.isArray(sectorData) && sectorData.length > 0) {
-            renderBySectorFromAPI(sectorData, container);
-        } else {
-            renderBySector(jobs, container);
         }
     });
 }

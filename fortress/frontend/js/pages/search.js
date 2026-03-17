@@ -44,8 +44,8 @@ export async function renderSearch(container) {
     } catch { /* ignore — sectors will be empty */ }
 
     container.innerHTML = `
-        <h1 class="page-title">Recherche</h1>
-        <p class="page-subtitle">Rechercher une entreprise par nom, numéro SIREN ou code NAF</p>
+        <h1 class="page-title">🏦 Base SIRENE</h1>
+        <p class="page-subtitle">Rechercher dans la base de données de 14.7M d'entreprises françaises</p>
 
         <div style="margin-bottom: var(--space-xl); max-width: 700px">
             <!-- Search Input -->
