@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import signal
 import sys
 import time
 import unicodedata
@@ -42,6 +43,17 @@ from fortress.module_d.deduplicator import (
 )
 
 log = structlog.get_logger()
+
+# Graceful shutdown flag — set by SIGTERM handler
+_shutdown = False
+
+def _handle_sigterm(signum, frame):
+    """Handle SIGTERM from Render deploy — set shutdown flag."""
+    global _shutdown
+    _shutdown = True
+    log.warning("maps_discovery_runner.sigterm_received", msg="Graceful shutdown requested")
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # PostgreSQL TCP keepalive parameters
 _KEEPALIVE_PARAMS: dict[str, int] = {
@@ -356,6 +368,42 @@ async def run(query_id: str) -> None:
                 seen_names: set[str] = set()  # Cross-query dedup
                 _current_search_query: str = ""  # Tracks which query is active
 
+                # ── Resume support: skip already-processed companies ──
+                async with pool.connection() as conn:
+                    cur = await conn.execute(
+                        """SELECT sa.siren, co.denomination, co.adresse
+                           FROM scrape_audit sa
+                           LEFT JOIN companies co ON co.siren = sa.siren
+                           WHERE sa.query_id = %s""",
+                        (query_id,),
+                    )
+                    existing_rows = await cur.fetchall()
+
+                if existing_rows:
+                    for row in existing_rows:
+                        siren, denom, addr = row[0], row[1] or "", row[2] or ""
+                        name_key = denom.lower().strip()
+                        addr_key = addr.lower().strip()
+                        seen_names.add(f"{name_key}|{addr_key}")
+                    companies_discovered = len(existing_rows)
+                    # Count qualified (those with phone or website)
+                    async with pool.connection() as conn:
+                        qr = await conn.execute(
+                            """SELECT COUNT(DISTINCT c.siren) FROM contacts c
+                               WHERE c.siren IN (SELECT siren FROM scrape_audit WHERE query_id = %s)
+                               AND (c.phone IS NOT NULL OR c.website IS NOT NULL)""",
+                            (query_id,),
+                        )
+                        qrow = await qr.fetchone()
+                        qualified = qrow[0] if qrow else 0
+
+                    log.info(
+                        "maps_discovery_runner.resume_skip",
+                        query_id=query_id,
+                        already_processed=companies_discovered,
+                        already_qualified=qualified,
+                    )
+
                 # ── Inline persist callback ────────────────────────────
                 # This runs for EACH business extracted by search_all,
                 # ensuring data is saved to DB immediately (not after
@@ -456,6 +504,16 @@ async def run(query_id: str) -> None:
 
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
+                    # Check for graceful shutdown
+                    if _shutdown:
+                        log.warning(
+                            "maps_discovery_runner.shutdown_before_query",
+                            query=search_query,
+                            progress=f"{q_idx}/{total_queries}",
+                            saved=companies_discovered,
+                        )
+                        break
+
                     # Check if batch_size already reached (across queries)
                     if batch_size > 0 and qualified >= batch_size:
                         log.info(
@@ -502,18 +560,20 @@ async def run(query_id: str) -> None:
                 # Email enrichment via website crawl can be triggered
                 # separately per-company or as a follow-up batch.
 
-                # ── Mark completed ────────────────────────────────────
+                # ── Mark completed or interrupted ─────────────────────
+                final_status = "interrupted" if _shutdown else "completed"
                 await _update_job_safe(
                     conn_holder, query_id,
-                    status="completed",
+                    status=final_status,
                     companies_scraped=companies_discovered,
                     companies_qualified=qualified,
                 )
                 log.info(
-                    "maps_discovery_runner.complete",
+                    f"maps_discovery_runner.{final_status}",
                     query_id=query_id,
                     discovered=companies_discovered,
                     qualified=qualified,
+                    shutdown=_shutdown,
                 )
 
         except Exception as exc:

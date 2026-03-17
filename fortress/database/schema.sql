@@ -268,3 +268,27 @@ ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(50);
 -- This is the name on the business sign (e.g. "Camping La Marende")
 -- vs the legal denomination ("SCI LA MARENDE").
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS enseigne TEXT;
+
+-- ---------------------------------------------------------------------------
+-- Smart Upload Engine — schema expansion
+-- Allows ingestion of rich external data (KOMPASS, CRMs, etc.)
+-- ---------------------------------------------------------------------------
+
+-- Companies: revenue, headcount, foundation date, and overflow storage
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS chiffre_affaires    BIGINT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS annee_ca            SMALLINT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS tranche_ca          TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS effectif_exact      TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS date_fondation      DATE;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS type_etablissement  TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS extra_data          JSONB DEFAULT '{}';
+
+-- Officers: richer contact info (direct email, direct line, function codes)
+ALTER TABLE officers ADD COLUMN IF NOT EXISTS civilite       TEXT;
+ALTER TABLE officers ADD COLUMN IF NOT EXISTS email_direct   TEXT;
+ALTER TABLE officers ADD COLUMN IF NOT EXISTS ligne_directe  TEXT;
+ALTER TABLE officers ADD COLUMN IF NOT EXISTS code_fonction  TEXT;
+ALTER TABLE officers ADD COLUMN IF NOT EXISTS type_fonction  TEXT;
+
+-- Scrape jobs: upload mode tracking
+ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'discovery';

@@ -181,3 +181,71 @@ async def run_batch(body: BatchRunRequest, request: Request):
         "status": "launched",
         "message": f"Batch {query_id} launched (PID {process.pid}). Monitor at /api/jobs/{query_id}",
     }
+
+
+@router.post("/{query_id}/resume")
+async def resume_batch(query_id: str):
+    """Resume an interrupted or failed batch job.
+
+    Re-launches the same job with the same parameters.
+    The runner will skip SIRENs already in scrape_audit for this query_id.
+    """
+    job = await fetch_one(
+        """SELECT query_id, query_name, status, filters_json
+           FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
+        (query_id,),
+    )
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+    if job["status"] not in ("interrupted", "failed"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Cannot resume job with status '{job['status']}'. Only interrupted or failed jobs can be resumed."},
+        )
+
+    # Reset status to in_progress
+    await fetch_one(
+        "UPDATE scrape_jobs SET status = 'queued', updated_at = NOW() WHERE query_id = %s RETURNING query_id",
+        (query_id,),
+    )
+
+    # Determine runner module from strategy
+    strategy = "sirene"
+    if job["filters_json"]:
+        try:
+            filters = json.loads(job["filters_json"]) if isinstance(job["filters_json"], str) else job["filters_json"]
+            strategy = filters.get("strategy", "sirene")
+        except Exception:
+            pass
+
+    if strategy == "maps":
+        runner_module = "fortress.maps_discovery_runner"
+    else:
+        runner_module = "fortress.runner"
+
+    runner_cmd = [sys.executable, "-m", runner_module, query_id]
+
+    fortress_root = Path(__file__).resolve().parent.parent.parent
+    try:
+        process = subprocess.Popen(
+            runner_cmd,
+            cwd=str(fortress_root.parent),
+            stdout=None,
+            stderr=None,
+            close_fds=False,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to spawn runner: {exc}"},
+        )
+
+    return {
+        "query_id": query_id,
+        "status": "resumed",
+        "pid": process.pid,
+        "message": f"Job {query_id} resumed (PID {process.pid}). Already-processed companies will be skipped.",
+    }
+

@@ -140,3 +140,31 @@ async def update_user(user_id: int, request: Request):
         await conn.commit()
 
     return {"updated": True, "user": {"id": row[0], "username": row[1], "role": row[2], "display_name": row[3]}}
+
+
+@router.get("/deploy-status")
+async def deploy_status(request: Request):
+    """Check if it's safe to deploy.
+
+    Returns running/queued job count so admin knows if any batches
+    would be interrupted by a deploy.
+    """
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    active_jobs = await fetch_all(
+        """SELECT query_id, query_name, status, companies_scraped, batch_size, updated_at
+           FROM scrape_jobs
+           WHERE status IN ('in_progress', 'queued')
+           ORDER BY updated_at DESC"""
+    )
+
+    return {
+        "running_jobs": len(active_jobs),
+        "safe_to_deploy": len(active_jobs) == 0,
+        "active_jobs": active_jobs,
+        "message": "✅ Aucun batch en cours — déploiement sûr." if len(active_jobs) == 0
+                   else f"⚠️ {len(active_jobs)} batch(s) en cours — attendez avant de déployer.",
+    }
+

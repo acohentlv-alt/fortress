@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import signal
 import sys
 
 import psycopg
@@ -42,6 +43,17 @@ from fortress.module_d.batch_processor import run_query as bp_run_query
 from fortress.module_d.enricher import enrich_companies
 
 log = structlog.get_logger()
+
+# Graceful shutdown flag — set by SIGTERM handler
+_shutdown = False
+
+def _handle_sigterm(signum, frame):
+    """Handle SIGTERM from Render deploy — set shutdown flag."""
+    global _shutdown
+    _shutdown = True
+    log.warning("runner.sigterm_received", msg="Graceful shutdown requested")
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 # Hard safety cap — never process more than 200 records per wave
 # to prevent data holes from excessive in-memory processing.
@@ -435,15 +447,16 @@ async def run(query_id: str) -> None:
                             wave_size=_wave_size,
                         )
 
-            # ── All waves done — mark completed ──────────────────────────
+            # ── All waves done — mark completed or interrupted ────────────
+                final_status = "interrupted" if _shutdown else "completed"
                 await _update_job_safe(
                     conn_holder,
                     query_id,
-                    status="completed",
+                    status=final_status,
                     wave_current=wave_counter,
                     replaced_count=total_replaced,
                 )
-                log.info("runner_complete", query_id=query_id, waves=wave_counter)
+                log.info(f"runner_{final_status}", query_id=query_id, waves=wave_counter, shutdown=_shutdown)
 
             except Exception as exc:
                 log.error(
