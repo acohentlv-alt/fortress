@@ -304,7 +304,7 @@ async def run(query_id: str) -> None:
 
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
-                """SELECT query_name, search_queries, filters_json
+                """SELECT query_name, search_queries, filters_json, batch_size
                    FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
                 (query_id,),
             )
@@ -315,6 +315,7 @@ async def run(query_id: str) -> None:
             query_name: str = row[0]
             raw_queries = row[1]
             filters_raw = row[2]
+            batch_size: int = row[3] or 0  # 0 = collect all results
 
             # Parse search_queries from JSON
             search_queries: list[str] = []
@@ -454,6 +455,15 @@ async def run(query_id: str) -> None:
 
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
+                    # Check if batch_size already reached (across queries)
+                    if batch_size > 0 and qualified >= batch_size:
+                        log.info(
+                            "maps_discovery_runner.batch_size_reached_global",
+                            qualified=qualified,
+                            target=batch_size,
+                        )
+                        break
+
                     log.info(
                         "maps_discovery_runner.search_start",
                         query=search_query,
@@ -466,9 +476,14 @@ async def run(query_id: str) -> None:
                         wave_total=total_queries,
                     )
 
+                    # Compute remaining to collect for this search query
+                    remaining = (batch_size - qualified) if batch_size > 0 else 0
+
                     # search_all calls _persist_result for each business
                     results = await maps_scraper.search_all(
-                        search_query, on_result=_persist_result,
+                        search_query,
+                        on_result=_persist_result,
+                        max_results=remaining,
                     )
 
                     log.info(
