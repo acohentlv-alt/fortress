@@ -1,134 +1,82 @@
 /**
- * New Batch Page — Launch form for new scrape jobs
+ * New Batch Page — Simplified Maps-first search form
  *
- * Supports two discovery strategies:
- *   - Base SIRENE: query the SIRENE DB, then try to find entities on Maps
- *   - Base Maps: search Google Maps directly, then match to SIRENE
+ * User provides:
+ *   1. Search queries (e.g. "camping Perpignan", "transport 66")
+ *   2. Batch size (how many companies to collect)
+ *
+ * Removed: strategy toggle, department dropdown, city input, NAF code
+ * (These are embedded in the natural language query or moved to Base SIRENE)
  */
 
 import { escapeHtml } from '../components.js';
 import { runBatch, extractApiError } from '../api.js';
-import { DEPARTMENTS } from '../constants.js';
 
 export async function renderNewBatch(container) {
     container.innerHTML = `
-        <h1 class="page-title">🚀 Nouveau Batch</h1>
-        <p class="page-subtitle">Configurer et lancer une nouvelle collecte de données</p>
+        <h1 class="page-title">🚀 Nouvelle Recherche</h1>
+        <p class="page-subtitle">Lancez une collecte de données B2B via Google Maps</p>
 
-        <div class="batch-form">
-            <!-- Strategy Toggle -->
+        <div class="batch-form" style="max-width:640px">
+            <!-- Search Queries -->
             <div class="form-group">
-                <label class="form-label">Stratégie de découverte</label>
-                <div id="strategy-toggle" style="display:flex; gap:0; margin-top:var(--space-sm); border-radius:var(--radius); overflow:hidden; border:2px solid var(--accent)">
-                    <button type="button" id="btn-strategy-sirene" class="strategy-btn strategy-active"
-                        style="flex:1; padding:var(--space-md) var(--space-lg); border:none; cursor:pointer; font-weight:700; font-size:var(--font-sm); transition:all var(--transition-fast); display:flex; align-items:center; justify-content:center; gap:var(--space-sm)">
-                        🏢 Base SIRENE
-                    </button>
-                    <button type="button" id="btn-strategy-maps" class="strategy-btn"
-                        style="flex:1; padding:var(--space-md) var(--space-lg); border:none; cursor:pointer; font-weight:700; font-size:var(--font-sm); transition:all var(--transition-fast); display:flex; align-items:center; justify-content:center; gap:var(--space-sm)">
-                        🗺️ Base Maps
-                    </button>
+                <label class="form-label">🔍 Que cherchez-vous ?</label>
+                <div class="form-hint" style="margin-bottom:var(--space-md)">
+                    Décrivez votre recherche en incluant le <strong>secteur</strong> et la <strong>localisation</strong>.
+                    Chaque terme sera recherché séparément sur Google Maps.
                 </div>
-                <div id="strategy-hint" class="form-hint" style="margin-top:var(--space-sm)">
-                    Recherche dans la base SIRENE (14.7M entreprises), puis enrichissement via Google Maps
+                <div id="search-queries-container">
+                    <div class="search-query-row" style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center">
+                        <input type="text" class="form-input search-query-input"
+                            placeholder="ex: camping Perpignan"
+                            autocomplete="off" style="flex:1">
+                        <button type="button" class="btn-remove-query"
+                            style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px; opacity:0.3"
+                            disabled title="Minimum 1 recherche">✕</button>
+                    </div>
+                </div>
+                <button type="button" id="btn-add-query"
+                    style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border:2px dashed var(--border); border-radius:var(--radius-sm); color:var(--accent); cursor:pointer; font-size:var(--font-sm); font-weight:600; transition:all var(--transition-fast); width:100%"
+                    onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--bg-hover)'"
+                    onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-secondary)'"
+                >
+                    ＋ Ajouter un terme de recherche
+                </button>
+                <div class="form-hint" style="margin-top:var(--space-sm); color:var(--info)">
+                    💡 Ajoutez des variations (camping + ville, camping + code postal) pour maximiser la couverture
                 </div>
             </div>
 
-            <!-- Sector / Job Name -->
+            <!-- Batch Size -->
             <div class="form-group">
-                <label class="form-label" for="batch-sector">Secteur d'activité</label>
-                <input type="text" id="batch-sector" class="form-input"
-                    placeholder="ex: agriculture, transport, camping..."
-                    autocomplete="off">
-                <div class="form-hint">Le nom du secteur sera utilisé pour organiser les données</div>
+                <label class="form-label" for="batch-size">📊 Nombre d'entreprises souhaité</label>
+                <input type="number" id="batch-size" class="form-input"
+                    value="20" min="5" max="200" step="5"
+                    style="max-width:140px">
+                <div class="form-hint">Recommandé : 20 par batch. Maximum : 200</div>
             </div>
 
-            <!-- Location -->
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label" for="batch-dept">Département</label>
-                    <select id="batch-dept" class="form-select">
-                        <option value="">Sélectionner...</option>
-                        ${DEPARTMENTS.map(([code, name]) =>
-        `<option value="${code}">${code} — ${escapeHtml(name)}</option>`
-    ).join('')}
-                    </select>
-                </div>
-                <div class="form-group" id="city-group">
-                    <label class="form-label" for="batch-city">Ville (optionnel)</label>
-                    <input type="text" id="batch-city" class="form-input"
-                        placeholder="ex: Toulouse, Perpignan..."
-                        autocomplete="off">
-                    <div class="form-hint">Affine la recherche à une ville spécifique</div>
-                </div>
+            <!-- Safeguard Warning Area -->
+            <div id="batch-warning" style="display:none; margin-bottom:var(--space-lg);
+                padding:var(--space-md); background:var(--warning-subtle);
+                border:1px solid rgba(245,158,11,0.3); border-radius:var(--radius-sm);
+                font-size:var(--font-sm); color:var(--warning)">
             </div>
-
-            <!-- SIRENE-only fields -->
-            <div id="sirene-fields">
-                <!-- Batch Size -->
-                <div class="form-group">
-                    <label class="form-label" for="batch-size">Nombre d'entités à collecter</label>
-                    <input type="number" id="batch-size" class="form-input"
-                        value="20" min="5" max="500" step="5">
-                    <div class="form-hint">Recommandé : 20 par batch pour un taux de succès optimal</div>
-                </div>
-
-                <!-- NAF Code (optional) -->
-                <div class="form-group">
-                    <label class="form-label" for="batch-naf">Code NAF précis (optionnel)</label>
-                    <input type="text" id="batch-naf" class="form-input"
-                        placeholder="ex: 49.41A, 52.29A..."
-                        autocomplete="off" style="max-width:200px">
-                    <div class="form-hint">Laissez vide pour chercher tout le secteur. Format : XX.XXX (ex: 49.41A)</div>
-                </div>
-            </div>
-
-            <!-- Maps-only fields (hidden by default) -->
-            <div id="maps-fields" style="display:none">
-                <div class="form-group">
-                    <label class="form-label">Termes de recherche Maps</label>
-                    <div class="form-hint" style="margin-bottom:var(--space-sm)">
-                        Ajoutez un ou plusieurs termes de recherche Google Maps. Chaque terme sera recherché séparément et tous les résultats seront collectés.
-                    </div>
-                    <div id="search-queries-container">
-                        <div class="search-query-row" style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center">
-                            <input type="text" class="form-input search-query-input" 
-                                placeholder="ex: camping Perpignan"
-                                autocomplete="off" style="flex:1">
-                            <button type="button" class="btn-remove-query" 
-                                style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px; opacity:0.3"
-                                disabled title="Minimum 1 recherche">✕</button>
-                        </div>
-                    </div>
-                    <button type="button" id="btn-add-query" 
-                        style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border:2px dashed var(--border); border-radius:var(--radius-sm); color:var(--accent); cursor:pointer; font-size:var(--font-sm); font-weight:600; transition:all var(--transition-fast); width:100%"
-                        onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--bg-hover)'"
-                        onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-secondary)'"
-                    >
-                        ＋ Ajouter un terme de recherche
-                    </button>
-                    <div class="form-hint" style="margin-top:var(--space-sm); color:var(--info)">
-                        💡 Astuce : Ajoutez des variations (camping + ville, camping + code postal) pour maximiser la couverture
-                    </div>
-                </div>
-            </div>
-
-
 
             <!-- Summary Preview -->
             <div id="batch-summary" style="background:var(--bg-secondary); border:1px solid var(--accent-subtle); border-left:3px solid var(--accent); border-radius:var(--radius); padding:var(--space-xl); margin-top:var(--space-xl)">
                 <div style="font-size:var(--font-xs); font-weight:700; color:var(--accent-hover); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
-                    📋 Aperçu du batch
+                    📋 Aperçu de la recherche
                 </div>
                 <div id="batch-summary-content" style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.6">
-                    Remplissez le secteur et le département pour voir le résumé de votre batch
+                    Ajoutez au moins un terme de recherche pour voir l'aperçu
                 </div>
             </div>
 
             <!-- Actions -->
             <div class="form-actions">
                 <button class="btn btn-primary" id="btn-launch-batch" style="padding:var(--space-md) var(--space-2xl)">
-                    🚀 Lancer le Batch
+                    🚀 Lancer la Recherche
                 </button>
                 <button class="btn btn-secondary" onclick="window.location.hash='#/'">
                     Annuler
@@ -137,59 +85,11 @@ export async function renderNewBatch(container) {
 
             <!-- Info note -->
             <div style="margin-top:var(--space-xl); padding:var(--space-lg); background:var(--info-subtle); border-radius:var(--radius-sm); font-size:var(--font-sm); color:var(--info)">
-                ⓘ Tout est piloté par API — aucun terminal nécessaire. Le batch sera lancé
-                automatiquement et vous serez redirigé vers Pipeline Live.
+                ⓘ Le moteur va rechercher chaque terme sur Google Maps, puis croiser les résultats avec la base SIRENE
+                pour les données légales. Les sites web trouvés seront scannés pour les emails et réseaux sociaux.
             </div>
         </div>
     `;
-
-    // ── State ─────────────────────────────────────────────────────────
-    let currentStrategy = 'sirene';
-
-    // ── Strategy toggle logic ─────────────────────────────────────────
-    const btnSirene = document.getElementById('btn-strategy-sirene');
-    const btnMaps = document.getElementById('btn-strategy-maps');
-    const strategyHint = document.getElementById('strategy-hint');
-    const sireneFields = document.getElementById('sirene-fields');
-    const mapsFields = document.getElementById('maps-fields');
-
-
-    function setActiveStrategy(btn) {
-        // Style active
-        btn.style.background = 'var(--accent)';
-        btn.style.color = 'var(--bg-primary)';
-    }
-    function setInactiveStrategy(btn) {
-        btn.style.background = 'var(--bg-secondary)';
-        btn.style.color = 'var(--text-secondary)';
-    }
-
-    function switchStrategy(strategy) {
-        currentStrategy = strategy;
-        if (strategy === 'sirene') {
-            setActiveStrategy(btnSirene);
-            setInactiveStrategy(btnMaps);
-            sireneFields.style.display = '';
-            mapsFields.style.display = 'none';
-            strategyHint.textContent = 'Recherche dans la base SIRENE (14.7M entreprises), puis enrichissement via Google Maps';
-
-        } else {
-            setActiveStrategy(btnMaps);
-            setInactiveStrategy(btnSirene);
-            sireneFields.style.display = 'none';
-            mapsFields.style.display = '';
-            strategyHint.textContent = 'Recherche directe sur Google Maps, puis matching avec la base SIRENE pour données légales';
-
-        }
-        updateSummary();
-    }
-
-    // Initial state
-    setActiveStrategy(btnSirene);
-    setInactiveStrategy(btnMaps);
-
-    btnSirene.addEventListener('click', () => switchStrategy('sirene'));
-    btnMaps.addEventListener('click', () => switchStrategy('maps'));
 
     // ── Dynamic search query management ───────────────────────────────
     const queriesContainer = document.getElementById('search-queries-container');
@@ -200,8 +100,8 @@ export async function renderNewBatch(container) {
         row.className = 'search-query-row';
         row.style.cssText = 'display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center';
         row.innerHTML = `
-            <input type="text" class="form-input search-query-input" 
-                placeholder="ex: camping Argelès-sur-Mer"
+            <input type="text" class="form-input search-query-input"
+                placeholder="ex: transport Lyon"
                 autocomplete="off" style="flex:1" value="${escapeHtml(value)}">
             <button type="button" class="btn-remove-query"
                 style="background:none; border:1px solid var(--danger); border-radius:var(--radius-sm); color:var(--danger); cursor:pointer; font-size:14px; padding:6px 10px; transition:all var(--transition-fast)"
@@ -222,7 +122,6 @@ export async function renderNewBatch(container) {
     function updateRemoveButtons() {
         const removes = queriesContainer.querySelectorAll('.btn-remove-query');
         if (removes.length <= 1) {
-            // Can't remove the last one
             removes.forEach(btn => {
                 btn.disabled = true;
                 btn.style.opacity = '0.3';
@@ -247,116 +146,104 @@ export async function renderNewBatch(container) {
         updateSummary();
     });
 
-    // Auto-populate first search query from sector + department
-    function autoFillFirstQuery() {
-        if (currentStrategy !== 'maps') return;
-        const sector = document.getElementById('batch-sector').value.trim();
-        const dept = document.getElementById('batch-dept').value;
-        const city = document.getElementById('batch-city').value.trim();
-        const firstInput = queriesContainer.querySelector('.search-query-input');
-        if (firstInput && !firstInput.value.trim() && sector) {
-            firstInput.value = city ? `${sector} ${city}` : (dept ? `${sector} ${dept}` : sector);
+    // ── Safeguard: check for overly broad queries ─────────────────────
+    function validateQueries(queries) {
+        const warnings = [];
+        for (const q of queries) {
+            const words = q.trim().split(/\s+/);
+            // Single word without location = too broad
+            if (words.length === 1 && !/^\d{2,5}$/.test(words[0])) {
+                warnings.push(`"${q}" — Ajoutez une localisation (ville ou département) pour éviter trop de résultats`);
+            }
         }
+        return warnings;
     }
 
     // ── Live summary update ───────────────────────────────────────────
     const updateSummary = () => {
-        const sector = document.getElementById('batch-sector').value.trim();
-        const dept = document.getElementById('batch-dept').value;
-        const city = document.getElementById('batch-city').value.trim();
+        const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
+        const queries = Array.from(queryInputs)
+            .map(i => i.value.trim())
+            .filter(q => q.length > 0);
 
-        if (!sector || !dept) {
+        const batchSize = document.getElementById('batch-size').value;
+        const warningDiv = document.getElementById('batch-warning');
+
+        // Safeguard check
+        const warnings = validateQueries(queries);
+        if (warnings.length > 0) {
+            warningDiv.style.display = 'block';
+            warningDiv.innerHTML = '⚠️ ' + warnings.join('<br>⚠️ ');
+        } else {
+            warningDiv.style.display = 'none';
+        }
+
+        if (queries.length === 0) {
             document.getElementById('batch-summary-content').innerHTML =
-                'Remplissez le secteur et le département pour voir le résumé de votre batch';
+                'Ajoutez au moins un terme de recherche pour voir l\'aperçu';
             return;
         }
 
-        const location = city ? `${city} (${dept})` : `département ${dept}`;
-
-        if (currentStrategy === 'sirene') {
-            const size = document.getElementById('batch-size').value;
-            const nafCode = document.getElementById('batch-naf').value.trim();
-            document.getElementById('batch-summary-content').innerHTML = `
-                <strong>🏢 SIRENE-first</strong> — ${escapeHtml(sector.toUpperCase())} · ${escapeHtml(location)}<br>
-                ${size} entités à collecter<br>
-                ${nafCode ? `Code NAF : <strong>${escapeHtml(nafCode)}</strong><br>` : ''}
-                Pipeline : SIRENE → Google Maps → Website Crawl
-            `;
-        } else {
-            const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
-            const queries = Array.from(queryInputs)
-                .map(i => i.value.trim())
-                .filter(q => q.length > 0);
-
-            document.getElementById('batch-summary-content').innerHTML = `
-                <strong>🗺️ Maps-first</strong> — ${escapeHtml(sector.toUpperCase())} · ${escapeHtml(location)}<br>
-                ${queries.length} recherche${queries.length > 1 ? 's' : ''} Maps :
-                ${queries.length > 0
-                    ? '<ul style="margin:var(--space-xs) 0 0 var(--space-lg); padding:0">' +
-                      queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('') +
-                      '</ul>'
-                    : '<em style="color:var(--text-muted)">Ajoutez des termes de recherche</em>'
-                }
-                Pipeline : Google Maps → SIRENE matching → Website Crawl
-            `;
-        }
+        document.getElementById('batch-summary-content').innerHTML = `
+            <strong>🗺️ Recherche Maps</strong> — ${queries.length} terme${queries.length > 1 ? 's' : ''}<br>
+            <ul style="margin:var(--space-xs) 0 0 var(--space-lg); padding:0">
+                ${queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('')}
+            </ul>
+            <span style="color:var(--text-muted)">
+                ${batchSize} entreprises souhaitées · Pipeline : Google Maps → SIRENE → Crawl
+            </span>
+        `;
     };
 
     // ── Attach listeners ──────────────────────────────────────────────
-    ['batch-sector', 'batch-dept', 'batch-city', 'batch-size', 'batch-naf'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('input', updateSummary);
-            el.addEventListener('change', updateSummary);
-        }
-    });
-
-    // Auto-fill maps query when sector/dept change
-    ['batch-sector', 'batch-dept', 'batch-city'].forEach(id => {
-        document.getElementById(id).addEventListener('change', autoFillFirstQuery);
-    });
+    document.getElementById('batch-size').addEventListener('input', updateSummary);
+    document.getElementById('batch-size').addEventListener('change', updateSummary);
 
     // ── Launch button ─────────────────────────────────────────────────
     document.getElementById('btn-launch-batch').addEventListener('click', async () => {
-        const sector = document.getElementById('batch-sector').value.trim();
-        const dept = document.getElementById('batch-dept').value;
-        if (!sector || !dept) {
-            alert('⚠️ Veuillez remplir le secteur et le département');
+        const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
+        const queries = Array.from(queryInputs)
+            .map(i => i.value.trim())
+            .filter(q => q.length > 0);
+
+        if (queries.length === 0) {
+            alert('⚠️ Ajoutez au moins un terme de recherche');
             return;
         }
 
-        const city = document.getElementById('batch-city').value.trim();
-        const btn = document.getElementById('btn-launch-batch');
-
-        // Build payload based on strategy
-        const payload = {
-            sector,
-            department: dept,
-            mode: 'discovery',
-            strategy: currentStrategy,
-            city: city || undefined,
-        };
-
-        if (currentStrategy === 'sirene') {
-            payload.size = parseInt(document.getElementById('batch-size').value) || 20;
-            const nafCode = document.getElementById('batch-naf').value.trim();
-            if (nafCode) payload.naf_code = nafCode;
-        } else {
-            // Maps-first: collect search queries
-            const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
-            const queries = Array.from(queryInputs)
-                .map(i => i.value.trim())
-                .filter(q => q.length > 0);
-
-            if (queries.length === 0) {
-                alert('⚠️ Ajoutez au moins un terme de recherche Maps');
-                return;
-            }
-            payload.search_queries = queries;
-            payload.size = 1; // Placeholder — maps runner updates batch_size dynamically
+        // Safeguard: block if ALL queries are too broad (single word, no location)
+        const warnings = validateQueries(queries);
+        if (warnings.length === queries.length) {
+            alert('⚠️ Toutes vos recherches sont trop larges.\nAjoutez une ville ou un département à chaque terme.\n\nExemple : "camping Perpignan" au lieu de "camping"');
+            return;
         }
 
-        // Disable button and show loading state
+        const btn = document.getElementById('btn-launch-batch');
+        const batchSize = parseInt(document.getElementById('batch-size').value) || 20;
+
+        // Extract sector name from first query (first word)
+        const firstQuery = queries[0];
+        const sector = firstQuery.split(/\s+/)[0] || 'RECHERCHE';
+
+        // Try to extract department from queries
+        let department = '';
+        for (const q of queries) {
+            const deptMatch = q.match(/\b(\d{2})\b/);
+            if (deptMatch) { department = deptMatch[1]; break; }
+            // Check for common department names
+            const cityMatch = q.match(/\s+(.+)$/);
+            if (cityMatch) { department = cityMatch[1].trim(); break; }
+        }
+
+        const payload = {
+            sector: sector.toUpperCase(),
+            department: department || '00',
+            mode: 'discovery',
+            strategy: 'maps',
+            search_queries: queries,
+            size: batchSize,
+        };
+
         btn.disabled = true;
         btn.innerHTML = '⏳ Lancement en cours...';
 
@@ -368,13 +255,12 @@ export async function renderNewBatch(container) {
             const result = await runBatch(payload);
 
             if (result && result._ok && result.status === 'launched') {
-                const strategyLabel = currentStrategy === 'maps' ? '🗺️ Maps-first' : '🏢 SIRENE-first';
                 document.getElementById('batch-summary-content').innerHTML = `
                     <div style="color:var(--success); font-weight:700; margin-bottom:var(--space-sm)">
-                        ✅ Batch lancé avec succès ! (${strategyLabel})
+                        ✅ Recherche lancée avec succès !
                     </div>
                     <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.8">
-                        <strong>ID du batch :</strong> ${escapeHtml(result.query_id || '—')}<br>
+                        <strong>ID :</strong> ${escapeHtml(result.query_id || '—')}<br>
                         <strong>Statut :</strong> En cours d'exécution
                     </div>
                     <div style="margin-top:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
@@ -391,14 +277,14 @@ export async function renderNewBatch(container) {
                     <div style="color:var(--danger); font-weight:700">❌ Erreur : ${escapeHtml(errorMsg)}</div>
                 `;
                 btn.disabled = false;
-                btn.innerHTML = '🚀 Lancer le Batch';
+                btn.innerHTML = '🚀 Lancer la Recherche';
             }
         } catch (err) {
             document.getElementById('batch-summary-content').innerHTML = `
                 <div style="color:var(--danger); font-weight:700">❌ Erreur de connexion : ${escapeHtml(err.message)}</div>
             `;
             btn.disabled = false;
-            btn.innerHTML = '🚀 Lancer le Batch';
+            btn.innerHTML = '🚀 Lancer la Recherche';
         }
     });
 }
