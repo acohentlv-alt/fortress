@@ -228,11 +228,32 @@ async function initApp() {
 
     // Authenticated — show full app
     _showSidebar(true);
+    _setupSidebarToggle();
     _updateUserDisplay(user);
     _setupLogout();
     initGlobalSearch();
     navigate();
     _setupRunningJobs();
+}
+
+// ── Sidebar Collapse Toggle ─────────────────────────────────────
+
+function _setupSidebarToggle() {
+    const sidebar = document.getElementById('sidebar');
+    const toggleBtn = document.getElementById('sidebar-toggle');
+    if (!sidebar || !toggleBtn) return;
+
+    // Restore saved state
+    if (localStorage.getItem('fortress_sidebar_collapsed') === '1') {
+        sidebar.classList.add('collapsed');
+    }
+
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sidebar.classList.toggle('collapsed');
+        const isCollapsed = sidebar.classList.contains('collapsed');
+        localStorage.setItem('fortress_sidebar_collapsed', isCollapsed ? '1' : '0');
+    });
 }
 
 // ── Event Listeners ──────────────────────────────────────────────

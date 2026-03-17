@@ -258,6 +258,27 @@ export async function clearClientSirens() {
     return await request('/client/clear', { method: 'DELETE' });
 }
 
+// ── Dashboard Delete Actions ─────────────────────────────────────
+export async function getSectorStats() {
+    return await request('/dashboard/stats/by-sector');
+}
+
+export async function deleteSectorTags(sector) {
+    return await request(`/dashboard/sector/${encodeURIComponent(sector)}/tags`, { method: 'DELETE' });
+}
+
+export async function deleteDeptTags(dept) {
+    return await request(`/dashboard/department/${encodeURIComponent(dept)}/tags`, { method: 'DELETE' });
+}
+
+export async function deleteJobGroup(queryName) {
+    return await request(`/dashboard/job-group/${encodeURIComponent(queryName)}`, { method: 'DELETE' });
+}
+
+export async function deleteCompanyTag(siren) {
+    return await request(`/companies/${siren}/tags/*`, { method: 'DELETE' });
+}
+
 // ── Auth ──────────────────────────────────────────────────────────
 export async function checkAuthRequired() {
     try {

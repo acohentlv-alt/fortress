@@ -5,8 +5,8 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, checkHealth, extractApiError, getCachedUser } from '../api.js';
-import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast } from '../components.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 
 const API_BASE = '/api';
 
@@ -116,7 +116,7 @@ export async function renderDashboard(container) {
     `;
 
     // Render initial view
-    renderByLocation(departments);
+    renderByLocation(departments, container);
 
     // Master Export handler
     document.getElementById('btn-master-export').addEventListener('click', () => {
@@ -126,22 +126,29 @@ export async function renderDashboard(container) {
     // Toggle handlers
     document.getElementById('btn-by-location').addEventListener('click', () => {
         setActiveToggle('btn-by-location');
-        renderByLocation(departments);
+        renderByLocation(departments, container);
     });
 
     document.getElementById('btn-by-job').addEventListener('click', async () => {
         setActiveToggle('btn-by-job');
         const byJobData = await getDashboardStatsByJob();
         if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
-            renderByJobFromAPI(byJobData);
+            renderByJobFromAPI(byJobData, container);
         } else {
-            renderByJob(jobs);
+            renderByJob(jobs, container);
         }
     });
 
-    document.getElementById('btn-by-sector').addEventListener('click', () => {
+    document.getElementById('btn-by-sector').addEventListener('click', async () => {
         setActiveToggle('btn-by-sector');
-        renderBySector(jobs);
+        const view = document.getElementById('dashboard-view');
+        view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        const sectorData = await getSectorStats();
+        if (sectorData && Array.isArray(sectorData) && sectorData.length > 0) {
+            renderBySectorFromAPI(sectorData, container);
+        } else {
+            renderBySector(jobs, container);
+        }
     });
 
     // Admin-only data bank tab
@@ -167,7 +174,7 @@ function setActiveToggle(activeId) {
 }
 
 // ── By Location View ─────────────────────────────────────────────
-function renderByLocation(departments) {
+function renderByLocation(departments, rootContainer) {
     const view = document.getElementById('dashboard-view');
     if (!departments || departments.length === 0) {
         view.innerHTML = `
@@ -183,25 +190,53 @@ function renderByLocation(departments) {
     view.innerHTML = `
         <div class="dept-grid">
             ${departments.map(d => `
-                <div class="dept-card" onclick="window.location.hash='#/department/${d.departement}'">
-                    <div class="dept-card-header">
-                        <span class="dept-card-number">${escapeHtml(d.departement)}</span>
-                        <span class="dept-card-count">${d.company_count} entreprise${d.company_count > 1 ? 's' : ''}</span>
-                    </div>
-                    <div class="dept-card-name">${escapeHtml(d.department_name)}</div>
-                    <div class="dept-card-gauges">
-                        ${renderGauge(d.phone_pct || 0, '📞 Tél.')}
-                        ${renderGauge(d.email_pct || 0, '✉️ Email')}
-                        ${renderGauge(d.website_pct || 0, '🌐 Web')}
+                <div class="dept-card" style="position:relative" data-dept="${escapeHtml(d.departement)}">
+                    <button class="card-delete-btn" data-delete-type="dept" data-delete-id="${escapeHtml(d.departement)}" data-delete-label="${escapeHtml(d.department_name)} (${d.company_count} entreprises)"
+                        onclick="event.stopPropagation()" title="Supprimer ce département">✕</button>
+                    <div onclick="window.location.hash='#/department/${d.departement}'" style="cursor:pointer">
+                        <div class="dept-card-header">
+                            <span class="dept-card-number">${escapeHtml(d.departement)}</span>
+                            <span class="dept-card-count">${d.company_count} entreprise${d.company_count > 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="dept-card-name">${escapeHtml(d.department_name)}</div>
+                        <div class="dept-card-gauges">
+                            ${renderGauge(d.phone_pct || 0, '📞 Tél.')}
+                            ${renderGauge(d.email_pct || 0, '✉️ Email')}
+                            ${renderGauge(d.website_pct || 0, '🌐 Web')}
+                        </div>
                     </div>
                 </div>
             `).join('')}
         </div>
     `;
+
+    // Wire delete buttons
+    view.querySelectorAll('.card-delete-btn[data-delete-type="dept"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const dept = btn.dataset.deleteId;
+            const label = btn.dataset.deleteLabel;
+            showConfirmModal({
+                title: '🗑️ Supprimer le département',
+                body: `<p>Supprimer toutes les données du département <strong>${label}</strong> du dashboard ?</p>
+                       <p style="color:var(--text-muted);font-size:var(--font-xs)">Les données des entreprises ne sont pas supprimées — seuls les tags du dashboard sont retirés.</p>`,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteDeptTags(dept);
+                    if (result._ok) {
+                        showToast(`Département ${dept} supprimé (${result.tags_removed} tags)`, 'success');
+                        renderDashboard(rootContainer);
+                    } else {
+                        showToast(extractApiError(result), 'error');
+                    }
+                },
+            });
+        });
+    });
 }
 
 // ── By Job View — From normalized API (no client-side grouping needed) ────
-function renderByJobFromAPI(groups) {
+function renderByJobFromAPI(groups, rootContainer) {
     const view = document.getElementById('dashboard-view');
     if (!groups || groups.length === 0) {
         _renderJobEmptyState(view);
@@ -216,10 +251,12 @@ function renderByJobFromAPI(groups) {
             ${groupCards.join('')}
         </div>
     `;
+
+    _wireJobGroupDeleteButtons(view, rootContainer);
 }
 
 // ── By Job View — Fallback: client-side grouping ─────────────────
-function renderByJob(jobs) {
+function renderByJob(jobs, rootContainer) {
     const view = document.getElementById('dashboard-view');
     if (!jobs || jobs.length === 0) {
         _renderJobEmptyState(view);
@@ -251,6 +288,8 @@ function renderByJob(jobs) {
             ${groupCards.join('')}
         </div>
     `;
+
+    _wireJobGroupDeleteButtons(view, rootContainer);
 }
 
 function _renderJobEmptyState(view) {
@@ -261,6 +300,31 @@ function _renderJobEmptyState(view) {
             <p style="color: var(--text-muted)">Lancez un batch pour commencer</p>
         </div>
     `;
+}
+
+function _wireJobGroupDeleteButtons(view, rootContainer) {
+    view.querySelectorAll('.card-delete-btn[data-delete-type="job-group"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const queryName = btn.dataset.deleteId;
+            const label = btn.dataset.deleteLabel;
+            showConfirmModal({
+                title: '🗑️ Supprimer le groupe de recherche',
+                body: `<p>Supprimer le groupe <strong>${label}</strong> et tous ses batches du dashboard ?</p>
+                       <p style="color:var(--text-muted);font-size:var(--font-xs)">Les données des entreprises ne sont pas supprimées — seuls les tags et les jobs sont retirés.</p>`,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteJobGroup(queryName);
+                    if (result._ok) {
+                        showToast(`Groupe ${queryName} supprimé (${result.jobs_deleted} jobs, ${result.tags_removed} tags)`, 'success');
+                        renderDashboard(rootContainer);
+                    } else {
+                        showToast(extractApiError(result), 'error');
+                    }
+                },
+            });
+        });
+    });
 }
 
 function _renderGroupCard(g, idx) {
@@ -275,9 +339,12 @@ function _renderGroupCard(g, idx) {
 
     // Use display_name directly — already uppercase from API
     const displayName = escapeHtml(g.display_name || '');
+    const queryName = g.display_name || g.query_name || '';
 
     return `
-        <div class="job-group-card">
+        <div class="job-group-card" style="position:relative" data-group-name="${escapeHtml(queryName)}">
+            <button class="card-delete-btn" data-delete-type="job-group" data-delete-id="${escapeHtml(queryName)}" data-delete-label="${displayName} (${batchCount} batch${batchCount > 1 ? 'es' : ''})"
+                onclick="event.stopPropagation()" title="Supprimer ce groupe">✕</button>
             <div class="job-group-header" onclick="document.getElementById('${groupId}').classList.toggle('expanded')">
                 <div class="job-group-info">
                     <div class="job-group-name">${displayName}</div>
@@ -335,17 +402,91 @@ function _renderGroupCard(g, idx) {
     `;
 }
 
-// ── By Sector View ─────────────────────────────────────────────────
-function renderBySector(jobs) {
+// ── By Sector View — From accurate API ─────────────────────────────
+function renderBySectorFromAPI(sectors, rootContainer) {
+    const view = document.getElementById('dashboard-view');
+    if (!sectors || sectors.length === 0) {
+        _renderSectorEmptyState(view);
+        return;
+    }
+
+    view.innerHTML = `
+        <div class="dept-grid">
+            ${sectors.map(s => {
+                const total = s.companies || 0;
+                const phonePct = total > 0 ? Math.round(100 * (s.with_phone || 0) / total) : 0;
+                const emailPct = total > 0 ? Math.round(100 * (s.with_email || 0) / total) : 0;
+                const webPct = total > 0 ? Math.round(100 * (s.with_website || 0) / total) : 0;
+                const depts = (s.departments || []).filter(Boolean);
+                const hasRunning = s.has_running || false;
+
+                return `
+                    <div class="dept-card" style="position:relative" data-sector="${escapeHtml(s.sector)}">
+                        <button class="card-delete-btn" data-delete-type="sector" data-delete-id="${escapeHtml(s.sector)}" data-delete-label="${escapeHtml(s.sector)} (${total} entreprises)"
+                            onclick="event.stopPropagation()" title="Supprimer ce secteur">✕</button>
+                        <div onclick="window.location.hash='#/search?q=${encodeURIComponent(s.sector)}'" style="cursor:pointer">
+                            <div class="dept-card-header">
+                                <span class="dept-card-number">🏭</span>
+                                <span class="dept-card-count">${total} entreprise${total > 1 ? 's' : ''}</span>
+                            </div>
+                            <div class="dept-card-name">${escapeHtml(s.sector)}</div>
+                            <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs)">
+                                ${s.batch_count || 0} batch${(s.batch_count || 0) > 1 ? 'es' : ''}
+                                ${depts.length > 0 ? ` · ${depts.slice(0, 3).join(', ')}${depts.length > 3 ? '…' : ''}` : ''}
+                                ${hasRunning ? ' · ⏳ En cours' : ''}
+                            </div>
+                            <div class="dept-card-gauges">
+                                ${renderGauge(phonePct, '📞 Tél.')}
+                                ${renderGauge(emailPct, '✉️ Email')}
+                                ${renderGauge(webPct, '🌐 Web')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+
+    // Wire delete buttons
+    view.querySelectorAll('.card-delete-btn[data-delete-type="sector"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const sector = btn.dataset.deleteId;
+            const label = btn.dataset.deleteLabel;
+            showConfirmModal({
+                title: '🗑️ Supprimer le secteur',
+                body: `<p>Supprimer toutes les données du secteur <strong>${label}</strong> du dashboard ?</p>
+                       <p style="color:var(--text-muted);font-size:var(--font-xs)">Les données des entreprises ne sont pas supprimées — seuls les tags sont retirés.</p>`,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteSectorTags(sector);
+                    if (result._ok) {
+                        showToast(`Secteur ${sector} supprimé (${result.tags_removed} tags)`, 'success');
+                        renderDashboard(rootContainer);
+                    } else {
+                        showToast(extractApiError(result), 'error');
+                    }
+                },
+            });
+        });
+    });
+}
+
+function _renderSectorEmptyState(view) {
+    view.innerHTML = `
+        <div class="empty-state">
+            <div class="empty-state-icon">🏭</div>
+            <div class="empty-state-text">Aucun secteur trouvé</div>
+            <p style="color: var(--text-muted)">Lancez un batch pour commencer</p>
+        </div>
+    `;
+}
+
+// ── By Sector View — Fallback: client-side grouping ──────────────
+function renderBySector(jobs, rootContainer) {
     const view = document.getElementById('dashboard-view');
     if (!jobs || jobs.length === 0) {
-        view.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">🏭</div>
-                <div class="empty-state-text">Aucun secteur trouvé</div>
-                <p style="color: var(--text-muted)">Lancez un batch pour commencer</p>
-            </div>
-        `;
+        _renderSectorEmptyState(view);
         return;
     }
 
@@ -373,22 +514,50 @@ function renderBySector(jobs) {
                 }).filter(Boolean))];
 
                 return `
-                    <div class="dept-card" onclick="window.location.hash='#/search?q=${encodeURIComponent(s.name)}'">
-                        <div class="dept-card-header">
-                            <span class="dept-card-number">🏭</span>
-                            <span class="dept-card-count">${s.totalScraped} entreprise${s.totalScraped > 1 ? 's' : ''}</span>
-                        </div>
-                        <div class="dept-card-name">${escapeHtml(s.name)}</div>
-                        <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs)">
-                            ${batchCount} batch${batchCount > 1 ? 'es' : ''}
-                            ${depts.length > 0 ? ` · ${depts.slice(0, 3).join(', ')}${depts.length > 3 ? '…' : ''}` : ''}
-                            ${hasRunning ? ' · ⏳ En cours' : ''}
+                    <div class="dept-card" style="position:relative" data-sector="${escapeHtml(s.name)}">
+                        <button class="card-delete-btn" data-delete-type="sector" data-delete-id="${escapeHtml(s.name)}" data-delete-label="${escapeHtml(s.name)} (${s.totalScraped} entreprises)"
+                            onclick="event.stopPropagation()" title="Supprimer ce secteur">✕</button>
+                        <div onclick="window.location.hash='#/search?q=${encodeURIComponent(s.name)}'" style="cursor:pointer">
+                            <div class="dept-card-header">
+                                <span class="dept-card-number">🏭</span>
+                                <span class="dept-card-count">${s.totalScraped} entreprise${s.totalScraped > 1 ? 's' : ''}</span>
+                            </div>
+                            <div class="dept-card-name">${escapeHtml(s.name)}</div>
+                            <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs)">
+                                ${batchCount} batch${batchCount > 1 ? 'es' : ''}
+                                ${depts.length > 0 ? ` · ${depts.slice(0, 3).join(', ')}${depts.length > 3 ? '…' : ''}` : ''}
+                                ${hasRunning ? ' · ⏳ En cours' : ''}
+                            </div>
                         </div>
                     </div>
                 `;
             }).join('')}
         </div>
     `;
+
+    // Wire delete buttons
+    view.querySelectorAll('.card-delete-btn[data-delete-type="sector"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const sector = btn.dataset.deleteId;
+            const label = btn.dataset.deleteLabel;
+            showConfirmModal({
+                title: '🗑️ Supprimer le secteur',
+                body: `<p>Supprimer toutes les données du secteur <strong>${label}</strong> du dashboard ?</p>
+                       <p style="color:var(--text-muted);font-size:var(--font-xs)">Les données des entreprises ne sont pas supprimées — seuls les tags sont retirés.</p>`,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteSectorTags(sector);
+                    if (result._ok) {
+                        showToast(`Secteur ${sector} supprimé (${result.tags_removed} tags)`, 'success');
+                        renderDashboard(rootContainer);
+                    } else {
+                        showToast(extractApiError(result), 'error');
+                    }
+                },
+            });
+        });
+    });
 }
 
 // ── Data Bank View (admin only) ──────────────────────────────────

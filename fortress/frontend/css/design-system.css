@@ -220,8 +220,8 @@ a:hover { color: var(--accent); }
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
-    font-size: var(--font-base);
-    font-weight: 500;
+    font-size: var(--font-md);
+    font-weight: 700;
     cursor: pointer;
     transition: all var(--transition-fast);
     text-decoration: none;
@@ -242,8 +242,8 @@ a:hover { color: var(--accent); }
 }
 
 .nav-item-icon {
-    font-size: 1.1rem;
-    width: 20px;
+    font-size: 1.4rem;
+    width: 24px;
     text-align: center;
     flex-shrink: 0;
 }
@@ -253,6 +253,76 @@ a:hover { color: var(--accent); }
     border-top: 1px solid var(--border-subtle);
     font-size: var(--font-xs);
     color: var(--text-muted);
+}
+
+/* ── Sidebar Toggle Button ─────────────────────────────────────── */
+.sidebar-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* ── Sidebar Collapsed State ──────────────────────────────────── */
+.sidebar.collapsed {
+    width: var(--sidebar-collapsed);
+}
+
+.sidebar.collapsed .sidebar-brand-text,
+.sidebar.collapsed .sidebar-brand-badge,
+.sidebar.collapsed .sidebar-section-label,
+.sidebar.collapsed .nav-item span:not(.nav-item-icon),
+.sidebar.collapsed .sidebar-footer > *:not(.sidebar-toggle-bottom) {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-brand {
+    padding: var(--space-lg) var(--space-sm);
+    justify-content: center;
+}
+
+.sidebar.collapsed .sidebar-nav {
+    padding: var(--space-lg) var(--space-xs);
+    align-items: center;
+}
+
+.sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding: var(--space-sm);
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+}
+
+.sidebar.collapsed .nav-item-icon {
+    margin: 0;
+    width: auto;
+}
+
+.sidebar.collapsed .sidebar-footer {
+    padding: var(--space-md) var(--space-xs);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.sidebar.collapsed ~ .main-content {
+    margin-left: var(--sidebar-collapsed);
 }
 
 /* ── Main Content ──────────────────────────────────────────────── */

@@ -241,3 +241,141 @@ async def get_data_bank(request: Request):
         "top_departments": top_depts,
         "workers": workers,
     }
+
+
+# ---------------------------------------------------------------------------
+# By-Sector Stats — accurate unique SIREN counts from query_tags
+# ---------------------------------------------------------------------------
+
+@router.get("/stats/by-sector")
+async def get_stats_by_sector(request: Request):
+    """Sector-level stats using unique SIRENs from query_tags.
+
+    Admin: all data. User: scoped to their own jobs.
+    Returns unique company counts per sector so totals match the dashboard.
+    """
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    if is_admin:
+        scope_clause = ""
+        scope_params: tuple = ()
+    else:
+        user_id = user.id if user else -1
+        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
+        scope_params = (user_id,)
+
+    rows = await fetch_all(f"""
+        SELECT
+            UPPER(SPLIT_PART(qt.query_name, ' ', 1)) AS sector,
+            COUNT(DISTINCT qt.siren) AS companies,
+            COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
+            COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
+            COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website,
+            COUNT(DISTINCT SPLIT_PART(qt.query_name, ' ', 2)) AS dept_count,
+            (SELECT COUNT(DISTINCT sj2.query_id)
+             FROM scrape_jobs sj2
+             WHERE UPPER(SPLIT_PART(sj2.query_name, ' ', 1)) = UPPER(SPLIT_PART(qt.query_name, ' ', 1))
+               AND sj2.status != 'deleted'
+            ) AS batch_count,
+            (SELECT BOOL_OR(sj3.status = 'in_progress')
+             FROM scrape_jobs sj3
+             WHERE UPPER(SPLIT_PART(sj3.query_name, ' ', 1)) = UPPER(SPLIT_PART(qt.query_name, ' ', 1))
+            ) AS has_running,
+            ARRAY_AGG(DISTINCT SPLIT_PART(qt.query_name, ' ', 2)) FILTER (WHERE SPLIT_PART(qt.query_name, ' ', 2) != '') AS departments
+        FROM query_tags qt
+        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        {scope_clause}
+        GROUP BY sector
+        ORDER BY companies DESC
+    """, scope_params)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Delete endpoints — remove tags (never delete company/contact data)
+# ---------------------------------------------------------------------------
+
+@router.delete("/sector/{sector_name}/tags")
+async def delete_sector_tags(sector_name: str, request: Request):
+    """Remove all query_tags for a sector. Soft-deletes associated jobs."""
+    from fastapi.responses import JSONResponse
+    from fortress.api.db import get_conn
+
+    async with get_conn() as conn:
+        # Find all query_names matching this sector
+        qnames = await conn.execute(
+            "SELECT DISTINCT query_name FROM query_tags WHERE UPPER(SPLIT_PART(query_name, ' ', 1)) = UPPER(%s)",
+            (sector_name,),
+        )
+        names = [r[0] for r in await qnames.fetchall()]
+
+        if not names:
+            return JSONResponse(status_code=404, content={"error": "Secteur introuvable"})
+
+        # Delete tags
+        deleted = await conn.execute(
+            "DELETE FROM query_tags WHERE UPPER(SPLIT_PART(query_name, ' ', 1)) = UPPER(%s)",
+            (sector_name,),
+        )
+        tag_count = deleted.rowcount or 0
+
+        # Soft-delete jobs
+        for name in names:
+            await conn.execute(
+                "UPDATE scrape_jobs SET status = 'deleted', updated_at = NOW() WHERE query_name = %s AND status != 'deleted'",
+                (name,),
+            )
+        await conn.commit()
+
+    return {"deleted": True, "sector": sector_name, "tags_removed": tag_count, "jobs_affected": len(names)}
+
+
+@router.delete("/department/{dept}/tags")
+async def delete_department_tags(dept: str, request: Request):
+    """Remove all query_tags for companies in a specific department."""
+    from fastapi.responses import JSONResponse
+    from fortress.api.db import get_conn
+
+    async with get_conn() as conn:
+        deleted = await conn.execute("""
+            DELETE FROM query_tags
+            WHERE siren IN (
+                SELECT siren FROM companies WHERE departement = %s
+            )
+        """, (dept,))
+        tag_count = deleted.rowcount or 0
+        await conn.commit()
+
+    if tag_count == 0:
+        return JSONResponse(status_code=404, content={"error": "Aucun tag trouvé pour ce département"})
+
+    return {"deleted": True, "department": dept, "tags_removed": tag_count}
+
+
+@router.delete("/job-group/{query_name}")
+async def delete_job_group(query_name: str, request: Request):
+    """Soft-delete all batches with this query_name (case-insensitive) and remove their tags."""
+    from fastapi.responses import JSONResponse
+    from fortress.api.db import get_conn
+
+    async with get_conn() as conn:
+        # Soft-delete all matching jobs
+        jobs_result = await conn.execute(
+            "UPDATE scrape_jobs SET status = 'deleted', updated_at = NOW() WHERE UPPER(query_name) = UPPER(%s) AND status != 'deleted' RETURNING query_id",
+            (query_name,),
+        )
+        job_ids = [r[0] for r in await jobs_result.fetchall()]
+
+        if not job_ids:
+            return JSONResponse(status_code=404, content={"error": "Groupe de jobs introuvable"})
+
+        # Remove query_tags for this group
+        tag_result = await conn.execute(
+            "DELETE FROM query_tags WHERE UPPER(query_name) = UPPER(%s)",
+            (query_name,),
+        )
+        tag_count = tag_result.rowcount or 0
+        await conn.commit()
+
+    return {"deleted": True, "query_name": query_name, "jobs_deleted": len(job_ids), "tags_removed": tag_count}

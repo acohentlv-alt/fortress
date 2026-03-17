@@ -113,25 +113,7 @@ export async function renderNewBatch(container) {
                 </div>
             </div>
 
-            <!-- Agents — reflects pipeline -->
-            <div class="form-group">
-                <label class="form-label">Pipeline d'enrichissement</label>
-                <div id="pipeline-display" style="display:flex; flex-direction:column; gap:var(--space-sm); margin-top:var(--space-sm)">
-                    <label style="display:flex; align-items:center; gap:var(--space-md); padding:var(--space-sm); border-radius:var(--radius-sm)">
-                        <input type="checkbox" checked disabled style="accent-color:var(--accent); width:16px; height:16px">
-                        <span style="font-weight:600; color:var(--text-primary)">🗺️ Google Maps</span>
-                        <span style="font-size:var(--font-xs); color:var(--text-muted)">— Téléphone, adresse vérifiée, avis, site web</span>
-                    </label>
-                    <label style="display:flex; align-items:center; gap:var(--space-md); padding:var(--space-sm); border-radius:var(--radius-sm)">
-                        <input type="checkbox" checked disabled style="accent-color:var(--accent); width:16px; height:16px">
-                        <span style="font-weight:600; color:var(--text-primary)">🌐 Website Crawl</span>
-                        <span style="font-size:var(--font-xs); color:var(--text-muted)">— Emails, réseaux sociaux (si données manquantes)</span>
-                    </label>
-                </div>
-                <div id="pipeline-hint" class="form-hint" style="margin-top:var(--space-sm)">
-                    Pipeline : Maps recherche → Website Crawl (données manquantes uniquement)
-                </div>
-            </div>
+
 
             <!-- Summary Preview -->
             <div id="batch-summary" style="background:var(--bg-secondary); border:1px solid var(--accent-subtle); border-left:3px solid var(--accent); border-radius:var(--radius); padding:var(--space-xl); margin-top:var(--space-xl)">
@@ -139,7 +121,7 @@ export async function renderNewBatch(container) {
                     📋 Aperçu du batch
                 </div>
                 <div id="batch-summary-content" style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.6">
-                    Configurez les paramètres ci-dessus pour voir un aperçu du batch
+                    Remplissez le secteur et le département pour voir le résumé de votre batch
                 </div>
             </div>
 
@@ -170,7 +152,7 @@ export async function renderNewBatch(container) {
     const strategyHint = document.getElementById('strategy-hint');
     const sireneFields = document.getElementById('sirene-fields');
     const mapsFields = document.getElementById('maps-fields');
-    const pipelineHint = document.getElementById('pipeline-hint');
+
 
     function setActiveStrategy(btn) {
         // Style active
@@ -190,14 +172,14 @@ export async function renderNewBatch(container) {
             sireneFields.style.display = '';
             mapsFields.style.display = 'none';
             strategyHint.textContent = 'Recherche dans la base SIRENE (14.7M entreprises), puis enrichissement via Google Maps';
-            pipelineHint.textContent = 'Pipeline : SIRENE → Google Maps → Website Crawl';
+
         } else {
             setActiveStrategy(btnMaps);
             setInactiveStrategy(btnSirene);
             sireneFields.style.display = 'none';
             mapsFields.style.display = '';
             strategyHint.textContent = 'Recherche directe sur Google Maps, puis matching avec la base SIRENE pour données légales';
-            pipelineHint.textContent = 'Pipeline : Google Maps → SIRENE matching → Website Crawl';
+
         }
         updateSummary();
     }
@@ -285,7 +267,7 @@ export async function renderNewBatch(container) {
 
         if (!sector || !dept) {
             document.getElementById('batch-summary-content').innerHTML =
-                'Configurez les paramètres ci-dessus pour voir un aperçu du batch';
+                'Remplissez le secteur et le département pour voir le résumé de votre batch';
             return;
         }
 
