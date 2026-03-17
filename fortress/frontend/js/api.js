@@ -177,6 +177,21 @@ export async function searchCompanies(query, {
     return await request(`/companies/search?${params}`);
 }
 
+/** Search the raw SIRENE DB (14.7M companies) — no enrichment data. */
+export async function searchSirene(query, {
+    limit = 50, offset = 0, department = null, nafCode = null, statut = 'A',
+} = {}) {
+    const params = new URLSearchParams({
+        q: query,
+        limit: limit.toString(),
+        offset: offset.toString(),
+    });
+    if (department) params.set('department', department);
+    if (nafCode) params.set('naf_code', nafCode);
+    if (statut) params.set('statut', statut);
+    return await request(`/sirene/search?${params}`);
+}
+
 export async function getCompanyEnrichHistory(siren) {
     return await request(`/companies/${siren}/enrich-history`);
 }

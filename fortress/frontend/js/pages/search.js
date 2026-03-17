@@ -1,13 +1,13 @@
 /**
- * Search Page — Search by name, SIREN, or NAF code
- * Features:
- *   - NAF sorting controls with sort-by dropdown
- *   - Département & Secteur filter dropdowns
- *   - Active filter pills
+ * Base SIRENE Page — Search the raw 14.7M French company database
+ *
+ * Uses /api/sirene/search — queries the full companies table directly.
+ * Shows SIRENE data only (no enriched fields like phone/email/website).
+ * For enriched data, use the Dashboard.
  */
 
-import { searchCompanies, getJobs, checkHealth, extractApiError, getExportUrl } from '../api.js';
-import { companyCard, escapeHtml, showToast } from '../components.js';
+import { searchSirene, checkHealth, extractApiError } from '../api.js';
+import { escapeHtml, showToast } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
 
 export async function renderSearch(container) {
@@ -16,36 +16,15 @@ export async function renderSearch(container) {
     const params = new URLSearchParams(hashParts[1] || '');
     const initialQuery = params.get('q') || '';
 
-    // Current filter + sort + pagination state
-    let currentSortBy = '';
-    let currentOrder = '';
+    // Current filter + pagination state
     let currentDepartment = '';
-    let currentSector = '';
-    let currentMinRating = '';
-    let currentMinReviews = '';
+    let currentNafCode = '';
     let currentOffset = 0;
     const PAGE_SIZE = 50;
 
-    // Fetch sectors (unique job names) for the filter dropdown
-    let sectors = [];
-    try {
-        const jobs = await getJobs();
-        if (jobs && Array.isArray(jobs)) {
-            const seen = new Set();
-            for (const j of jobs) {
-                const name = (j.query_name || '').toUpperCase().trim();
-                if (name && !seen.has(name)) {
-                    seen.add(name);
-                    sectors.push(name);
-                }
-            }
-            sectors.sort();
-        }
-    } catch { /* ignore — sectors will be empty */ }
-
     container.innerHTML = `
         <h1 class="page-title">🏦 Base SIRENE</h1>
-        <p class="page-subtitle">Rechercher dans la base de données de 14.7M d'entreprises françaises</p>
+        <p class="page-subtitle">Rechercher dans la base de données de 14.7M d'entreprises françaises — données brutes du registre SIRENE</p>
 
         <div style="margin-bottom: var(--space-xl); max-width: 700px">
             <!-- Search Input -->
@@ -53,7 +32,7 @@ export async function renderSearch(container) {
                 <span style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:1.1rem">🔍</span>
                 <input type="text" id="search-input"
                     value="${escapeHtml(initialQuery)}"
-                    placeholder="Rechercher par Nom, SIREN, ou Code NAF..."
+                    placeholder="Rechercher par Nom, SIREN (9 chiffres), ou Code NAF..."
                     style="width:100%; padding:var(--space-md) var(--space-xl); padding-left:40px;
                            background:var(--bg-input); border:1px solid var(--border-default);
                            border-radius:var(--radius); color:var(--text-primary);
@@ -77,33 +56,14 @@ export async function renderSearch(container) {
                     </select>
                 </div>
                 <div class="filter-group">
-                    <label class="filter-label" for="filter-sector">📋 Secteur</label>
-                    <select class="sort-select" id="filter-sector">
-                        <option value="">Tous les secteurs</option>
-                        ${sectors.map(s =>
-        `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`
-    ).join('')}
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label class="filter-label" for="filter-rating">⭐ Note minimale</label>
-                    <select class="sort-select" id="filter-rating">
-                        <option value="">Toutes les notes</option>
-                        <option value="3.0">≥ 3.0 ⭐</option>
-                        <option value="3.5">≥ 3.5 ⭐</option>
-                        <option value="4.0">≥ 4.0 ⭐</option>
-                        <option value="4.5">≥ 4.5 ⭐</option>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label class="filter-label" for="filter-reviews">💬 Avis minimum</label>
-                    <select class="sort-select" id="filter-reviews">
-                        <option value="">Tous</option>
-                        <option value="5">≥ 5 avis</option>
-                        <option value="10">≥ 10 avis</option>
-                        <option value="25">≥ 25 avis</option>
-                        <option value="50">≥ 50 avis</option>
-                    </select>
+                    <label class="filter-label" for="filter-naf">📋 Code NAF</label>
+                    <input type="text" id="filter-naf" class="sort-select"
+                        placeholder="ex: 49.41, 56.10..."
+                        style="background:var(--bg-input); border:1px solid var(--border-default);
+                               border-radius:var(--radius-sm); color:var(--text-primary);
+                               font-family:var(--font-family); padding:var(--space-sm) var(--space-md);
+                               font-size:var(--font-sm);"
+                    >
                 </div>
             </div>
 
@@ -111,73 +71,15 @@ export async function renderSearch(container) {
             <div class="filter-pills" id="filter-pills" style="display:none"></div>
         </div>
 
-        <!-- Sort Controls -->
-        <div class="sort-controls" id="sort-controls" style="display:none">
-            <span class="sort-controls-label">Trier par</span>
-            <select class="sort-select" id="sort-select">
-                <option value="">Pertinence</option>
-                <option value="denomination:asc">Dénomination ↑ A→Z</option>
-                <option value="denomination:desc">Dénomination ↓ Z→A</option>
-                <option value="naf:asc">Code NAF ↑</option>
-                <option value="naf:desc">Code NAF ↓</option>
-            </select>
-        </div>
-
         <div id="search-results"></div>
-
-        <!-- Floating bulk action bar -->
-        <div id="bulk-bar" style="
-            position:fixed; bottom:-60px; left:50%; transform:translateX(-50%);
-            background:var(--bg-elevated); border:1px solid var(--accent);
-            border-radius:var(--radius-lg); padding:var(--space-md) var(--space-xl);
-            display:flex; align-items:center; gap:var(--space-lg);
-            box-shadow:0 -4px 20px rgba(0,0,0,0.3); z-index:100;
-            transition:bottom 0.3s ease;
-            min-width:320px; justify-content:center;
-        ">
-            <span id="bulk-count" style="font-weight:700; color:var(--accent)"></span>
-            <button class="btn btn-primary btn-sm" id="bulk-export">📥 Exporter CSV</button>
-            <button class="btn btn-secondary btn-sm" id="bulk-clear">Désélectionner</button>
-        </div>
     `;
 
     const input = document.getElementById('search-input');
     const resultsEl = document.getElementById('search-results');
-    const sortControls = document.getElementById('sort-controls');
-    const sortSelect = document.getElementById('sort-select');
     const filterDept = document.getElementById('filter-dept');
-    const filterSector = document.getElementById('filter-sector');
-    const filterRating = document.getElementById('filter-rating');
-    const filterReviews = document.getElementById('filter-reviews');
+    const filterNaf = document.getElementById('filter-naf');
     const filterPills = document.getElementById('filter-pills');
-    const bulkBar = document.getElementById('bulk-bar');
-    const bulkCount = document.getElementById('bulk-count');
     let debounceTimer;
-    const selectedSirens = new Set();
-
-    function updateBulkBar() {
-        if (selectedSirens.size > 0) {
-            bulkBar.style.bottom = '20px';
-            bulkCount.textContent = `${selectedSirens.size} sélectionnée${selectedSirens.size > 1 ? 's' : ''}`;
-        } else {
-            bulkBar.style.bottom = '-60px';
-        }
-    }
-
-    document.getElementById('bulk-clear').addEventListener('click', () => {
-        selectedSirens.clear();
-        document.querySelectorAll('.card-checkbox').forEach(cb => cb.checked = false);
-        updateBulkBar();
-    });
-
-    document.getElementById('bulk-export').addEventListener('click', () => {
-        if (selectedSirens.size === 0) return;
-        // Build CSV export URL with selected SIRENs as query param
-        const sirens = Array.from(selectedSirens).join(',');
-        const url = getExportUrl('csv') + `&sirens=${encodeURIComponent(sirens)}`;
-        window.open(url, '_blank');
-        showToast(`Export de ${selectedSirens.size} entreprises lancé`, 'success');
-    });
 
     // ── Update filter pills ──────────────────────────────────────
     function updateFilterPills() {
@@ -187,36 +89,23 @@ export async function renderSearch(container) {
             const label = deptName ? `${deptName[0]} — ${deptName[1]}` : currentDepartment;
             pills.push(`<span class="filter-pill" data-filter="dept">📍 ${escapeHtml(label)} <button class="filter-pill-remove" data-clear="dept">✕</button></span>`);
         }
-        if (currentSector) {
-            pills.push(`<span class="filter-pill" data-filter="sector">📋 ${escapeHtml(currentSector)} <button class="filter-pill-remove" data-clear="sector">✕</button></span>`);
-        }
-        if (currentMinRating) {
-            pills.push(`<span class="filter-pill" data-filter="rating">⭐ ≥ ${currentMinRating} <button class="filter-pill-remove" data-clear="rating">✕</button></span>`);
-        }
-        if (currentMinReviews) {
-            pills.push(`<span class="filter-pill" data-filter="reviews">💬 ≥ ${currentMinReviews} avis <button class="filter-pill-remove" data-clear="reviews">✕</button></span>`);
+        if (currentNafCode) {
+            pills.push(`<span class="filter-pill" data-filter="naf">📋 NAF: ${escapeHtml(currentNafCode)} <button class="filter-pill-remove" data-clear="naf">✕</button></span>`);
         }
 
         if (pills.length > 0) {
             filterPills.style.display = 'flex';
             filterPills.innerHTML = pills.join('');
 
-            // Wire up remove buttons
             filterPills.querySelectorAll('.filter-pill-remove').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const target = e.target.dataset.clear;
                     if (target === 'dept') {
                         currentDepartment = '';
                         filterDept.value = '';
-                    } else if (target === 'sector') {
-                        currentSector = '';
-                        filterSector.value = '';
-                    } else if (target === 'rating') {
-                        currentMinRating = '';
-                        filterRating.value = '';
-                    } else if (target === 'reviews') {
-                        currentMinReviews = '';
-                        filterReviews.value = '';
+                    } else if (target === 'naf') {
+                        currentNafCode = '';
+                        filterNaf.value = '';
                     }
                     updateFilterPills();
                     const q = input.value.trim();
@@ -233,27 +122,21 @@ export async function renderSearch(container) {
     async function doSearch(q, offset = 0) {
         if (!q || q.length < 2) {
             resultsEl.innerHTML = '';
-            sortControls.style.display = 'none';
             return;
         }
 
         currentOffset = offset;
         resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-        const data = await searchCompanies(q, {
+        const data = await searchSirene(q, {
             limit: PAGE_SIZE,
             offset: currentOffset,
-            sortBy: currentSortBy,
-            order: currentOrder,
             department: currentDepartment,
-            sector: currentSector,
-            minRating: currentMinRating,
-            minReviews: currentMinReviews,
+            nafCode: currentNafCode,
         });
 
-        // API error (503, 500, network failure)
+        // API error (503, 408, 500, network failure)
         if (!data || (data._status && !data._ok)) {
-            sortControls.style.display = 'none';
             const errorMsg = extractApiError(data);
             resultsEl.innerHTML = `
                 <div class="error-state text-center" style="padding:var(--space-2xl)">
@@ -282,19 +165,15 @@ export async function renderSearch(container) {
         }
 
         if (!data.results || data.results.length === 0) {
-            sortControls.style.display = 'none';
             resultsEl.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">🔍</div>
                     <div class="empty-state-text">Aucun résultat pour "${escapeHtml(q)}"</div>
-                    <p style="color: var(--text-muted)">Essayez un autre terme, un numéro SIREN ou un code NAF</p>
+                    <p style="color: var(--text-muted)">Essayez un autre terme, un numéro SIREN (9 chiffres) ou un code NAF</p>
                 </div>
             `;
             return;
         }
-
-        // Show sort controls when there are results
-        sortControls.style.display = 'inline-flex';
 
         const total = data.total || data.count || data.results.length;
         const currentPage = Math.floor(currentOffset / PAGE_SIZE) + 1;
@@ -309,20 +188,47 @@ export async function renderSearch(container) {
                     ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
                 </p>
             </div>
-            <div class="company-grid" id="search-grid">
-                ${data.results.map(c => {
-                    const checked = selectedSirens.has(c.siren);
-                    return `
-                        <div style="position:relative">
-                            <input type="checkbox" class="card-checkbox" data-siren="${c.siren}"
-                                ${checked ? 'checked' : ''}
-                                style="position:absolute; top:12px; left:12px; z-index:2; width:18px; height:18px; cursor:pointer; accent-color:var(--accent);"
-                                onclick="event.stopPropagation()">
-                            ${companyCard(c)}
-                        </div>
-                    `;
-                }).join('')}
+
+            <!-- Results Table -->
+            <div class="card" style="overflow-x:auto">
+                <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">SIREN</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Dénomination</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Code NAF</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Ville</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Dépt</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Forme</th>
+                            <th style="text-align:center; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.results.map(c => `
+                            <tr style="cursor:pointer; transition:background 0.15s" 
+                                onmouseover="this.style.background='var(--bg-hover)'"
+                                onmouseout="this.style.background=''"
+                                onclick="window.location.hash='#/company/${c.siren}'">
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap">${escapeHtml(c.siren)}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.denomination || c.enseigne || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); white-space:nowrap">
+                                    <span title="${escapeHtml(c.naf_libelle || '')}">${escapeHtml(c.naf_code || '—')}</span>
+                                </td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary)">${escapeHtml(c.ville || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center; white-space:nowrap">${escapeHtml(c.departement || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(c.forme_juridique || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); text-align:center">
+                                    ${c.statut === 'A'
+                                        ? '<span style="color:var(--success); font-weight:600">●</span>'
+                                        : '<span style="color:var(--text-muted)">○</span>'
+                                    }
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             </div>
+
             ${totalPages > 1 ? `
                 <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-2xl)">
                     <button class="btn btn-secondary" id="pagination-prev" ${hasPrev ? '' : 'disabled'}
@@ -349,40 +255,9 @@ export async function renderSearch(container) {
         if (nextBtn && hasNext) {
             nextBtn.addEventListener('click', () => doSearch(q, currentOffset + PAGE_SIZE));
         }
-
-        // Wire checkboxes for bulk selection
-        const grid = document.getElementById('search-grid');
-        if (grid) {
-            grid.addEventListener('change', (e) => {
-                if (!e.target.classList.contains('card-checkbox')) return;
-                const siren = e.target.dataset.siren;
-                if (e.target.checked) {
-                    selectedSirens.add(siren);
-                } else {
-                    selectedSirens.delete(siren);
-                }
-                updateBulkBar();
-            });
-        }
     }
 
     // ── Event listeners ──────────────────────────────────────────
-
-    // Sort dropdown
-    sortSelect.addEventListener('change', () => {
-        const val = sortSelect.value;
-        if (val) {
-            const [sortBy, order] = val.split(':');
-            currentSortBy = sortBy;
-            currentOrder = order;
-        } else {
-            currentSortBy = '';
-            currentOrder = '';
-        }
-        currentOffset = 0;
-        const q = input.value.trim();
-        if (q) doSearch(q, 0);
-    });
 
     // Filter dropdowns
     filterDept.addEventListener('change', () => {
@@ -393,28 +268,17 @@ export async function renderSearch(container) {
         if (q) doSearch(q, 0);
     });
 
-    filterSector.addEventListener('change', () => {
-        currentSector = filterSector.value;
-        currentOffset = 0;
-        updateFilterPills();
-        const q = input.value.trim();
-        if (q) doSearch(q, 0);
-    });
-
-    filterRating.addEventListener('change', () => {
-        currentMinRating = filterRating.value;
-        currentOffset = 0;
-        updateFilterPills();
-        const q = input.value.trim();
-        if (q) doSearch(q, 0);
-    });
-
-    filterReviews.addEventListener('change', () => {
-        currentMinReviews = filterReviews.value;
-        currentOffset = 0;
-        updateFilterPills();
-        const q = input.value.trim();
-        if (q) doSearch(q, 0);
+    // NAF code filter (debounced)
+    let nafTimer;
+    filterNaf.addEventListener('input', () => {
+        clearTimeout(nafTimer);
+        nafTimer = setTimeout(() => {
+            currentNafCode = filterNaf.value.trim();
+            currentOffset = 0;
+            updateFilterPills();
+            const q = input.value.trim();
+            if (q) doSearch(q, 0);
+        }, 500);
     });
 
     // Search input

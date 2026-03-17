@@ -476,14 +476,9 @@ async def run(query_id: str) -> None:
                         wave_total=total_queries,
                     )
 
-                    # Compute remaining to collect for this search query
-                    remaining = (batch_size - qualified) if batch_size > 0 else 0
-
                     # search_all calls _persist_result for each business
                     results = await maps_scraper.search_all(
-                        search_query,
-                        on_result=_persist_result,
-                        max_results=remaining,
+                        search_query, on_result=_persist_result,
                     )
 
                     log.info(

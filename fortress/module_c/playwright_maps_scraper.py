@@ -104,38 +104,6 @@ _FRENCH_PHONE_RE = re.compile(
 )
 _SCAFFOLD_PHONES = {"0999999977", "0261676083", "0261676921"}
 
-# Non-French address detection
-_NON_FRENCH_COUNTRIES = re.compile(
-    r'\b(USA|United States|U\.S\.|Canada|UK|United Kingdom|Deutschland|'
-    r'Germany|España|Spain|Italia|Italy|Belgique|Belgium|Suisse|'
-    r'Switzerland|Nederland|Portugal|Brasil|Brazil|Australia|Japan|'
-    r'China|India|México|Mexico|Argentina|Colombia)\b',
-    re.IGNORECASE,
-)
-# US state abbreviations: 2-letter codes after a city+comma or at end of address
-_US_STATE_RE = re.compile(
-    r',\s*[A-Z]{2}\s+\d{5}|'           # ", CA 90210" pattern
-    r'\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|'
-    r'ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|'
-    r'PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\s+\d{5}\b'
-)
-_FRENCH_ZIP_RE = re.compile(r'\b\d{5}\b')
-
-
-def _is_non_french_address(address: str) -> bool:
-    """Return True if address is clearly NOT in France."""
-    if not address:
-        return False
-    if _NON_FRENCH_COUNTRIES.search(address):
-        return True
-    if _US_STATE_RE.search(address):
-        return True
-    # Check for "France" explicitly — definitely French
-    if "france" in address.lower():
-        return False
-    # If no country indicator at all, allow it (don't over-filter)
-    return False
-
 
 def _clean_phone(raw: str) -> str | None:
     """Clean and validate a phone number. Returns None if fake/scaffold."""
@@ -378,7 +346,6 @@ class PlaywrightMapsScraper:
         query: str,
         *,
         on_result: Any = None,
-        max_results: int = 0,
     ) -> list[dict[str, Any]]:
         """Search Google Maps with a generic query and extract ALL results.
 
@@ -386,14 +353,16 @@ class PlaywrightMapsScraper:
         all businesses matching a generic query like "camping Perpignan".
 
         Args:
-            query:       Generic search term, e.g. "camping Perpignan".
-            on_result:   Optional async callback(result_dict) called after
-                         each business is extracted.
-            max_results: Stop after collecting this many results (0=unlimited).
+            query:     Generic search term, e.g. "camping Perpignan" or
+                       "transport logistique 66".
+            on_result: Optional async callback(result_dict) called after
+                       each business is extracted. Enables real-time DB
+                       persistence.
 
         Returns:
-            List of dicts with: maps_name, phone, website, address,
-            rating, review_count, maps_url.
+            List of dicts, each with: maps_name, phone, website, address,
+            rating, review_count, maps_url.  Duplicates are removed by
+            maps_name + address.
         """
         if self._page is None:
             raise RuntimeError(
@@ -403,7 +372,7 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 return await asyncio.wait_for(
-                    self._do_search_all(query, on_result, max_results),
+                    self._do_search_all(query, on_result),
                     timeout=300.0,  # 5 min max per search_all query
                 )
             except asyncio.TimeoutError:
@@ -648,19 +617,6 @@ class PlaywrightMapsScraper:
                 data["search_query"] = query
 
                 extracted_name = data.get("maps_name") or card_label
-
-                # Filter non-French results (Render is in US, Maps may return US results)
-                address = data.get("address") or ""
-                if address and _is_non_french_address(address):
-                    log.debug(
-                        "maps_discovery.non_french_skipped",
-                        name=extracted_name,
-                        address=address,
-                    )
-                    # Navigate back to search results before continuing
-                    await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
-                    await page.wait_for_timeout(500)
-                    continue
 
                 # Dedup check: name + address
                 dedup_key = (
