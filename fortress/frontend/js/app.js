@@ -153,6 +153,10 @@ async function navigate() {
             showLoading();
             try {
                 await route.handler(container, ...match.slice(1));
+                // Page transition animation
+                container.style.animation = 'none';
+                container.offsetHeight; // force reflow
+                container.style.animation = 'fadeSlideIn 0.3s ease';
             } catch (err) {
                 console.error('Page render error:', err);
                 container.innerHTML = `
