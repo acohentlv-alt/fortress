@@ -225,15 +225,17 @@ export async function renderNewBatch(container) {
         const firstQuery = queries[0];
         const sector = firstQuery.split(/\s+/)[0] || 'RECHERCHE';
 
-        // Try to extract department from queries
+        // Try to extract department from queries (2-digit code or first 2 digits of postal code)
         let department = '';
         for (const q of queries) {
-            const deptMatch = q.match(/\b(\d{2})\b/);
-            if (deptMatch) { department = deptMatch[1]; break; }
-            // Check for common department names
-            const cityMatch = q.match(/\s+(.+)$/);
-            if (cityMatch) { department = cityMatch[1].trim(); break; }
+            // Match exact 2-digit department code
+            const dept2 = q.match(/\b(\d{2})\b/);
+            if (dept2) { department = dept2[1]; break; }
+            // Match 5-digit postal code → take first 2 as department
+            const postal = q.match(/\b(\d{5})\b/);
+            if (postal) { department = postal[1].substring(0, 2); break; }
         }
+        if (!department) department = 'FR';
 
         const payload = {
             sector: sector.toUpperCase(),
