@@ -1,9 +1,10 @@
 /**
- * Client Upload Page — drag & drop CSV for BLUE triage dedup
+ * Import / Export Page — drag & drop CSV or XLSX for BLUE triage dedup
  *
- * Allows the client to upload their existing CRM database as a CSV.
+ * Allows the client to upload their existing CRM database.
  * Uploaded SIRENs are stored in client_sirens and used by triage
  * to classify companies the client already owns as BLUE (skip).
+ * Supports CSV and XLSX files via SheetJS.
  */
 
 import { uploadClientCSV, getClientStats, clearClientSirens } from '../api.js';
@@ -20,11 +21,11 @@ export async function renderUpload(container) {
     const uploads = stats?.uploads || [];
 
     container.innerHTML = `
-        ${breadcrumb([{ label: 'Base Client' }])}
+        ${breadcrumb([{ label: 'Import / Export' }])}
 
-        <h1 class="page-title">📤 Base de données client</h1>
+        <h1 class="page-title">📤 Import / Export</h1>
         <p class="page-subtitle">
-            Importez le fichier CSV de votre CRM pour éviter de re-scraper les entreprises que vous possédez déjà.
+            Importez le fichier CSV ou XLSX de votre CRM pour éviter de re-scraper les entreprises que vous possédez déjà.
             Les SIRENs importés seront marqués <strong style="color:var(--info)">🔵 BLEU</strong> lors du triage et automatiquement ignorés.
         </p>
 
@@ -51,7 +52,7 @@ export async function renderUpload(container) {
         <!-- Upload Zone -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                Importer un fichier CSV
+                Importer un fichier CSV ou XLSX
             </h3>
 
             <div id="drop-zone" style="
@@ -65,15 +66,15 @@ export async function renderUpload(container) {
             ">
                 <div style="font-size: 3rem; margin-bottom: var(--space-md)">📁</div>
                 <div style="font-size: var(--font-lg); font-weight: 600; margin-bottom: var(--space-sm)">
-                    Glissez votre fichier CSV ici
+                    Glissez votre fichier CSV ou XLSX ici
                 </div>
                 <div style="color: var(--text-muted); font-size: var(--font-sm); margin-bottom: var(--space-lg)">
                     ou cliquez pour sélectionner un fichier
                 </div>
                 <div style="color: var(--text-muted); font-size: var(--font-xs)">
-                    Format: CSV avec une colonne <code>SIREN</code> • Encodage: UTF-8 ou Latin-1 • Délimiteur: virgule ou point-virgule
+                    Format: CSV ou XLSX avec une colonne <code>SIREN</code> • Encodage: UTF-8 ou Latin-1 • Délimiteur: virgule ou point-virgule
                 </div>
-                <input type="file" id="file-input" accept=".csv,.txt" style="display:none">
+                <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls" style="display:none">
             </div>
 
             <!-- Upload result -->
@@ -86,45 +87,51 @@ export async function renderUpload(container) {
                 <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
                     Historique des imports
                 </h3>
-                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:var(--space-md)">
-                    ${uploads.map(u => `
-                        <div style="
-                            background:var(--bg-tertiary);
-                            border:1px solid var(--border-subtle);
-                            border-radius:var(--radius);
-                            padding:var(--space-lg);
-                            transition:border-color var(--transition-fast);
-                        " onmouseover="this.style.borderColor='var(--accent)'"
-                           onmouseout="this.style.borderColor='var(--border-subtle)'">
-                            <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
-                                <span style="font-size:1.5rem">📄</span>
-                                <span style="font-weight:600; font-size:var(--font-sm); overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(u.source_file || '')}">${escapeHtml(u.source_file || '—')}</span>
-                            </div>
-                            <div style="font-size:var(--font-2xl); font-weight:800; color:var(--text-primary); margin-bottom:var(--space-xs)">
-                                ${(u.siren_count || 0).toLocaleString('fr-FR')}
-                            </div>
-                            <div style="font-size:var(--font-xs); color:var(--text-muted)">
-                                SIRENs · ${formatDateTime(u.uploaded_at)}
-                            </div>
-                        </div>
-                    `).join('')}
+                <div style="overflow-x:auto">
+                    <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Date</th>
+                                <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Fichier</th>
+                                <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">SIRENs</th>
+                                <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Nouveaux</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${uploads.map(u => `
+                                <tr>
+                                    <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary)">
+                                        ${formatDateTime(u.uploaded_at)}
+                                    </td>
+                                    <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500">
+                                        ${escapeHtml(u.filename)}
+                                    </td>
+                                    <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:right">
+                                        ${(u.valid_sirens || 0).toLocaleString('fr-FR')}
+                                    </td>
+                                    <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--success); text-align:right; font-weight:600">
+                                        +${(u.inserted || 0).toLocaleString('fr-FR')}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         ` : ''}
     `;
 
-    // ── Wire up drag & drop + click ──────────────────────────
+    // ── Drop zone interactions ────────────────────────────────
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
     const resultDiv = document.getElementById('upload-result');
-    let pendingFile = null;
 
     dropZone.addEventListener('click', () => fileInput.click());
 
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = 'var(--primary)';
-        dropZone.style.background = 'var(--bg-tertiary)';
+        dropZone.style.borderColor = 'var(--accent)';
+        dropZone.style.background = 'var(--accent-subtle)';
     });
 
     dropZone.addEventListener('dragleave', () => {
@@ -172,7 +179,7 @@ export async function renderUpload(container) {
 }
 
 
-// ── CSV Preview — parse client-side and show table ───────────────
+// ── File Preview — parse client-side and show table ─────────────
 function showPreview(file, resultDiv, container) {
     resultDiv.style.display = 'block';
     resultDiv.innerHTML = `
@@ -182,139 +189,156 @@ function showPreview(file, resultDiv, container) {
         </div>
     `;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-        const text = reader.result;
-        const parsed = parseCSV(text);
+    const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
 
-        if (!parsed || parsed.headers.length === 0) {
-            resultDiv.innerHTML = `
-                <div style="padding:var(--space-lg); background:rgba(239,68,68,0.1); border:1px solid var(--danger); border-radius:var(--radius-md)">
-                    <div style="font-weight:700; color:var(--danger)">❌ Fichier illisible</div>
-                    <div style="margin-top:var(--space-sm); color:var(--text-secondary)">Impossible de lire les colonnes du CSV.</div>
-                </div>
-            `;
-            return;
-        }
-
-        // Find the SIREN column
-        const sirenColIdx = parsed.headers.findIndex(h =>
-            h.toUpperCase().replace(/[^A-Z]/g, '') === 'SIREN'
-        );
-        const hasSirenCol = sirenColIdx >= 0;
-
-        // Count valid SIRENs (9-digit numbers)
-        let sirenCount = 0;
-        if (hasSirenCol) {
-            for (const row of parsed.rows) {
-                const val = (row[sirenColIdx] || '').replace(/\s/g, '');
-                if (/^\d{9}$/.test(val)) sirenCount++;
+    if (isXlsx && typeof XLSX !== 'undefined') {
+        // XLSX path — read as ArrayBuffer, convert to CSV via SheetJS
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const workbook = XLSX.read(reader.result, { type: 'array' });
+                const firstSheet = workbook.SheetNames[0];
+                const csvText = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheet]);
+                processCSVText(csvText, file, resultDiv, container);
+            } catch (err) {
+                resultDiv.innerHTML = `
+                    <div style="padding:var(--space-lg); background:rgba(239,68,68,0.1); border:1px solid var(--danger); border-radius:var(--radius-md)">
+                        <div style="font-weight:700; color:var(--danger)">❌ Erreur de lecture XLSX</div>
+                        <div style="margin-top:var(--space-sm); color:var(--text-secondary)">${escapeHtml(err.message)}</div>
+                    </div>
+                `;
             }
-        }
+        };
+        reader.readAsArrayBuffer(file);
+    } else {
+        // CSV/TXT path — read as text
+        const reader = new FileReader();
+        reader.onload = () => {
+            processCSVText(reader.result, file, resultDiv, container);
+        };
+        reader.readAsText(file);
+    }
+}
 
-        const previewRows = parsed.rows.slice(0, 5);
-        const fileSize = file.size < 1024 ? `${file.size} o` :
-            file.size < 1048576 ? `${(file.size / 1024).toFixed(1)} Ko` :
-            `${(file.size / 1048576).toFixed(1)} Mo`;
 
+// ── Process parsed CSV text (shared by CSV and XLSX paths) ───────
+function processCSVText(text, file, resultDiv, container) {
+    const parsed = parseCSV(text);
+
+    if (!parsed || parsed.headers.length === 0) {
         resultDiv.innerHTML = `
-            <div style="padding:var(--space-lg); background:var(--bg-tertiary); border-radius:var(--radius-md); border:1px solid var(--border-subtle)">
-                <!-- File info -->
-                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
-                    <div>
-                        <div style="font-weight:700; font-size:var(--font-md)">📄 ${escapeHtml(file.name)}</div>
-                        <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px">
-                            ${fileSize} · ${parsed.rows.length.toLocaleString('fr-FR')} lignes · ${parsed.headers.length} colonnes
-                            · Délimiteur: <code>${escapeHtml(parsed.delimiter)}</code>
-                        </div>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:var(--space-sm)">
-                        ${hasSirenCol
-                            ? `<span class="badge badge-success">✅ Colonne SIREN détectée</span>
-                               <span class="badge badge-accent">${sirenCount.toLocaleString('fr-FR')} SIRENs valides</span>`
-                            : `<span class="badge badge-danger">❌ Colonne SIREN introuvable</span>`
-                        }
-                    </div>
-                </div>
-
-                <!-- Column headers preview -->
-                <div style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm)">
-                    Aperçu (${Math.min(5, previewRows.length)} premières lignes)
-                </div>
-
-                <div style="overflow-x:auto; border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
-                    <table style="width:100%; border-collapse:collapse; font-size:var(--font-xs); white-space:nowrap">
-                        <thead>
-                            <tr>
-                                ${parsed.headers.map((h, i) => `
-                                    <th style="
-                                        padding:var(--space-sm) var(--space-md);
-                                        text-align:left;
-                                        border-bottom:2px solid var(--border-color);
-                                        background:${i === sirenColIdx ? 'rgba(16,185,129,0.15)' : 'var(--bg-elevated)'};
-                                        color:${i === sirenColIdx ? 'var(--success)' : 'var(--text-muted)'};
-                                        font-weight:700;
-                                    ">${escapeHtml(h)}${i === sirenColIdx ? ' ✓' : ''}</th>
-                                `).join('')}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${previewRows.map(row => `
-                                <tr>
-                                    ${parsed.headers.map((_, i) => `
-                                        <td style="
-                                            padding:var(--space-xs) var(--space-md);
-                                            border-bottom:1px solid var(--border-subtle);
-                                            background:${i === sirenColIdx ? 'rgba(16,185,129,0.05)' : 'transparent'};
-                                            color:var(--text-secondary);
-                                            max-width:200px;
-                                            overflow:hidden;
-                                            text-overflow:ellipsis;
-                                        ">${escapeHtml(row[i] || '—')}</td>
-                                    `).join('')}
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-
-                ${parsed.rows.length > 5 ? `
-                    <div style="text-align:center; font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-sm)">
-                        … et ${(parsed.rows.length - 5).toLocaleString('fr-FR')} autres lignes
-                    </div>
-                ` : ''}
-
-                <!-- Action buttons -->
-                <div style="display:flex; justify-content:flex-end; gap:var(--space-md); margin-top:var(--space-lg)">
-                    <button class="btn btn-secondary" id="btn-cancel-preview">Annuler</button>
-                    ${hasSirenCol ? `
-                        <button class="btn btn-primary" id="btn-confirm-upload">
-                            📤 Importer ${sirenCount.toLocaleString('fr-FR')} SIRENs
-                        </button>
-                    ` : `
-                        <button class="btn btn-primary" disabled title="Aucune colonne SIREN détectée">
-                            📤 Importer
-                        </button>
-                    `}
-                </div>
+            <div style="padding:var(--space-lg); background:rgba(239,68,68,0.1); border:1px solid var(--danger); border-radius:var(--radius-md)">
+                <div style="font-weight:700; color:var(--danger)">❌ Fichier illisible</div>
+                <div style="margin-top:var(--space-sm); color:var(--text-secondary)">Impossible de lire les colonnes du fichier.</div>
             </div>
         `;
+        return;
+    }
 
-        // Cancel preview
-        document.getElementById('btn-cancel-preview').addEventListener('click', () => {
-            resultDiv.style.display = 'none';
-            resultDiv.innerHTML = '';
-        });
+    // Find the SIREN column
+    const sirenColIdx = parsed.headers.findIndex(h =>
+        h.toUpperCase().replace(/[^A-Z]/g, '') === 'SIREN'
+    );
+    const hasSirenCol = sirenColIdx >= 0;
 
-        // Confirm upload
-        const confirmBtn = document.getElementById('btn-confirm-upload');
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', async () => {
-                await doUpload(file, resultDiv, container);
-            });
+    // Count valid SIRENs (9-digit numbers)
+    let sirenCount = 0;
+    if (hasSirenCol) {
+        for (const row of parsed.rows) {
+            const val = (row[sirenColIdx] || '').replace(/\s/g, '');
+            if (/^\d{9}$/.test(val)) sirenCount++;
         }
-    };
-    reader.readAsText(file);
+    }
+
+    const previewRows = parsed.rows.slice(0, 5);
+    const fileSize = file.size < 1024 ? `${file.size} o` :
+        file.size < 1048576 ? `${(file.size / 1024).toFixed(1)} Ko` :
+        `${(file.size / 1048576).toFixed(1)} Mo`;
+
+    resultDiv.innerHTML = `
+        <div style="padding:var(--space-lg); background:var(--bg-tertiary); border-radius:var(--radius-md); border:1px solid var(--border-subtle)">
+            <!-- File info -->
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                <div>
+                    <div style="font-weight:700; font-size:var(--font-md)">📄 ${escapeHtml(file.name)}</div>
+                    <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px">
+                        ${fileSize} · ${parsed.rows.length.toLocaleString('fr-FR')} lignes · ${parsed.headers.length} colonnes
+                        · Délimiteur: <code>${escapeHtml(parsed.delimiter)}</code>
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:var(--space-sm)">
+                    ${hasSirenCol
+                        ? `<span class="badge badge-success">✅ Colonne SIREN détectée</span>
+                           <span class="badge badge-accent">${sirenCount.toLocaleString('fr-FR')} SIRENs valides</span>`
+                        : `<span class="badge badge-danger">❌ Colonne SIREN introuvable</span>`
+                    }
+                </div>
+            </div>
+
+            <!-- Preview table -->
+            <div style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm)">
+                Aperçu (${Math.min(5, previewRows.length)} premières lignes)
+            </div>
+
+            <div style="overflow-x:auto; border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
+                <table style="width:100%; border-collapse:collapse; font-size:var(--font-xs); white-space:nowrap">
+                    <thead>
+                        <tr>
+                            ${parsed.headers.map((h, i) => `
+                                <th style="
+                                    padding:var(--space-sm) var(--space-md);
+                                    text-align:left; font-weight:700;
+                                    border-bottom:2px solid var(--border-default);
+                                    ${i === sirenColIdx ? 'color:var(--accent); background:var(--accent-subtle)' : 'color:var(--text-secondary)'}
+                                ">${escapeHtml(h)}</th>
+                            `).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${previewRows.map(row => `
+                            <tr>
+                                ${parsed.headers.map((_, i) => `
+                                    <td style="
+                                        padding:var(--space-xs) var(--space-md);
+                                        border-bottom:1px solid var(--border-subtle);
+                                        ${i === sirenColIdx ? 'font-weight:600; color:var(--accent)' : 'color:var(--text-secondary)'}
+                                    ">${escapeHtml(row[i] || '')}</td>
+                                `).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex; gap:var(--space-md); margin-top:var(--space-lg); justify-content:flex-end">
+                <button class="btn btn-secondary" id="btn-cancel-preview">Annuler</button>
+                ${hasSirenCol ? `
+                    <button class="btn btn-primary" id="btn-confirm-upload">
+                        📤 Importer ${sirenCount.toLocaleString('fr-FR')} SIRENs
+                    </button>
+                ` : `
+                    <button class="btn btn-primary" disabled title="Aucune colonne SIREN détectée">
+                        📤 Importer
+                    </button>
+                `}
+            </div>
+        </div>
+    `;
+
+    // Cancel preview
+    document.getElementById('btn-cancel-preview').addEventListener('click', () => {
+        resultDiv.style.display = 'none';
+        resultDiv.innerHTML = '';
+    });
+
+    // Confirm upload
+    const confirmBtn = document.getElementById('btn-confirm-upload');
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', async () => {
+            await doUpload(file, resultDiv, container);
+        });
+    }
 }
 
 
