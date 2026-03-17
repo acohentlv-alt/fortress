@@ -263,6 +263,10 @@ export async function getSectorStats() {
     return await request('/dashboard/stats/by-sector');
 }
 
+export async function getAnalysis() {
+    return await request('/dashboard/analysis');
+}
+
 export async function deleteSectorTags(sector) {
     return await request(`/dashboard/sector/${encodeURIComponent(sector)}/tags`, { method: 'DELETE' });
 }

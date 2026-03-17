@@ -2028,3 +2028,61 @@
     opacity: 0.6;
     cursor: not-allowed;
 }
+
+/* ── Analysis Dashboard ──────────────────────────────────────────── */
+.analysis-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+}
+
+.analysis-panel-title {
+    font-size: var(--font-xs);
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: var(--space-lg);
+}
+
+.analysis-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-sm);
+}
+
+.analysis-table th {
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.analysis-table td {
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.analysis-table-row {
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.analysis-table-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.badge-muted {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 768px) {
+    .analysis-grid {
+        grid-template-columns: 1fr;
+    }
+}

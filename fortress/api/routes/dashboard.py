@@ -244,6 +244,233 @@ async def get_data_bank(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Data Analysis — comprehensive analytics in one call
+# ---------------------------------------------------------------------------
+
+@router.get("/analysis")
+async def get_analysis(request: Request):
+    """Data analysis dashboard — returns quality, enricher performance, timeline, jobs.
+
+    Admin: all data + enricher performance breakdown.
+    User: scoped to own jobs (no enricher details).
+    """
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    if is_admin:
+        scope_clause = ""
+        scope_params: tuple = ()
+        jobs_where = "WHERE sj.status != 'deleted'"
+    else:
+        user_id = user.id if user else -1
+        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
+        scope_params = (user_id,)
+        jobs_where = f"WHERE sj.status != 'deleted' AND sj.user_id = {user_id}"
+
+    # ── 1. Quality scores ────────────────────────────────────────
+    quality = await fetch_one(f"""
+        WITH tagged AS (
+            SELECT DISTINCT qt.siren FROM query_tags qt {scope_clause}
+        ),
+        enriched AS (
+            SELECT
+                t.siren,
+                MAX(ct.phone)   AS phone,
+                MAX(ct.email)   AS email,
+                MAX(ct.website) AS website,
+                MAX(ct.social_linkedin) AS linkedin,
+                MAX(ct.social_facebook) AS facebook
+            FROM tagged t
+            LEFT JOIN contacts ct ON ct.siren = t.siren
+            GROUP BY t.siren
+        )
+        SELECT
+            COUNT(*)                                          AS total,
+            COUNT(*) FILTER (WHERE phone IS NOT NULL)         AS with_phone,
+            COUNT(*) FILTER (WHERE email IS NOT NULL)         AS with_email,
+            COUNT(*) FILTER (WHERE website IS NOT NULL)       AS with_website,
+            COUNT(*) FILTER (WHERE linkedin IS NOT NULL OR facebook IS NOT NULL) AS with_social
+        FROM enriched
+    """, scope_params)
+
+    q = quality or {}
+    total = q.get("total", 0) or 0
+    phone_pct = round(100 * (q.get("with_phone", 0) or 0) / max(total, 1))
+    email_pct = round(100 * (q.get("with_email", 0) or 0) / max(total, 1))
+    web_pct = round(100 * (q.get("with_website", 0) or 0) / max(total, 1))
+    social_pct = round(100 * (q.get("with_social", 0) or 0) / max(total, 1))
+    overall = round((phone_pct + email_pct + web_pct) / 3)
+
+    quality_data = {
+        "total": total,
+        "with_phone": q.get("with_phone", 0) or 0,
+        "with_email": q.get("with_email", 0) or 0,
+        "with_website": q.get("with_website", 0) or 0,
+        "with_social": q.get("with_social", 0) or 0,
+        "phone_pct": phone_pct,
+        "email_pct": email_pct,
+        "website_pct": web_pct,
+        "social_pct": social_pct,
+        "overall_score": overall,
+    }
+
+    # ── 2. Enricher performance (admin only) ─────────────────────
+    enrichers = {}
+    if is_admin:
+        # From enrichment_log: method breakdown
+        maps_methods = await fetch_all("""
+            SELECT
+                COALESCE(maps_method, 'unknown') AS method,
+                COUNT(*) AS count,
+                COUNT(*) FILTER (WHERE outcome = 'qualified') AS qualified
+            FROM enrichment_log
+            WHERE maps_method IS NOT NULL
+            GROUP BY maps_method
+            ORDER BY count DESC
+        """)
+
+        crawl_methods = await fetch_all("""
+            SELECT
+                COALESCE(crawl_method, 'unknown') AS method,
+                COUNT(*) AS count,
+                COUNT(*) FILTER (WHERE emails_found > 0) AS with_emails
+            FROM enrichment_log
+            WHERE crawl_method IS NOT NULL AND crawl_method != 'skipped'
+            GROUP BY crawl_method
+            ORDER BY count DESC
+        """)
+
+        # From scrape_audit: timing and success rates
+        audit_stats = await fetch_all("""
+            SELECT
+                action,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE result = 'success') AS success,
+                ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
+            FROM scrape_audit
+            WHERE action IN ('maps_lookup', 'website_crawl')
+            GROUP BY action
+        """)
+
+        audit_map = {r["action"]: r for r in (audit_stats or [])}
+
+        # Maps enricher
+        maps_audit = audit_map.get("maps_lookup", {})
+        maps_total = maps_audit.get("total", 0) or 0
+        maps_success = maps_audit.get("success", 0) or 0
+        enrichers["maps_lookup"] = {
+            "total": maps_total,
+            "success": maps_success,
+            "rate": round(100 * maps_success / max(maps_total, 1)),
+            "avg_time_ms": maps_audit.get("avg_time_ms") or 0,
+            "methods": {r["method"]: {"count": r["count"], "qualified": r["qualified"]} for r in (maps_methods or [])},
+        }
+
+        # Crawl enricher
+        crawl_audit = audit_map.get("website_crawl", {})
+        crawl_total = crawl_audit.get("total", 0) or 0
+        crawl_success = crawl_audit.get("success", 0) or 0
+        enrichers["website_crawl"] = {
+            "total": crawl_total,
+            "success": crawl_success,
+            "rate": round(100 * crawl_success / max(crawl_total, 1)),
+            "avg_time_ms": crawl_audit.get("avg_time_ms") or 0,
+            "methods": {r["method"]: {"count": r["count"], "with_emails": r["with_emails"]} for r in (crawl_methods or [])},
+        }
+
+        # Overall enrichment outcomes from enrichment_log
+        outcomes = await fetch_all("""
+            SELECT outcome, COUNT(*) AS count
+            FROM enrichment_log
+            GROUP BY outcome
+            ORDER BY count DESC
+        """)
+        enrichers["outcomes"] = {r["outcome"]: r["count"] for r in (outcomes or [])}
+
+    # ── 3. Weekly timeline (last 12 weeks) ───────────────────────
+    timeline = await fetch_all(f"""
+        SELECT
+            TO_CHAR(DATE_TRUNC('week', sj.created_at), 'YYYY-"W"IW') AS week,
+            COUNT(DISTINCT sj.query_id) AS batches,
+            SUM(sj.companies_scraped) AS companies,
+            SUM(sj.companies_qualified) AS qualified
+        FROM scrape_jobs sj
+        {jobs_where}
+        AND sj.created_at >= NOW() - INTERVAL '12 weeks'
+        GROUP BY DATE_TRUNC('week', sj.created_at)
+        ORDER BY DATE_TRUNC('week', sj.created_at) ASC
+    """)
+
+    # ── 4. Recent jobs with quality metrics ──────────────────────
+    recent_jobs = await fetch_all(f"""
+        SELECT
+            sj.query_id, sj.query_name,
+            CASE
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                ELSE sj.status
+            END AS status,
+            sj.companies_scraped,
+            COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
+            sj.created_at, sj.updated_at,
+            -- Quality metrics via subquery
+            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
+             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
+             WHERE ct.phone IS NOT NULL) AS phones_found,
+            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
+             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
+             WHERE ct.email IS NOT NULL) AS emails_found,
+            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
+             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
+             WHERE ct.website IS NOT NULL) AS websites_found,
+            (SELECT COUNT(DISTINCT qt2.siren) FROM query_tags qt2
+             WHERE UPPER(qt2.query_name) = UPPER(sj.query_name)) AS unique_companies
+        FROM scrape_jobs sj
+        {jobs_where}
+        AND sj.status IN ('completed', 'failed', 'cancelled')
+        ORDER BY sj.created_at DESC
+        LIMIT 20
+    """)
+
+    # Compute per-job quality scores
+    for job in (recent_jobs or []):
+        uc = job.get("unique_companies", 0) or 0
+        job["phone_pct"] = round(100 * (job.get("phones_found", 0) or 0) / max(uc, 1))
+        job["email_pct"] = round(100 * (job.get("emails_found", 0) or 0) / max(uc, 1))
+        job["web_pct"] = round(100 * (job.get("websites_found", 0) or 0) / max(uc, 1))
+        job["quality_score"] = round((job["phone_pct"] + job["email_pct"] + job["web_pct"]) / 3)
+
+    # ── 5. Sector quality breakdown ──────────────────────────────
+    sectors = await fetch_all(f"""
+        SELECT
+            UPPER(SPLIT_PART(qt.query_name, ' ', 1)) AS sector,
+            COUNT(DISTINCT qt.siren) AS companies,
+            COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
+            COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
+            COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website
+        FROM query_tags qt
+        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        {scope_clause}
+        GROUP BY sector
+        ORDER BY companies DESC
+    """, scope_params)
+
+    for s in (sectors or []):
+        sc = s.get("companies", 0) or 0
+        s["phone_pct"] = round(100 * (s.get("with_phone", 0) or 0) / max(sc, 1))
+        s["email_pct"] = round(100 * (s.get("with_email", 0) or 0) / max(sc, 1))
+        s["web_pct"] = round(100 * (s.get("with_website", 0) or 0) / max(sc, 1))
+        s["quality_score"] = round((s["phone_pct"] + s["email_pct"] + s["web_pct"]) / 3)
+
+    return {
+        "quality": quality_data,
+        "enrichers": enrichers,
+        "timeline": timeline or [],
+        "recent_jobs": recent_jobs or [],
+        "sectors": sectors or [],
+    }
+
+
+# ---------------------------------------------------------------------------
 # By-Sector Stats — accurate unique SIREN counts from query_tags
 # ---------------------------------------------------------------------------
 

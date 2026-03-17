@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 
 const API_BASE = '/api';
@@ -105,18 +105,18 @@ export async function renderDashboard(container) {
 
         <!-- View Toggle -->
         <div class="view-toggle">
-            <button class="view-toggle-btn active" id="btn-by-location">📍 Par Localisation</button>
+            <button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>
+            <button class="view-toggle-btn" id="btn-by-location">📍 Par Localisation</button>
             <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-sector">🏭 Par Secteur</button>
-            ${(getCachedUser()?.role === 'admin') ? '<button class="view-toggle-btn" id="btn-data-bank">🏦 Banque de Données</button>' : ''}
         </div>
 
         <!-- View Container -->
-        <div id="dashboard-view"></div>
+        <div id="dashboard-view"><div class="loading"><div class="spinner"></div></div></div>
     `;
 
-    // Render initial view
-    renderByLocation(departments, container);
+    // Render initial view — Analysis is default
+    _loadAnalysisView(container);
 
     // Master Export handler
     document.getElementById('btn-master-export').addEventListener('click', () => {
@@ -124,6 +124,11 @@ export async function renderDashboard(container) {
     });
 
     // Toggle handlers
+    document.getElementById('btn-analysis').addEventListener('click', () => {
+        setActiveToggle('btn-analysis');
+        _loadAnalysisView(container);
+    });
+
     document.getElementById('btn-by-location').addEventListener('click', () => {
         setActiveToggle('btn-by-location');
         renderByLocation(departments, container);
@@ -150,22 +155,18 @@ export async function renderDashboard(container) {
             renderBySector(jobs, container);
         }
     });
+}
 
-    // Admin-only data bank tab
-    const dataBankBtn = document.getElementById('btn-data-bank');
-    if (dataBankBtn) {
-        dataBankBtn.addEventListener('click', async () => {
-            setActiveToggle('btn-data-bank');
-            const view = document.getElementById('dashboard-view');
-            view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-            const data = await getDataBank();
-            if (!data || data._ok === false) {
-                view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
-                return;
-            }
-            renderDataBank(data);
-        });
+async function _loadAnalysisView(rootContainer) {
+    const view = document.getElementById('dashboard-view');
+    view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    const data = await getAnalysis();
+    if (!data || data._ok === false) {
+        view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
+        return;
     }
+    const isAdmin = getCachedUser()?.role === 'admin';
+    renderAnalysis(data, isAdmin, rootContainer);
 }
 
 function setActiveToggle(activeId) {
@@ -560,98 +561,268 @@ function renderBySector(jobs, rootContainer) {
     });
 }
 
-// ── Data Bank View (admin only) ──────────────────────────────────
-function renderDataBank(data) {
+// ── Data Analysis View (default tab) ─────────────────────────────
+function renderAnalysis(data, isAdmin) {
     const view = document.getElementById('dashboard-view');
-    const t = data.totals || {};
-    const sectors = data.top_sectors || [];
-    const depts = data.top_departments || [];
-    const workers = data.workers || [];
+    const q = data.quality || {};
+    const enrichers = data.enrichers || {};
+    const timeline = data.timeline || [];
+    const recentJobs = data.recent_jobs || [];
+    const sectors = data.sectors || [];
 
-    // Find max sector company count for bar widths
-    const maxSectorCount = sectors.length > 0 ? Math.max(...sectors.map(s => s.companies || 0)) : 1;
+    // Color helper
+    const pctColor = (pct) => pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger, #ef4444)';
+    const pctClass = (pct) => pct >= 80 ? 'high' : pct >= 50 ? 'medium' : 'low';
 
-    view.innerHTML = `
-        <!-- Global totals -->
-        <div class="stats-grid" style="margin-bottom:var(--space-xl)">
-            <div class="stat-card">
-                <span class="stat-card-icon">🏦</span>
-                <span class="stat-card-value">${(t.total_enriched || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Entreprises enrichies</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">📞</span>
-                <span class="stat-card-value">${(t.with_phone || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Avec téléphone</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">✉️</span>
-                <span class="stat-card-value">${(t.with_email || 0).toLocaleString('fr-FR')}</span>
-                <span class="stat-card-label">Avec email</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-card-icon">👥</span>
-                <span class="stat-card-value">${t.total_users || 0}</span>
-                <span class="stat-card-label">Utilisateurs</span>
-            </div>
-        </div>
-
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:var(--space-xl)">
-            <!-- Top Sectors -->
-            <div class="card">
-                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                    🏭 Top secteurs
-                </h3>
-                ${sectors.length === 0 ? '<p style="color:var(--text-muted)">Aucun secteur</p>' :
-                    sectors.map(s => `
-                        <div style="margin-bottom:var(--space-md)">
-                            <div style="display:flex; justify-content:space-between; font-size:var(--font-sm); margin-bottom:var(--space-xs)">
-                                <span style="font-weight:600">${escapeHtml(s.sector || '—')}</span>
-                                <span style="color:var(--text-secondary)">${(s.companies || 0).toLocaleString('fr-FR')}</span>
-                            </div>
-                            <div style="height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
-                                <div style="height:100%; width:${Math.round(100 * (s.companies || 0) / maxSectorCount)}%; background:var(--accent); border-radius:3px; transition:width 0.3s ease"></div>
-                            </div>
-                        </div>
-                    `).join('')
-                }
-            </div>
-
-            <!-- Top Departments -->
-            <div class="card">
-                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                    📍 Top départements
-                </h3>
-                ${depts.length === 0 ? '<p style="color:var(--text-muted)">Aucun département</p>' :
-                    `<div class="dept-grid">${depts.map(d => `
-                        <div class="dept-card" onclick="window.location.hash='#/department/${d.departement}'">
-                            <div class="dept-card-header">
-                                <span class="dept-card-number">${escapeHtml(d.departement || '—')}</span>
-                                <span class="dept-card-count">${(d.companies || 0).toLocaleString('fr-FR')}</span>
-                            </div>
-                            <div class="dept-card-name">entreprises</div>
-                        </div>
-                    `).join('')}</div>`
-                }
-            </div>
-        </div>
-
-        <!-- Active Workers -->
-        ${workers.length > 0 ? `
-            <div class="card" style="margin-top:var(--space-xl)">
-                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                    🖥️ Workers actifs (7 derniers jours)
-                </h3>
-                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:var(--space-md)">
-                    ${workers.map(w => `
-                        <div style="background:var(--bg-tertiary); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:var(--space-lg)">
-                            <div style="font-weight:700; font-size:var(--font-sm); margin-bottom:var(--space-xs)">🖥️ ${escapeHtml(w.worker)}</div>
-                            <div style="font-size:var(--font-xs); color:var(--text-secondary)">${w.batches} batch${w.batches > 1 ? 'es' : ''}</div>
-                            <div style="font-size:var(--font-xs); color:var(--text-muted)">${formatDateTime(w.last_active)}</div>
-                        </div>
-                    `).join('')}
+    // ── Panel 1: Quality Score Overview ──────────────────────────
+    const overallScore = q.overall_score || 0;
+    const qualityPanel = `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">📊 Qualité des données</h3>
+            <div style="display:flex; align-items:center; gap:var(--space-2xl); flex-wrap:wrap">
+                <div style="flex-shrink:0">
+                    ${renderGauge(overallScore, 'Score global')}
+                </div>
+                <div style="flex:1; min-width:300px; display:flex; flex-direction:column; gap:var(--space-md)">
+                    ${_metricBar('📞 Téléphone', q.with_phone || 0, q.total || 0, q.phone_pct || 0)}
+                    ${_metricBar('✉️ Email', q.with_email || 0, q.total || 0, q.email_pct || 0)}
+                    ${_metricBar('🌐 Site web', q.with_website || 0, q.total || 0, q.website_pct || 0)}
+                    ${_metricBar('🔗 Réseaux sociaux', q.with_social || 0, q.total || 0, q.social_pct || 0)}
+                </div>
+                <div style="flex-shrink:0; text-align:center; padding:var(--space-lg)">
+                    <div style="font-size:2.5rem; font-weight:800; color:var(--text-primary)">${(q.total || 0).toLocaleString('fr-FR')}</div>
+                    <div style="font-size:var(--font-sm); color:var(--text-muted)">entreprises au total</div>
                 </div>
             </div>
-        ` : ''}
+        </div>
+    `;
+
+    // ── Panel 2: Enricher Performance (admin only) ──────────────
+    let enricherPanel = '';
+    if (isAdmin && Object.keys(enrichers).length > 0) {
+        const maps = enrichers.maps_lookup || {};
+        const crawl = enrichers.website_crawl || {};
+        const outcomes = enrichers.outcomes || {};
+
+        enricherPanel = `
+            <div class="card analysis-panel">
+                <h3 class="analysis-panel-title">🔧 Performance des enrichisseurs</h3>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-lg)">
+                    <!-- Maps Enricher -->
+                    <div style="background:var(--bg-tertiary); border-radius:var(--radius); padding:var(--space-lg)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
+                            <span style="font-weight:700; font-size:var(--font-sm)">🗺️ Google Maps</span>
+                            <span class="badge ${maps.rate >= 80 ? 'badge-success' : maps.rate >= 50 ? 'badge-warning' : 'badge-danger'}">${maps.rate || 0}%</span>
+                        </div>
+                        <div style="display:flex; gap:var(--space-lg); font-size:var(--font-xs); color:var(--text-secondary); margin-bottom:var(--space-sm)">
+                            <span>${(maps.total || 0).toLocaleString('fr-FR')} tentatives</span>
+                            <span>${(maps.success || 0).toLocaleString('fr-FR')} succès</span>
+                            <span>~${Math.round((maps.avg_time_ms || 0) / 1000)}s moy.</span>
+                        </div>
+                        <div style="height:8px; background:var(--bg-input); border-radius:4px; overflow:hidden; margin-bottom:var(--space-md)">
+                            <div style="height:100%; width:${maps.rate || 0}%; background:${pctColor(maps.rate || 0)}; border-radius:4px; transition:width 0.5s ease"></div>
+                        </div>
+                        ${_renderMethodBreakdown(maps.methods || {}, 'qualified')}
+                    </div>
+
+                    <!-- Crawl Enricher -->
+                    <div style="background:var(--bg-tertiary); border-radius:var(--radius); padding:var(--space-lg)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
+                            <span style="font-weight:700; font-size:var(--font-sm)">🌐 Website Crawl</span>
+                            <span class="badge ${crawl.rate >= 80 ? 'badge-success' : crawl.rate >= 50 ? 'badge-warning' : 'badge-danger'}">${crawl.rate || 0}%</span>
+                        </div>
+                        <div style="display:flex; gap:var(--space-lg); font-size:var(--font-xs); color:var(--text-secondary); margin-bottom:var(--space-sm)">
+                            <span>${(crawl.total || 0).toLocaleString('fr-FR')} tentatives</span>
+                            <span>${(crawl.success || 0).toLocaleString('fr-FR')} succès</span>
+                            <span>~${Math.round((crawl.avg_time_ms || 0) / 1000)}s moy.</span>
+                        </div>
+                        <div style="height:8px; background:var(--bg-input); border-radius:4px; overflow:hidden; margin-bottom:var(--space-md)">
+                            <div style="height:100%; width:${crawl.rate || 0}%; background:${pctColor(crawl.rate || 0)}; border-radius:4px; transition:width 0.5s ease"></div>
+                        </div>
+                        ${_renderMethodBreakdown(crawl.methods || {}, 'with_emails')}
+                    </div>
+                </div>
+
+                <!-- Outcomes summary -->
+                ${Object.keys(outcomes).length > 0 ? `
+                    <div style="margin-top:var(--space-lg); display:flex; gap:var(--space-md); flex-wrap:wrap">
+                        ${Object.entries(outcomes).map(([k, v]) => {
+                            const icons = { qualified: '✅', sirene_only: '📄', replaced: '🔄', failed: '❌' };
+                            return `<span class="badge badge-muted" style="font-size:var(--font-xs)">${icons[k] || '•'} ${escapeHtml(k)}: ${v}</span>`;
+                        }).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // ── Panel 3: Sector Quality Table ────────────────────────────
+    const sectorPanel = `
+        <div class="card analysis-panel">
+            <h3 class="analysis-panel-title">🏭 Qualité par secteur</h3>
+            ${sectors.length === 0 ? '<p style="color:var(--text-muted)">Aucun secteur</p>' : `
+                <div style="overflow-x:auto">
+                    <table class="analysis-table">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left">Secteur</th>
+                                <th style="text-align:right">Entreprises</th>
+                                <th style="text-align:right">📞 Tél.</th>
+                                <th style="text-align:right">✉️ Email</th>
+                                <th style="text-align:right">🌐 Web</th>
+                                <th style="text-align:right">Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${sectors.map(s => `
+                                <tr class="analysis-table-row" onclick="window.location.hash='#/search?q=${encodeURIComponent(s.sector)}'">
+                                    <td style="font-weight:600">${escapeHtml(s.sector)}</td>
+                                    <td style="text-align:right">${(s.companies || 0).toLocaleString('fr-FR')}</td>
+                                    <td style="text-align:right"><span style="color:${pctColor(s.phone_pct)}">${s.phone_pct}%</span></td>
+                                    <td style="text-align:right"><span style="color:${pctColor(s.email_pct)}">${s.email_pct}%</span></td>
+                                    <td style="text-align:right"><span style="color:${pctColor(s.web_pct)}">${s.web_pct}%</span></td>
+                                    <td style="text-align:right">
+                                        <div style="display:inline-flex; align-items:center; gap:4px">
+                                            <div style="width:40px; height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
+                                                <div style="height:100%; width:${s.quality_score}%; background:${pctColor(s.quality_score)}; border-radius:3px"></div>
+                                            </div>
+                                            <span style="font-size:var(--font-xs); color:var(--text-secondary)">${s.quality_score}%</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `}
+        </div>
+    `;
+
+    // ── Panel 4: Recent Jobs ─────────────────────────────────────
+    const jobsPanel = `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">📋 Historique des recherches</h3>
+            ${recentJobs.length === 0 ? '<p style="color:var(--text-muted)">Aucun job terminé</p>' : `
+                <div style="overflow-x:auto">
+                    <table class="analysis-table">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left">Recherche</th>
+                                <th>Statut</th>
+                                <th style="text-align:right">Entreprises</th>
+                                <th style="text-align:right">📞</th>
+                                <th style="text-align:right">✉️</th>
+                                <th style="text-align:right">🌐</th>
+                                <th style="text-align:right">Qualité</th>
+                                <th style="text-align:right">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${recentJobs.map(j => `
+                                <tr class="analysis-table-row" onclick="window.location.hash='#/job/${encodeURIComponent(j.query_id)}'">
+                                    <td style="font-weight:600; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(j.query_name)}">${escapeHtml(j.query_name)}</td>
+                                    <td>${statusBadge(j.status)}</td>
+                                    <td style="text-align:right">${j.unique_companies || j.companies_scraped || 0}</td>
+                                    <td style="text-align:right"><span style="color:${pctColor(j.phone_pct)}">${j.phone_pct}%</span></td>
+                                    <td style="text-align:right"><span style="color:${pctColor(j.email_pct)}">${j.email_pct}%</span></td>
+                                    <td style="text-align:right"><span style="color:${pctColor(j.web_pct)}">${j.web_pct}%</span></td>
+                                    <td style="text-align:right">
+                                        <div style="display:inline-flex; align-items:center; gap:4px">
+                                            <div style="width:40px; height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
+                                                <div style="height:100%; width:${j.quality_score}%; background:${pctColor(j.quality_score)}; border-radius:3px"></div>
+                                            </div>
+                                            <span style="font-size:var(--font-xs); color:var(--text-secondary)">${j.quality_score}%</span>
+                                        </div>
+                                    </td>
+                                    <td style="text-align:right; white-space:nowrap; font-size:var(--font-xs); color:var(--text-muted)">${formatDateTime(j.created_at)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `}
+        </div>
+    `;
+
+    // ── Panel 5: Activity Timeline ──────────────────────────────
+    const maxBatches = Math.max(1, ...timeline.map(t => t.batches || 0));
+    const maxCompanies = Math.max(1, ...timeline.map(t => t.companies || 0));
+    const timelinePanel = `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">📈 Activité hebdomadaire</h3>
+            ${timeline.length === 0 ? '<p style="color:var(--text-muted)">Aucune activité récente</p>' : `
+                <div style="display:flex; gap:var(--space-sm); align-items:flex-end; height:120px; padding-top:var(--space-md)">
+                    ${timeline.map(t => {
+                        const bHeight = Math.max(4, Math.round(100 * (t.batches || 0) / maxBatches));
+                        const cHeight = Math.max(4, Math.round(100 * (t.companies || 0) / maxCompanies));
+                        const weekLabel = (t.week || '').replace(/^\d{4}-W/, 'S');
+                        return `
+                            <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:2px" title="${t.week}: ${t.batches} batches, ${t.companies || 0} entreprises">
+                                <div style="display:flex; gap:2px; align-items:flex-end; height:100px; width:100%">
+                                    <div style="flex:1; height:${bHeight}%; background:var(--accent); border-radius:3px 3px 0 0; min-height:4px; transition:height 0.3s ease"></div>
+                                    <div style="flex:1; height:${cHeight}%; background:var(--success); border-radius:3px 3px 0 0; min-height:4px; opacity:0.7; transition:height 0.3s ease"></div>
+                                </div>
+                                <span style="font-size:10px; color:var(--text-muted); text-align:center; writing-mode:horizontal-tb">${weekLabel}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <div style="display:flex; gap:var(--space-lg); margin-top:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
+                    <span><span style="display:inline-block; width:10px; height:10px; background:var(--accent); border-radius:2px; vertical-align:middle; margin-right:4px"></span> Batches</span>
+                    <span><span style="display:inline-block; width:10px; height:10px; background:var(--success); border-radius:2px; vertical-align:middle; margin-right:4px; opacity:0.7"></span> Entreprises</span>
+                </div>
+            `}
+        </div>
+    `;
+
+    // ── Assemble ─────────────────────────────────────────────────
+    view.innerHTML = `
+        <div class="analysis-grid">
+            ${qualityPanel}
+            ${enricherPanel}
+            ${sectorPanel}
+            ${jobsPanel}
+            ${timelinePanel}
+        </div>
+    `;
+}
+
+// ── Analysis helpers ─────────────────────────────────────────────
+function _metricBar(label, value, total, pct) {
+    const color = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger, #ef4444)';
+    return `
+        <div>
+            <div style="display:flex; justify-content:space-between; font-size:var(--font-sm); margin-bottom:3px">
+                <span style="color:var(--text-secondary)">${label}</span>
+                <span style="font-weight:600; color:${color}">${value.toLocaleString('fr-FR')} / ${total.toLocaleString('fr-FR')} (${pct}%)</span>
+            </div>
+            <div style="height:8px; background:var(--bg-tertiary); border-radius:4px; overflow:hidden">
+                <div style="height:100%; width:${pct}%; background:${color}; border-radius:4px; transition:width 0.5s ease"></div>
+            </div>
+        </div>
+    `;
+}
+
+function _renderMethodBreakdown(methods, countKey) {
+    const entries = Object.entries(methods);
+    if (entries.length === 0) return '<p style="color:var(--text-muted);font-size:var(--font-xs)">Pas de données</p>';
+    const total = entries.reduce((s, [, v]) => s + (v.count || 0), 0);
+
+    return `
+        <div style="font-size:var(--font-xs); color:var(--text-secondary)">
+            ${entries.map(([method, stats]) => {
+                const pct = total > 0 ? Math.round(100 * (stats.count || 0) / total) : 0;
+                const subVal = stats[countKey] || 0;
+                return `
+                    <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:3px">
+                        <span style="min-width:100px; font-family:var(--font-mono, monospace)">${escapeHtml(method)}</span>
+                        <div style="flex:1; height:6px; background:var(--bg-input); border-radius:3px; overflow:hidden">
+                            <div style="height:100%; width:${pct}%; background:var(--accent); border-radius:3px"></div>
+                        </div>
+                        <span style="min-width:60px; text-align:right">${stats.count || 0} (${subVal})</span>
+                    </div>
+                `;
+            }).join('')}
+        </div>
     `;
 }
