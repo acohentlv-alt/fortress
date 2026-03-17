@@ -354,6 +354,7 @@ async def run(query_id: str) -> None:
                 companies_discovered = 0
                 qualified = 0
                 seen_names: set[str] = set()  # Cross-query dedup
+                _current_search_query: str = ""  # Tracks which query is active
 
                 # ── Inline persist callback ────────────────────────────
                 # This runs for EACH business extracted by search_all,
@@ -435,6 +436,7 @@ async def run(query_id: str) -> None:
                             result="success" if has_data else "no_data",
                             source_url=maps_result.get("maps_url"),
                             duration_ms=None,
+                            search_query=_current_search_query or None,
                         )
 
                     # Update progress (keeps heartbeat alive)
@@ -443,7 +445,6 @@ async def run(query_id: str) -> None:
                         companies_scraped=companies_discovered,
                         companies_qualified=qualified,
                         total_companies=companies_discovered,
-                        batch_size=companies_discovered,
                     )
 
                     if idx % 10 == 0:
@@ -463,6 +464,9 @@ async def run(query_id: str) -> None:
                             target=batch_size,
                         )
                         break
+
+                    # Set current search query for the closure
+                    _current_search_query = search_query
 
                     log.info(
                         "maps_discovery_runner.search_start",

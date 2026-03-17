@@ -287,14 +287,20 @@ async def get_job_companies(
     # DISTINCT ON (siren) picks one row per siren, ordered by completeness.
     params_fetch = [qid] + search_params + [page_size, offset]
     rows = await fetch_all(f"""
-        WITH best_contact AS (
+        WITH audit_query AS (
+            SELECT DISTINCT ON (siren) siren, search_query
+            FROM scrape_audit
+            WHERE query_id = %s
+            ORDER BY siren, timestamp ASC
+        ),
+        best_contact AS (
             SELECT DISTINCT ON (c2.siren)
                 c2.siren,
                 c2.phone, c2.email, c2.email_type, c2.website,
                 c2.social_linkedin, c2.social_facebook, c2.social_twitter,
                 c2.rating, c2.review_count, c2.maps_url, c2.source AS contact_source
             FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)
+            WHERE c2.siren IN (SELECT siren FROM audit_query)
             ORDER BY c2.siren,
                 (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
@@ -310,9 +316,10 @@ async def get_job_companies(
             bc.rating, bc.review_count, bc.maps_url, bc.contact_source,
             CASE WHEN bc.phone IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN bc.email IS NOT NULL THEN 1 ELSE 0 END +
-            CASE WHEN bc.website IS NOT NULL THEN 1 ELSE 0 END AS completude
-        FROM (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s) sa
-        JOIN companies co ON co.siren = sa.siren
+            CASE WHEN bc.website IS NOT NULL THEN 1 ELSE 0 END AS completude,
+            aq.search_query
+        FROM audit_query aq
+        JOIN companies co ON co.siren = aq.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}

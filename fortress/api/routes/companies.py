@@ -51,6 +51,82 @@ _SORT_COLUMNS = {
 
 
 # ---------------------------------------------------------------------------
+# Action 0: Inline field editing (manual overrides)
+# ---------------------------------------------------------------------------
+
+_COMPANY_FIELDS = {"denomination", "adresse", "code_postal", "ville"}
+_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter"}
+_EDITABLE_FIELDS = _COMPANY_FIELDS | _CONTACT_FIELDS
+
+
+@router.patch("/{siren}")
+async def update_company_fields(siren: str, body: dict):
+    """Update individual fields on a company. Used by inline edit UI.
+
+    Accepts JSON with field→value pairs, e.g. {"phone": "+33 4 68 00 00 00"}.
+    Company fields update `companies` table, contact fields upsert into `contacts`.
+    All edits are logged to `scrape_audit` with action='manual_edit'.
+    """
+    # Validate company exists
+    company = await fetch_one(
+        "SELECT siren FROM companies WHERE siren = %s", (siren,)
+    )
+    if not company:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Company not found", "siren": siren},
+        )
+
+    # Filter to allowed fields only
+    updates = {k: v for k, v in body.items() if k in _EDITABLE_FIELDS}
+    if not updates:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "No valid fields provided", "allowed": sorted(_EDITABLE_FIELDS)},
+        )
+
+    co_updates = {k: v for k, v in updates.items() if k in _COMPANY_FIELDS}
+    ct_updates = {k: v for k, v in updates.items() if k in _CONTACT_FIELDS}
+    saved = []
+
+    async with get_conn() as conn:
+        # Update companies table
+        if co_updates:
+            set_parts = [f"{k} = %s" for k in co_updates]
+            vals = list(co_updates.values()) + [siren]
+            await conn.execute(
+                f"UPDATE companies SET {', '.join(set_parts)}, updated_at = NOW() WHERE siren = %s",
+                tuple(vals),
+            )
+            saved.extend(co_updates.keys())
+
+        # Upsert contacts table (source='manual_edit')
+        if ct_updates:
+            # Build upsert: INSERT ... ON CONFLICT (siren, source) DO UPDATE
+            columns = ["siren", "source"] + list(ct_updates.keys())
+            placeholders = ["%s"] * len(columns)
+            values = [siren, "manual_edit"] + list(ct_updates.values())
+            on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in ct_updates)
+            await conn.execute(f"""
+                INSERT INTO contacts ({', '.join(columns)}, collected_at)
+                VALUES ({', '.join(placeholders)}, NOW())
+                ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
+            """, tuple(values))
+            saved.extend(ct_updates.keys())
+
+        # Audit trail
+        for field, value in updates.items():
+            await conn.execute("""
+                INSERT INTO scrape_audit (siren, action, result, source_url, timestamp)
+                VALUES (%s, 'manual_edit', 'success', %s, NOW())
+            """, (siren, f"{field}={value}"))
+
+        await conn.commit()
+
+    return {"updated": sorted(saved), "siren": siren}
+
+
+# ---------------------------------------------------------------------------
 # Action 1: On-demand enrichment with deduplication
 # ---------------------------------------------------------------------------
 

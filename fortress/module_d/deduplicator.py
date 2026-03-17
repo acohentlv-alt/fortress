@@ -222,17 +222,19 @@ async def log_audit(
     result: str,
     source_url: str | None = None,
     duration_ms: int | None = None,
+    search_query: str | None = None,
 ) -> None:
     """Write one row to the scrape_audit table.
 
     action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
     result: 'success' | 'fail' | 'blocked' | 'skipped'
+    search_query: the exact Maps search term that found this entity (optional)
     """
     await conn.execute(
         """
         INSERT INTO scrape_audit
-            (query_id, siren, action, result, source_url, duration_ms)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (query_id, siren, action, result, source_url, duration_ms, search_query)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
-        (query_id, siren, action, result, source_url, duration_ms),
+        (query_id, siren, action, result, source_url, duration_ms, search_query),
     )

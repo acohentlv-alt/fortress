@@ -9,7 +9,7 @@
  *   - Actionable empty states for unenriched fields
  */
 
-import { getCompany, enrichCompany, getCompanyEnrichHistory, extractApiError } from '../api.js';
+import { getCompany, enrichCompany, updateCompany, getCompanyEnrichHistory, extractApiError } from '../api.js';
 import {
     breadcrumb, formatSiren, formatSiret, formatDate,
     statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
@@ -182,18 +182,24 @@ export async function renderCompany(container, siren) {
                     <h3 class="detail-section-title">📞 Contact</h3>
                     ${detailRow('Téléphone', mc.phone
         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_phone'), sourceLabel(mc.phone_source))}
+        : unenrichedField('contact_phone'), sourceLabel(mc.phone_source), 'phone')}
                     ${detailRow('Email', mc.email
             ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-            : unenrichedField('contact_web'), sourceLabel(mc.email_source))}
+            : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
                     ${detailRow('Site web', mc.website
                 ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-                : unenrichedField('contact_web'), sourceLabel(mc.website_source))}
+                : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
                     ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
                     ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`, '🗺️ Google Maps') : ''}
-                    ${mc.social_linkedin ? detailRow('LinkedIn', `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`, sourceLabel(mc.social_linkedin_source)) : ''}
-                    ${mc.social_facebook ? detailRow('Facebook', `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`, sourceLabel(mc.social_facebook_source)) : ''}
-                    ${mc.social_twitter ? detailRow('Twitter', `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`, sourceLabel(mc.social_twitter_source)) : ''}
+                    ${detailRow('LinkedIn', mc.social_linkedin
+                        ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
+                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
+                    ${detailRow('Facebook', mc.social_facebook
+                        ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
+                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
+                    ${detailRow('Twitter', mc.social_twitter
+                        ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
+                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
                     ${mc.rating ? `
                         <div class="detail-row" style="margin-top:var(--space-md)">
                             <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
@@ -209,9 +215,9 @@ export async function renderCompany(container, siren) {
                 <!-- 3. Localisation -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📍 Localisation</h3>
-                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse')}
+                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal')}
+                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville')}
                     ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
@@ -267,6 +273,100 @@ export async function renderCompany(container, siren) {
 
     // ── Load Enrichment History ──────────────────────────────────
     _loadEnrichHistory(siren, data.contacts || []);
+
+    // ── Inline editing on detail rows ───────────────────────────
+    _initInlineEditing(container, siren, { co, mc });
+}
+
+// ── Inline Edit Logic ────────────────────────────────────────────
+function _initInlineEditing(container, siren, { co, mc }) {
+    // Raw values for pre-filling inputs (field → current value)
+    const rawValues = {
+        phone: mc.phone || '',
+        email: mc.email || '',
+        website: mc.website || '',
+        social_linkedin: mc.social_linkedin || '',
+        social_facebook: mc.social_facebook || '',
+        social_twitter: mc.social_twitter || '',
+        denomination: co.denomination || '',
+        adresse: co.adresse || '',
+        code_postal: co.code_postal || '',
+        ville: co.ville || '',
+    };
+
+    container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-inline-edit');
+        if (!btn) return;
+        e.stopPropagation();
+
+        const field = btn.dataset.field;
+        const row = btn.closest('.detail-row');
+        const valueCell = row.querySelector('.detail-value');
+        if (!valueCell || valueCell.querySelector('.inline-edit-input')) return; // Already editing
+
+        const currentVal = rawValues[field] || '';
+
+        // Replace value cell content with input + save/cancel
+        const originalHTML = valueCell.innerHTML;
+        valueCell.innerHTML = `
+            <div style="display:flex; align-items:center; gap:var(--space-sm); width:100%">
+                <input type="text" class="inline-edit-input" value="${escapeHtml(currentVal)}"
+                    style="flex:1; padding:var(--space-sm) var(--space-md); background:var(--bg-input);
+                    border:1px solid var(--accent); border-radius:var(--radius-sm); color:var(--text-primary);
+                    font-family:var(--font-family); font-size:var(--font-base); outline:none"
+                    placeholder="Saisir une valeur…">
+                <button class="inline-edit-save" style="background:var(--success); color:white; border:none;
+                    border-radius:var(--radius-sm); padding:var(--space-xs) var(--space-sm); cursor:pointer;
+                    font-size:var(--font-sm); font-weight:600">✓</button>
+                <button class="inline-edit-cancel" style="background:transparent; color:var(--text-muted);
+                    border:1px solid var(--border-default); border-radius:var(--radius-sm);
+                    padding:var(--space-xs) var(--space-sm); cursor:pointer; font-size:var(--font-sm)">✗</button>
+            </div>
+        `;
+
+        const input = valueCell.querySelector('.inline-edit-input');
+        input.focus();
+        input.select();
+
+        // Cancel
+        valueCell.querySelector('.inline-edit-cancel').onclick = (ev) => {
+            ev.stopPropagation();
+            valueCell.innerHTML = originalHTML;
+        };
+
+        // Save
+        const doSave = async () => {
+            const newVal = input.value.trim();
+            if (newVal === currentVal) {
+                valueCell.innerHTML = originalHTML;
+                return;
+            }
+            input.disabled = true;
+            try {
+                const res = await updateCompany(siren, { [field]: newVal || null });
+                if (res._ok !== false) {
+                    showToast(`${field} mis à jour ✅`, 'success');
+                    // Refresh the page to show updated data
+                    await renderCompany(container, siren);
+                } else {
+                    showToast(extractApiError(res), 'error');
+                    valueCell.innerHTML = originalHTML;
+                }
+            } catch {
+                showToast('Erreur de sauvegarde', 'error');
+                valueCell.innerHTML = originalHTML;
+            }
+        };
+
+        valueCell.querySelector('.inline-edit-save').onclick = (ev) => {
+            ev.stopPropagation();
+            doSave();
+        };
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') doSave();
+            if (ev.key === 'Escape') { valueCell.innerHTML = originalHTML; }
+        });
+    });
 }
 
 // ── Enrichment Panel Logic ───────────────────────────────────────
@@ -346,14 +446,17 @@ function sourceLabel(src) {
     return map[src] || src;
 }
 
-function detailRow(label, value, source = null) {
+function detailRow(label, value, source = null, editField = null) {
     const tooltip = source
         ? `<span class="provenance-badge" title="Source : ${source}">ℹ️</span>`
         : '';
+    const editBtn = editField
+        ? `<button class="btn-inline-edit" data-field="${editField}" title="Modifier" onclick="event.stopPropagation()">✏️</button>`
+        : '';
     return `
-        <div class="detail-row">
+        <div class="detail-row" ${editField ? `data-edit-field="${editField}"` : ''}>
             <span class="detail-label">${label} ${tooltip}</span>
-            <span class="detail-value">${value}</span>
+            <span class="detail-value">${value} ${editBtn}</span>
         </div>
     `;
 }

@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS scrape_audit (
     action          VARCHAR(50)     NOT NULL,   -- 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
     result          VARCHAR(20)     NOT NULL,   -- 'success' | 'fail' | 'blocked' | 'skipped'
     source_url      TEXT,
+    search_query    TEXT,                        -- the exact Maps search term that found this entity
     duration_ms     INTEGER,
     timestamp       TIMESTAMP       NOT NULL DEFAULT NOW()
 );

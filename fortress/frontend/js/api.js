@@ -67,6 +67,14 @@ async function postJSON(path, body) {
     });
 }
 
+async function patchJSON(path, body) {
+    return request(path, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+}
+
 /**
  * Extract a human-readable error string from an API response.
  * Handles: Pydantic 422 detail arrays, generic error/message fields, fallback.
@@ -213,6 +221,11 @@ export async function enrichCompany(siren, targetModules) {
     return await postJSON(`/companies/${siren}/enrich`, {
         target_modules: targetModules,
     });
+}
+
+/** PATCH individual fields on a company (inline edit). */
+export async function updateCompany(siren, fields) {
+    return await patchJSON(`/companies/${siren}`, fields);
 }
 
 // ── Batch Execution ──────────────────────────────────────────────
