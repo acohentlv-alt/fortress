@@ -502,6 +502,90 @@ async def get_analysis(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# All Data — browse all enriched entities with contact info
+# ---------------------------------------------------------------------------
+
+@router.get("/all-data")
+async def get_all_data(
+    request: Request,
+    q: str = "",
+    department: str = "",
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Browse all enriched companies with their best contact data.
+
+    Admin: all enriched data. User: scoped to own jobs.
+    Supports text search (name/SIREN) and department filter.
+    """
+    user = getattr(request.state, 'user', None)
+    is_admin = user and user.role == 'admin'
+
+    # Build user scope
+    if is_admin:
+        scope_clause = ""
+        scope_params: list = []
+    else:
+        user_id = user.id if user else -1
+        scope_clause = "AND qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
+        scope_params = [user_id]
+
+    # Build search filter
+    search_clause = ""
+    search_params: list = []
+    if q.strip():
+        clean = q.strip()
+        digits = clean.replace(" ", "")
+        if digits.isdigit() and len(digits) == 9:
+            search_clause = "AND co.siren = %s"
+            search_params = [digits]
+        else:
+            search_clause = "AND UPPER(co.denomination) LIKE UPPER(%s)"
+            search_params = [f"%{clean}%"]
+
+    dept_clause = ""
+    dept_params: list = []
+    if department.strip():
+        dept_clause = "AND co.departement = %s"
+        dept_params = [department.strip()]
+
+    all_params = tuple(scope_params + search_params + dept_params + [limit, offset])
+
+    # Count total for pagination
+    count_params = tuple(scope_params + search_params + dept_params)
+    total_row = await fetch_one(f"""
+        SELECT COUNT(DISTINCT qt.siren) AS total
+        FROM query_tags qt
+        JOIN companies co ON co.siren = qt.siren
+        WHERE 1=1 {scope_clause} {search_clause} {dept_clause}
+    """, count_params)
+    total = (total_row or {}).get("total", 0) or 0
+
+    rows = await fetch_all(f"""
+        SELECT DISTINCT ON (co.siren)
+            co.siren, co.denomination, co.naf_code, co.naf_libelle,
+            co.forme_juridique, co.ville, co.departement,
+            ct.phone, ct.email, ct.website,
+            qt.query_name, qt.tagged_at
+        FROM query_tags qt
+        JOIN companies co ON co.siren = qt.siren
+        LEFT JOIN LATERAL (
+            SELECT phone, email, website FROM contacts c2
+            WHERE c2.siren = co.siren
+            ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                      CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                      CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+            LIMIT 1
+        ) ct ON true
+        WHERE 1=1 {scope_clause} {search_clause} {dept_clause}
+        ORDER BY co.siren, qt.tagged_at DESC
+        LIMIT %s OFFSET %s
+    """, all_params)
+
+    return {"results": rows, "total": total, "offset": offset, "limit": limit}
+
+
+# ---------------------------------------------------------------------------
 # By-Sector Stats — accurate unique SIREN counts from query_tags
 # ---------------------------------------------------------------------------
 

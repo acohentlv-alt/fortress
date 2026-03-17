@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getAllData, getClientStats, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 
 const API_BASE = '/api';
@@ -90,9 +90,12 @@ export async function renderDashboard(container) {
 
 
         <!-- View Toggle -->
-        <div class="view-toggle">
+        <div class="view-toggle" style="flex-wrap:wrap">
             <button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>
             <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
+            <button class="view-toggle-btn" id="btn-by-dept">📍 Par Département</button>
+            <button class="view-toggle-btn" id="btn-by-upload">📤 Par Upload</button>
+            <button class="view-toggle-btn" id="btn-all-data">🗃️ Toutes les Données</button>
         </div>
 
         <!-- View Container -->
@@ -121,6 +124,27 @@ export async function renderDashboard(container) {
         } else {
             renderByJob(jobs, container);
         }
+    });
+
+    document.getElementById('btn-by-dept').addEventListener('click', async () => {
+        setActiveToggle('btn-by-dept');
+        const view = document.getElementById('dashboard-view');
+        view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        const depts = await getDepartments();
+        renderByLocation(depts, container);
+    });
+
+    document.getElementById('btn-by-upload').addEventListener('click', async () => {
+        setActiveToggle('btn-by-upload');
+        const view = document.getElementById('dashboard-view');
+        view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        const data = await getClientStats();
+        _renderByUpload(data, container);
+    });
+
+    document.getElementById('btn-all-data').addEventListener('click', () => {
+        setActiveToggle('btn-all-data');
+        _renderAllData(container);
     });
 }
 
@@ -201,6 +225,196 @@ function renderByLocation(departments, rootContainer) {
             });
         });
     });
+}
+
+// ── By Upload View — shows uploaded CRM files + stats ────────────
+function _renderByUpload(data, rootContainer) {
+    const view = document.getElementById('dashboard-view');
+
+    if (!data || data._ok === false) {
+        view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
+        return;
+    }
+
+    const uploads = data.uploads || [];
+    const totalSirens = data.total_sirens || 0;
+
+    if (uploads.length === 0) {
+        view.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">📤</div>
+                <div class="empty-state-text">Aucun fichier uploadé</div>
+                <p style="color: var(--text-muted)">Importez votre base CRM via la page <a href="#/upload" style="color:var(--accent)">Import/Export</a></p>
+            </div>
+        `;
+        return;
+    }
+
+    view.innerHTML = `
+        <div class="card" style="margin-bottom:var(--space-xl); padding:var(--space-xl)">
+            <div style="display:flex; align-items:center; gap:var(--space-lg); margin-bottom:var(--space-xl)">
+                <div style="font-size:2.5rem">📤</div>
+                <div>
+                    <div style="font-size:var(--font-2xl); font-weight:800; color:var(--text-primary)">${totalSirens.toLocaleString('fr-FR')}</div>
+                    <div style="color:var(--text-muted); font-size:var(--font-sm)">SIRENs importés au total</div>
+                </div>
+            </div>
+
+            <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                <thead>
+                    <tr>
+                        <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Fichier</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">SIRENs</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${uploads.map(u => `
+                        <tr>
+                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500">${escapeHtml(u.source_file || '—')}</td>
+                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--accent); font-weight:700; text-align:right">${(u.siren_count || 0).toLocaleString('fr-FR')}</td>
+                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-muted); text-align:right; white-space:nowrap">${formatDateTime(u.uploaded_at)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+
+// ── All Data View — searchable + paginated table of all enriched entities ──
+function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
+    const view = document.getElementById('dashboard-view');
+    const PAGE_SIZE = 50;
+
+    view.innerHTML = `
+        <div style="margin-bottom:var(--space-lg); display:flex; gap:var(--space-md); align-items:center; flex-wrap:wrap">
+            <div style="position:relative; flex:1; min-width:200px">
+                <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">🔍</span>
+                <input type="text" id="alldata-search" placeholder="Rechercher par nom ou SIREN..."
+                    value="${escapeHtml(q)}"
+                    style="width:100%; padding:var(--space-sm) var(--space-md) var(--space-sm) 36px;
+                           background:var(--bg-input); border:1px solid var(--border-default);
+                           border-radius:var(--radius); color:var(--text-primary);
+                           font-family:var(--font-family); font-size:var(--font-sm); outline:none;">
+            </div>
+            <input type="text" id="alldata-dept" placeholder="Dépt (ex: 66)"
+                value="${escapeHtml(department)}"
+                style="width:80px; padding:var(--space-sm) var(--space-md);
+                       background:var(--bg-input); border:1px solid var(--border-default);
+                       border-radius:var(--radius); color:var(--text-primary);
+                       font-family:var(--font-family); font-size:var(--font-sm); outline:none;">
+        </div>
+        <div id="alldata-results"><div class="loading"><div class="spinner"></div></div></div>
+    `;
+
+    const searchInput = document.getElementById('alldata-search');
+    const deptInput = document.getElementById('alldata-dept');
+    const resultsEl = document.getElementById('alldata-results');
+    let timer;
+
+    async function loadData() {
+        const curQ = searchInput.value.trim();
+        const curDept = deptInput.value.trim();
+        resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        const data = await getAllData({ q: curQ, department: curDept, limit: PAGE_SIZE, offset });
+        if (!data || data._ok === false) {
+            resultsEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
+            return;
+        }
+
+        const rows = data.results || [];
+        const total = data.total || 0;
+        const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+
+        if (rows.length === 0) {
+            resultsEl.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🗃️</div>
+                    <div class="empty-state-text">${curQ ? 'Aucun résultat' : 'Aucune donnée collectée'}</div>
+                    <p style="color:var(--text-muted)">${curQ ? 'Essayez un autre terme' : 'Lancez un batch pour commencer'}</p>
+                </div>
+            `;
+            return;
+        }
+
+        resultsEl.innerHTML = `
+            <p style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md)">
+                ${total.toLocaleString('fr-FR')} entreprise${total > 1 ? 's' : ''}
+                ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
+            </p>
+            <div class="card" style="overflow-x:auto">
+                <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">SIREN</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Dénomination</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">📞 Tél</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">✉️ Email</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">🌐 Site</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Dépt</th>
+                            <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Recherche</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(c => `
+                            <tr style="cursor:pointer; transition:background 0.15s"
+                                onmouseover="this.style.background='var(--bg-hover)'"
+                                onmouseout="this.style.background=''"
+                                onclick="window.location.hash='#/company/${c.siren}'">
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap">${escapeHtml(c.siren)}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.denomination || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.phone ? 'var(--success)' : 'var(--text-muted)'}; white-space:nowrap">${c.phone ? escapeHtml(c.phone) : '—'}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.email ? 'var(--success)' : 'var(--text-muted)'}; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.email ? escapeHtml(c.email) : '—'}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(new URL(c.website).hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center">${escapeHtml(c.departement || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.query_name || '—')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ${totalPages > 1 ? `
+                <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-xl)">
+                    <button class="btn btn-secondary btn-sm" id="alldata-prev" ${offset > 0 ? '' : 'disabled'} style="${offset > 0 ? '' : 'opacity:0.4; cursor:not-allowed'}">← Précédent</button>
+                    <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">${currentPage} / ${totalPages}</span>
+                    <button class="btn btn-secondary btn-sm" id="alldata-next" ${offset + PAGE_SIZE < total ? '' : 'disabled'} style="${offset + PAGE_SIZE < total ? '' : 'opacity:0.4; cursor:not-allowed'}">Suivant →</button>
+                </div>
+            ` : ''}
+        `;
+
+        // Wire pagination
+        const prevBtn = document.getElementById('alldata-prev');
+        const nextBtn = document.getElementById('alldata-next');
+        if (prevBtn && offset > 0) {
+            prevBtn.addEventListener('click', () => {
+                offset = Math.max(0, offset - PAGE_SIZE);
+                loadData();
+            });
+        }
+        if (nextBtn && offset + PAGE_SIZE < total) {
+            nextBtn.addEventListener('click', () => {
+                offset += PAGE_SIZE;
+                loadData();
+            });
+        }
+    }
+
+    // Wire search inputs
+    searchInput.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { offset = 0; loadData(); }, 400);
+    });
+    deptInput.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { offset = 0; loadData(); }, 400);
+    });
+
+    // Initial load
+    loadData();
 }
 
 // ── By Job View — From normalized API (no client-side grouping needed) ────
