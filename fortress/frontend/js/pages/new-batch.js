@@ -12,6 +12,37 @@
 import { escapeHtml } from '../components.js';
 import { runBatch, extractApiError } from '../api.js';
 
+// French department names → codes (lowercase, accent-insensitive keys)
+const DEPT_NAMES = {
+    'ain':'01','aisne':'02','allier':'03','alpes de haute provence':'04','hautes alpes':'05',
+    'alpes maritimes':'06','ardeche':'07','ardennes':'08','ariege':'09','aube':'10',
+    'aude':'11','aveyron':'12','bouches du rhone':'13','calvados':'14','cantal':'15',
+    'charente':'16','charente maritime':'17','cher':'18','correze':'19','corse du sud':'2a',
+    'haute corse':'2b','cote d or':'21','cotes d armor':'22','creuse':'23','dordogne':'24',
+    'doubs':'25','drome':'26','eure':'27','eure et loir':'28','finistere':'29',
+    'gard':'30','haute garonne':'31','gers':'32','gironde':'33','herault':'34',
+    'ille et vilaine':'35','indre':'36','indre et loire':'37','isere':'38','jura':'39',
+    'landes':'40','loir et cher':'41','loire':'42','haute loire':'43','loire atlantique':'44',
+    'loiret':'45','lot':'46','lot et garonne':'47','lozere':'48','maine et loire':'49',
+    'manche':'50','marne':'51','haute marne':'52','mayenne':'53','meurthe et moselle':'54',
+    'meuse':'55','morbihan':'56','moselle':'57','nievre':'58','nord':'59',
+    'oise':'60','orne':'61','pas de calais':'62','puy de dome':'63','pyrenees atlantiques':'64',
+    'hautes pyrenees':'65','pyrenees orientales':'66','bas rhin':'67','haut rhin':'68','rhone':'69',
+    'haute saone':'70','saone et loire':'71','sarthe':'72','savoie':'73','haute savoie':'74',
+    'paris':'75','seine maritime':'76','seine et marne':'77','yvelines':'78',
+    'deux sevres':'79','somme':'80','tarn':'81','tarn et garonne':'82','var':'83',
+    'vaucluse':'84','vendee':'85','vienne':'86','haute vienne':'87','vosges':'88',
+    'yonne':'89','territoire de belfort':'90','essonne':'91','hauts de seine':'92',
+    'seine saint denis':'93','val de marne':'94','val d oise':'95',
+    'guadeloupe':'971','martinique':'972','guyane':'973','reunion':'974','mayotte':'976',
+    // Major cities → department
+    'perpignan':'66','montpellier':'34','toulouse':'31','marseille':'13','lyon':'69',
+    'nice':'06','bordeaux':'33','nantes':'44','strasbourg':'67','lille':'59',
+    'rennes':'35','grenoble':'38','toulon':'83','narbonne':'11','carcassonne':'11',
+    'beziers':'34','nimes':'30','avignon':'84','cannes':'06','antibes':'06',
+    'pau':'64','bayonne':'64','biarritz':'64','lourdes':'65','tarbes':'65',
+};
+
 export async function renderNewBatch(container) {
     container.innerHTML = `
         <h1 class="page-title">🚀 Nouvelle Recherche</h1>
@@ -225,8 +256,10 @@ export async function renderNewBatch(container) {
         const firstQuery = queries[0];
         const sector = firstQuery.split(/\s+/)[0] || 'RECHERCHE';
 
-        // Try to extract department from queries (2-digit code or first 2 digits of postal code)
+        // Try to extract department from queries
+        // Priority: 2-digit code → 5-digit postal → department/city name → 'FR'
         let department = '';
+        const _normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
         for (const q of queries) {
             // Match exact 2-digit department code
             const dept2 = q.match(/\b(\d{2})\b/);
@@ -234,6 +267,14 @@ export async function renderNewBatch(container) {
             // Match 5-digit postal code → take first 2 as department
             const postal = q.match(/\b(\d{5})\b/);
             if (postal) { department = postal[1].substring(0, 2); break; }
+            // Match department or city name from DEPT_NAMES
+            const norm = _normalize(q);
+            // Try longest matches first (e.g. "pyrenees orientales" before "pyrenees")
+            const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
+            for (const name of sortedKeys) {
+                if (norm.includes(name)) { department = DEPT_NAMES[name]; break; }
+            }
+            if (department) break;
         }
         if (!department) department = 'FR';
 
