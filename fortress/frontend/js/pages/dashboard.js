@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getAllData, getClientStats, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 
 const API_BASE = '/api';
@@ -105,9 +105,24 @@ export async function renderDashboard(container) {
     // Render initial view — Analysis is default
     _loadAnalysisView(container);
 
-    // Master Export handler
-    document.getElementById('btn-master-export').addEventListener('click', () => {
-        window.open(`${API_BASE}/export/master/csv`, '_blank');
+    // Master Export handler — dropdown with CSV + XLSX
+    const exportBtn = document.getElementById('btn-master-export');
+    exportBtn.addEventListener('click', () => {
+        // Toggle dropdown
+        let dd = document.getElementById('export-dropdown');
+        if (dd) { dd.remove(); return; }
+        dd = document.createElement('div');
+        dd.id = 'export-dropdown';
+        dd.style.cssText = 'position:absolute; top:100%; right:0; margin-top:var(--space-xs); background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.3); z-index:50; min-width:160px; overflow:hidden;';
+        dd.innerHTML = `
+            <a href="${getMasterExportUrl('csv')}" style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📥 CSV</a>
+            <a href="${getMasterExportUrl('xlsx')}" style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📗 XLSX (Excel)</a>
+        `;
+        exportBtn.parentElement.style.position = 'relative';
+        exportBtn.parentElement.appendChild(dd);
+        // Close on outside click
+        const close = (e) => { if (!dd.contains(e.target) && e.target !== exportBtn) { dd.remove(); document.removeEventListener('click', close); } };
+        setTimeout(() => document.addEventListener('click', close), 0);
     });
 
     // Toggle handlers
@@ -287,6 +302,7 @@ function _renderByUpload(data, rootContainer) {
 function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
     const view = document.getElementById('dashboard-view');
     const PAGE_SIZE = 50;
+    const _selected = new Set();
 
     view.innerHTML = `
         <div style="margin-bottom:var(--space-lg); display:flex; gap:var(--space-md); align-items:center; flex-wrap:wrap">
@@ -350,6 +366,9 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
                 <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
                     <thead>
                         <tr>
+                            <th style="text-align:center; padding:var(--space-sm); border-bottom:2px solid var(--border-default); width:36px">
+                                <input type="checkbox" id="alldata-selectall" title="Tout sélectionner" style="cursor:pointer">
+                            </th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">SIREN</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Dénomination</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">📞 Tél</th>
@@ -360,20 +379,26 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows.map(c => `
-                            <tr style="cursor:pointer; transition:background 0.15s"
+                        ${rows.map(c => {
+                            let hostname = '';
+                            try { hostname = c.website ? new URL(c.website).hostname : ''; } catch { hostname = c.website || ''; }
+                            return `
+                            <tr style="cursor:pointer; transition:background 0.15s${_selected.has(c.siren) ? '; background:var(--bg-hover)' : ''}"
                                 onmouseover="this.style.background='var(--bg-hover)'"
-                                onmouseout="this.style.background=''"
-                                onclick="window.location.hash='#/company/${c.siren}'">
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap">${escapeHtml(c.siren)}</td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.denomination || '—')}</td>
+                                onmouseout="this.style.background='${_selected.has(c.siren) ? 'var(--bg-hover)' : ''}'"
+                                data-siren="${c.siren}">
+                                <td style="text-align:center; padding:var(--space-sm); border-bottom:1px solid var(--border-subtle)" onclick="event.stopPropagation()">
+                                    <input type="checkbox" class="alldata-cb" data-siren="${c.siren}" ${_selected.has(c.siren) ? 'checked' : ''} style="cursor:pointer">
+                                </td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap" onclick="window.location.hash='#/company/${c.siren}'">${escapeHtml(c.siren)}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" onclick="window.location.hash='#/company/${c.siren}'">${escapeHtml(c.denomination || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.phone ? 'var(--success)' : 'var(--text-muted)'}; white-space:nowrap">${c.phone ? escapeHtml(c.phone) : '—'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.email ? 'var(--success)' : 'var(--text-muted)'}; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.email ? escapeHtml(c.email) : '—'}</td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(new URL(c.website).hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center">${escapeHtml(c.departement || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.query_name || '—')}</td>
                             </tr>
-                        `).join('')}
+                        `}).join('')}
                     </tbody>
                 </table>
             </div>
@@ -401,6 +426,30 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
                 loadData();
             });
         }
+
+        // Wire checkboxes
+        resultsEl.querySelectorAll('.alldata-cb').forEach(cb => {
+            cb.addEventListener('change', () => {
+                if (cb.checked) _selected.add(cb.dataset.siren);
+                else _selected.delete(cb.dataset.siren);
+                _updateBulkExportBar(_selected);
+            });
+        });
+
+        // Select-all toggle
+        const selectAll = document.getElementById('alldata-selectall');
+        if (selectAll) {
+            selectAll.addEventListener('change', () => {
+                resultsEl.querySelectorAll('.alldata-cb').forEach(cb => {
+                    cb.checked = selectAll.checked;
+                    if (selectAll.checked) _selected.add(cb.dataset.siren);
+                    else _selected.delete(cb.dataset.siren);
+                });
+                _updateBulkExportBar(_selected);
+            });
+        }
+
+        _updateBulkExportBar(_selected);
     }
 
     // Wire search inputs
@@ -415,6 +464,49 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
 
     // Initial load
     loadData();
+}
+
+// ── Floating bulk export bar for All Data selection ─────────────
+function _updateBulkExportBar(selected) {
+    let bar = document.getElementById('alldata-bulk-bar');
+    if (selected.size === 0) {
+        if (bar) bar.remove();
+        return;
+    }
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'alldata-bulk-bar';
+        bar.className = 'bulk-action-bar';
+        document.body.appendChild(bar);
+    }
+    const n = selected.size;
+    bar.innerHTML = `
+        <span style="font-weight:600; color:var(--text-primary)">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
+        <button class="btn btn-primary" id="alldata-bulk-export">📥 Exporter CSV</button>
+    `;
+    document.getElementById('alldata-bulk-export').addEventListener('click', async () => {
+        const sirens = [...selected];
+        showToast(`⏳ Export de ${sirens.length} entreprise(s)…`, 'info');
+        try {
+            const resp = await bulkExportCSV(sirens);
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `fortress_selection_${sirens.length}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showToast(`✅ ${sirens.length} entreprise(s) exportée(s)`, 'success');
+            } else {
+                showToast('❌ Erreur lors de l\'export', 'error');
+            }
+        } catch {
+            showToast('❌ Erreur réseau', 'error');
+        }
+    });
 }
 
 // ── By Job View — From normalized API (no client-side grouping needed) ────

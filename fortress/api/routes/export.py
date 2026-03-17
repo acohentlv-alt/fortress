@@ -1,11 +1,12 @@
-"""Export API routes — CSV and JSONL downloads."""
+"""Export API routes — CSV, XLSX, and JSONL downloads."""
 
 import csv
 import io
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from fortress.api.db import fetch_all, fetch_one
 
@@ -146,6 +147,42 @@ async def export_master_csv():
     )
 
 
+@router.get("/master/xlsx")
+async def export_master_xlsx():
+    """Download all SCRAPED companies across all queries as XLSX."""
+    rows = await fetch_all("""
+        WITH best_contact AS (
+            SELECT DISTINCT ON (c2.siren)
+                c2.siren,
+                c2.phone, c2.email, c2.website,
+                c2.address, c2.maps_url,
+                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                c2.rating, c2.review_count, c2.source AS contact_source
+            FROM contacts c2
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM query_tags)
+            ORDER BY c2.siren,
+                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+        )
+        SELECT
+            co.siren, co.siret_siege, co.denomination,
+            co.naf_code, co.naf_libelle, co.forme_juridique,
+            co.adresse, co.code_postal, co.ville,
+            co.departement, co.statut, co.date_creation,
+            co.tranche_effectif,
+            bc.phone, bc.email, bc.website,
+            bc.address, bc.maps_url,
+            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+            bc.rating, bc.review_count, bc.contact_source
+        FROM (SELECT DISTINCT siren FROM query_tags) qt
+        JOIN companies co ON co.siren = qt.siren
+        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        ORDER BY co.denomination
+    """)
+    return _to_xlsx(rows, "fortress_master.xlsx")
+
+
 # ── PER-QUERY EXPORTS ────────────────────────────────────────────
 
 
@@ -196,4 +233,117 @@ async def export_jsonl(query_id: str):
         io.BytesIO(content),
         media_type="application/jsonl",
         headers={"Content-Disposition": f"attachment; filename={query_id}.jsonl"},
+    )
+
+
+@router.get("/{query_id}/xlsx")
+async def export_xlsx(query_id: str):
+    """Download all companies for a query as XLSX."""
+    rows = await _fetch_export_data(query_id)
+    return _to_xlsx(rows, f"{query_id}.xlsx")
+
+
+# ── BULK EXPORT ──────────────────────────────────────────────────
+
+
+class BulkExportRequest(BaseModel):
+    sirens: list[str]
+
+
+@router.post("/bulk/csv")
+async def export_bulk_csv(body: BulkExportRequest):
+    """Export selected SIRENs as CSV (from dashboard bulk selection)."""
+    if not body.sirens:
+        return StreamingResponse(
+            io.BytesIO(b"No data"),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=fortress_selection.csv"},
+        )
+
+    rows = await fetch_all("""
+        WITH best_contact AS (
+            SELECT DISTINCT ON (c2.siren)
+                c2.siren,
+                c2.phone, c2.email, c2.website,
+                c2.address, c2.maps_url,
+                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                c2.rating, c2.review_count, c2.source AS contact_source
+            FROM contacts c2
+            WHERE c2.siren = ANY(%s)
+            ORDER BY c2.siren,
+                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+        )
+        SELECT
+            co.siren, co.siret_siege, co.denomination,
+            co.naf_code, co.naf_libelle, co.forme_juridique,
+            co.adresse, co.code_postal, co.ville,
+            co.departement, co.statut, co.date_creation,
+            co.tranche_effectif,
+            bc.phone, bc.email, bc.website,
+            bc.address, bc.maps_url,
+            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+            bc.rating, bc.review_count, bc.contact_source
+        FROM companies co
+        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        WHERE co.siren = ANY(%s)
+        ORDER BY co.denomination
+    """, (body.sirens, body.sirens))
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([col[0] for col in _CSV_COLUMNS])
+    for row in (rows or []):
+        writer.writerow([str(row.get(col[1]) or "") for col in _CSV_COLUMNS])
+
+    content = buf.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=fortress_selection.csv"},
+    )
+
+
+# ── XLSX helper ──────────────────────────────────────────────────
+
+
+def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
+    """Convert rows to an XLSX file and return as StreamingResponse."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Export"
+
+    # Header row
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1a1a3e", end_color="1a1a3e", fill_type="solid")
+    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=label)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Data rows
+    for row_idx, row in enumerate(rows or [], 2):
+        for col_idx, (_, key) in enumerate(_CSV_COLUMNS, 1):
+            val = row.get(key)
+            if hasattr(val, "isoformat"):
+                val = val.isoformat()
+            ws.cell(row=row_idx, column=col_idx, value=val or "")
+
+    # Auto-width (approximate)
+    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max(len(label) + 4, 12)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

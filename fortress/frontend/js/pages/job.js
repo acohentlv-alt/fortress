@@ -57,6 +57,7 @@ export async function renderJob(container, queryId) {
             </div>
             <div style="display:flex; gap:var(--space-sm)">
                 <a href="${getExportUrl(queryId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
+                <a href="${getExportUrl(queryId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
                 <a href="${getExportUrl(queryId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
                 ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
                 ${job.status === 'failed' ? `<button id="btn-retry" class="btn btn-primary" title="Réessayer ce batch">🔁 Réessayer</button>` : ''}

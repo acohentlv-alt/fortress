@@ -101,7 +101,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
             batch_offset = 0
             if body.mode == "discovery":
                 count_row = await (await conn.execute(
-                    "SELECT SUM(COALESCE(companies_scraped, 0)) AS total FROM scrape_jobs WHERE UPPER(query_name) = %s",
+                    "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM scrape_jobs WHERE UPPER(query_name) = %s AND status != 'deleted'",
                     (query_name.upper(),),
                 )).fetchone()
                 if count_row and count_row[0]:

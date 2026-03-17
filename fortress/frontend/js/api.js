@@ -235,8 +235,18 @@ export function getExportUrl(queryId, format = 'csv') {
     return `${API_BASE}/export/${encodeURIComponent(queryId)}/${format}`;
 }
 
-export function getMasterExportUrl() {
-    return `${API_BASE}/export/master/csv`;
+export function getMasterExportUrl(format = 'csv') {
+    return `${API_BASE}/export/master/${format}`;
+}
+
+/** POST bulk export — sends list of SIRENs, returns CSV file. */
+export async function bulkExportCSV(sirens) {
+    const resp = await fetch(`${API_BASE}/export/bulk/csv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sirens }),
+    });
+    return resp;
 }
 
 // ── Health Check ─────────────────────────────────────────────────
