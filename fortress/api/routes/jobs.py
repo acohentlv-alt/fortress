@@ -285,7 +285,7 @@ async def get_job_companies(
     # Fetch companies with best contact per SIREN — scoped to this batch.
     # Uses DISTINCT ON instead of LATERAL JOIN to avoid O(N) nested sorts.
     # DISTINCT ON (siren) picks one row per siren, ordered by completeness.
-    params_fetch = [qid] + search_params + [page_size, offset]
+    params_fetch = search_params + [page_size, offset]
     rows = await fetch_all(f"""
         WITH audit_query AS (
             SELECT DISTINCT ON (siren) siren, search_query

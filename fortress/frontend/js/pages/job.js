@@ -287,13 +287,49 @@ async function loadCompanies(queryId, page, sort) {
     }
 
     const totalPages = Math.ceil((data.total || 0) / (data.page_size || 20));
+
+    // Group companies by search_query if present
+    const hasQueryGroups = data.companies.some(c => c.search_query);
+    let gridContent = '';
+
+    if (hasQueryGroups) {
+        // Group by search_query
+        const groups = new Map();
+        for (const c of data.companies) {
+            const key = c.search_query || '(sans requête)';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(c);
+        }
+        gridContent = [...groups.entries()].map(([query, companies]) => `
+            <div style="margin-bottom:var(--space-lg)">
+                <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border-radius:var(--radius-sm); border-left:3px solid var(--accent)">
+                    <span style="font-size:var(--font-sm); color:var(--accent); font-weight:600">🔍 ${escapeHtml(query)}</span>
+                    <span style="font-size:var(--font-xs); color:var(--text-muted); margin-left:auto">${companies.length} résultat${companies.length > 1 ? 's' : ''}</span>
+                </div>
+                <div class="company-grid">
+                    ${companies.map(c => companyCard(c, {
+                        removable: !selectionMode,
+                        selectable: selectionMode,
+                        checked: selectedSirens.has(c.siren),
+                    })).join('')}
+                </div>
+            </div>
+        `).join('');
+    } else {
+        gridContent = `
+            <div class="company-grid">
+                ${data.companies.map(c => companyCard(c, {
+                    removable: !selectionMode,
+                    selectable: selectionMode,
+                    checked: selectedSirens.has(c.siren),
+                })).join('')}
+            </div>
+        `;
+    }
+
     companiesContainer.innerHTML = `
-        <div class="company-grid" id="job-company-grid">
-            ${data.companies.map(c => companyCard(c, {
-                removable: !selectionMode,
-                selectable: selectionMode,
-                checked: selectedSirens.has(c.siren),
-            })).join('')}
+        <div id="job-company-grid">
+            ${gridContent}
         </div>
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(queryId, p, sort))}
     `;
