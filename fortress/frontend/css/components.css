@@ -2086,3 +2086,16 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* ── Info Tooltip ─────────────────────────────────────────────── */
+.info-tooltip {
+    cursor: help;
+    font-size: 0.75em;
+    opacity: 0.6;
+    margin-left: 4px;
+    position: relative;
+}
+
+.info-tooltip:hover {
+    opacity: 1;
+}

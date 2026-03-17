@@ -412,6 +412,9 @@ async def get_analysis(request: Request):
             sj.companies_scraped,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             sj.created_at, sj.updated_at,
+            sj.worker_id,
+            sj.strategy,
+            COALESCE(u.display_name, u.username, 'système') AS user_name,
             -- Quality metrics via subquery
             (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
              JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
@@ -425,6 +428,7 @@ async def get_analysis(request: Request):
             (SELECT COUNT(DISTINCT qt2.siren) FROM query_tags qt2
              WHERE UPPER(qt2.query_name) = UPPER(sj.query_name)) AS unique_companies
         FROM scrape_jobs sj
+        LEFT JOIN users u ON u.id = sj.user_id
         {jobs_where}
         AND sj.status IN ('completed', 'failed', 'cancelled')
         ORDER BY sj.created_at DESC
@@ -461,12 +465,39 @@ async def get_analysis(request: Request):
         s["web_pct"] = round(100 * (s.get("with_website", 0) or 0) / max(sc, 1))
         s["quality_score"] = round((s["phone_pct"] + s["email_pct"] + s["web_pct"]) / 3)
 
+    # ── 6. System usage — all jobs with user/worker info ─────────
+    system_usage = await fetch_all(f"""
+        SELECT
+            sj.query_id, sj.query_name,
+            CASE
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                ELSE sj.status
+            END AS status,
+            sj.companies_scraped,
+            COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
+            sj.strategy,
+            sj.worker_id,
+            sj.created_at, sj.updated_at,
+            COALESCE(u.display_name, u.username, 'système') AS user_name,
+            -- Duration in seconds (NULL if still running)
+            CASE WHEN sj.status IN ('completed', 'failed', 'cancelled')
+                 THEN EXTRACT(EPOCH FROM (sj.updated_at - sj.created_at))
+                 ELSE NULL
+            END AS duration_seconds
+        FROM scrape_jobs sj
+        LEFT JOIN users u ON u.id = sj.user_id
+        {jobs_where}
+        ORDER BY sj.created_at DESC
+        LIMIT 50
+    """)
+
     return {
         "quality": quality_data,
         "enrichers": enrichers,
         "timeline": timeline or [],
         "recent_jobs": recent_jobs or [],
         "sectors": sectors or [],
+        "system_usage": system_usage or [],
     }
 
 

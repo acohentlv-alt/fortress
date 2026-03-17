@@ -569,25 +569,25 @@ function renderAnalysis(data, isAdmin) {
     const timeline = data.timeline || [];
     const recentJobs = data.recent_jobs || [];
     const sectors = data.sectors || [];
+    const systemUsage = data.system_usage || [];
 
-    // Color helper
-    const pctColor = (pct) => pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger, #ef4444)';
-    const pctClass = (pct) => pct >= 80 ? 'high' : pct >= 50 ? 'medium' : 'low';
+    // Info tooltip helper
+    const info = (text) => `<span class="info-tooltip" title="${escapeHtml(text)}">ℹ️</span>`;
 
     // ── Panel 1: Quality Score Overview ──────────────────────────
     const overallScore = q.overall_score || 0;
     const qualityPanel = `
         <div class="card analysis-panel" style="grid-column: 1 / -1">
-            <h3 class="analysis-panel-title">📊 Qualité des données</h3>
+            <h3 class="analysis-panel-title">📊 Qualité des données ${info('Score global = moyenne de (téléphone% + email% + web%). Basé sur les entreprises taguées dans vos recherches.')}</h3>
             <div style="display:flex; align-items:center; gap:var(--space-2xl); flex-wrap:wrap">
                 <div style="flex-shrink:0">
                     ${renderGauge(overallScore, 'Score global')}
                 </div>
                 <div style="flex:1; min-width:300px; display:flex; flex-direction:column; gap:var(--space-md)">
-                    ${_metricBar('📞 Téléphone', q.with_phone || 0, q.total || 0, q.phone_pct || 0)}
-                    ${_metricBar('✉️ Email', q.with_email || 0, q.total || 0, q.email_pct || 0)}
-                    ${_metricBar('🌐 Site web', q.with_website || 0, q.total || 0, q.website_pct || 0)}
-                    ${_metricBar('🔗 Réseaux sociaux', q.with_social || 0, q.total || 0, q.social_pct || 0)}
+                    ${_metricBar('📞 Téléphone', q.with_phone || 0, q.total || 0, q.phone_pct || 0, 'Entreprises avec un numéro de téléphone trouvé via Google Maps')}
+                    ${_metricBar('✉️ Email', q.with_email || 0, q.total || 0, q.email_pct || 0, 'Entreprises avec un email trouvé via crawl du site web')}
+                    ${_metricBar('🌐 Site web', q.with_website || 0, q.total || 0, q.website_pct || 0, 'Entreprises avec un site web trouvé via Google Maps')}
+                    ${_metricBar('🔗 Réseaux sociaux', q.with_social || 0, q.total || 0, q.social_pct || 0, 'Entreprises avec LinkedIn ou Facebook trouvé via crawl du site')}
                 </div>
                 <div style="flex-shrink:0; text-align:center; padding:var(--space-lg)">
                     <div style="font-size:2.5rem; font-weight:800; color:var(--text-primary)">${(q.total || 0).toLocaleString('fr-FR')}</div>
@@ -605,14 +605,14 @@ function renderAnalysis(data, isAdmin) {
         const outcomes = enrichers.outcomes || {};
 
         enricherPanel = `
-            <div class="card analysis-panel">
-                <h3 class="analysis-panel-title">🔧 Performance des enrichisseurs</h3>
+            <div class="card analysis-panel" style="grid-column: 1 / -1">
+                <h3 class="analysis-panel-title">🔧 Performance des enrichisseurs ${info('Statistiques issues de enrichment_log et scrape_audit. Montre le taux de succès et temps moyen de chaque module Python.')}</h3>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-lg)">
                     <!-- Maps Enricher -->
                     <div style="background:var(--bg-tertiary); border-radius:var(--radius); padding:var(--space-lg)">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                            <span style="font-weight:700; font-size:var(--font-sm)">🗺️ Google Maps</span>
-                            <span class="badge ${maps.rate >= 80 ? 'badge-success' : maps.rate >= 50 ? 'badge-warning' : 'badge-danger'}">${maps.rate || 0}%</span>
+                            <span style="font-weight:700; font-size:var(--font-sm)">🗺️ Google Maps ${info('playwright_maps_scraper.py — recherche chaque entreprise sur Google Maps')}</span>
+                            <span style="font-weight:700; font-size:var(--font-sm)">${maps.rate || 0}%</span>
                         </div>
                         <div style="display:flex; gap:var(--space-lg); font-size:var(--font-xs); color:var(--text-secondary); margin-bottom:var(--space-sm)">
                             <span>${(maps.total || 0).toLocaleString('fr-FR')} tentatives</span>
@@ -620,7 +620,7 @@ function renderAnalysis(data, isAdmin) {
                             <span>~${Math.round((maps.avg_time_ms || 0) / 1000)}s moy.</span>
                         </div>
                         <div style="height:8px; background:var(--bg-input); border-radius:4px; overflow:hidden; margin-bottom:var(--space-md)">
-                            <div style="height:100%; width:${maps.rate || 0}%; background:${pctColor(maps.rate || 0)}; border-radius:4px; transition:width 0.5s ease"></div>
+                            <div style="height:100%; width:${maps.rate || 0}%; background:var(--accent); border-radius:4px; transition:width 0.5s ease"></div>
                         </div>
                         ${_renderMethodBreakdown(maps.methods || {}, 'qualified')}
                     </div>
@@ -628,8 +628,8 @@ function renderAnalysis(data, isAdmin) {
                     <!-- Crawl Enricher -->
                     <div style="background:var(--bg-tertiary); border-radius:var(--radius); padding:var(--space-lg)">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                            <span style="font-weight:700; font-size:var(--font-sm)">🌐 Website Crawl</span>
-                            <span class="badge ${crawl.rate >= 80 ? 'badge-success' : crawl.rate >= 50 ? 'badge-warning' : 'badge-danger'}">${crawl.rate || 0}%</span>
+                            <span style="font-weight:700; font-size:var(--font-sm)">🌐 Website Crawl ${info('curl_client.py — crawl le site web pour extraire emails et réseaux sociaux')}</span>
+                            <span style="font-weight:700; font-size:var(--font-sm)">${crawl.rate || 0}%</span>
                         </div>
                         <div style="display:flex; gap:var(--space-lg); font-size:var(--font-xs); color:var(--text-secondary); margin-bottom:var(--space-sm)">
                             <span>${(crawl.total || 0).toLocaleString('fr-FR')} tentatives</span>
@@ -637,7 +637,7 @@ function renderAnalysis(data, isAdmin) {
                             <span>~${Math.round((crawl.avg_time_ms || 0) / 1000)}s moy.</span>
                         </div>
                         <div style="height:8px; background:var(--bg-input); border-radius:4px; overflow:hidden; margin-bottom:var(--space-md)">
-                            <div style="height:100%; width:${crawl.rate || 0}%; background:${pctColor(crawl.rate || 0)}; border-radius:4px; transition:width 0.5s ease"></div>
+                            <div style="height:100%; width:${crawl.rate || 0}%; background:var(--accent); border-radius:4px; transition:width 0.5s ease"></div>
                         </div>
                         ${_renderMethodBreakdown(crawl.methods || {}, 'with_emails')}
                     </div>
@@ -659,7 +659,7 @@ function renderAnalysis(data, isAdmin) {
     // ── Panel 3: Sector Quality Table ────────────────────────────
     const sectorPanel = `
         <div class="card analysis-panel">
-            <h3 class="analysis-panel-title">🏭 Qualité par secteur</h3>
+            <h3 class="analysis-panel-title">🏭 Qualité par secteur ${info('Chaque secteur = premier mot du nom de recherche. % = entreprises avec cette donnée / total entreprises du secteur.')}</h3>
             ${sectors.length === 0 ? '<p style="color:var(--text-muted)">Aucun secteur</p>' : `
                 <div style="overflow-x:auto">
                     <table class="analysis-table">
@@ -678,17 +678,10 @@ function renderAnalysis(data, isAdmin) {
                                 <tr class="analysis-table-row" onclick="window.location.hash='#/search?q=${encodeURIComponent(s.sector)}'">
                                     <td style="font-weight:600">${escapeHtml(s.sector)}</td>
                                     <td style="text-align:right">${(s.companies || 0).toLocaleString('fr-FR')}</td>
-                                    <td style="text-align:right"><span style="color:${pctColor(s.phone_pct)}">${s.phone_pct}%</span></td>
-                                    <td style="text-align:right"><span style="color:${pctColor(s.email_pct)}">${s.email_pct}%</span></td>
-                                    <td style="text-align:right"><span style="color:${pctColor(s.web_pct)}">${s.web_pct}%</span></td>
-                                    <td style="text-align:right">
-                                        <div style="display:inline-flex; align-items:center; gap:4px">
-                                            <div style="width:40px; height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
-                                                <div style="height:100%; width:${s.quality_score}%; background:${pctColor(s.quality_score)}; border-radius:3px"></div>
-                                            </div>
-                                            <span style="font-size:var(--font-xs); color:var(--text-secondary)">${s.quality_score}%</span>
-                                        </div>
-                                    </td>
+                                    <td style="text-align:right">${s.phone_pct}%</td>
+                                    <td style="text-align:right">${s.email_pct}%</td>
+                                    <td style="text-align:right">${s.web_pct}%</td>
+                                    <td style="text-align:right; font-weight:600">${s.quality_score}%</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -701,7 +694,7 @@ function renderAnalysis(data, isAdmin) {
     // ── Panel 4: Recent Jobs ─────────────────────────────────────
     const jobsPanel = `
         <div class="card analysis-panel" style="grid-column: 1 / -1">
-            <h3 class="analysis-panel-title">📋 Historique des recherches</h3>
+            <h3 class="analysis-panel-title">📋 Historique des recherches ${info('Qualité = moyenne de (tél% + email% + web%) pour chaque recherche. Clique sur une ligne pour voir le détail du job.')}</h3>
             ${recentJobs.length === 0 ? '<p style="color:var(--text-muted)">Aucun job terminé</p>' : `
                 <div style="overflow-x:auto">
                     <table class="analysis-table">
@@ -713,7 +706,8 @@ function renderAnalysis(data, isAdmin) {
                                 <th style="text-align:right">📞</th>
                                 <th style="text-align:right">✉️</th>
                                 <th style="text-align:right">🌐</th>
-                                <th style="text-align:right">Qualité</th>
+                                <th style="text-align:right">Score</th>
+                                <th>Utilisateur</th>
                                 <th style="text-align:right">Date</th>
                             </tr>
                         </thead>
@@ -723,17 +717,11 @@ function renderAnalysis(data, isAdmin) {
                                     <td style="font-weight:600; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(j.query_name)}">${escapeHtml(j.query_name)}</td>
                                     <td>${statusBadge(j.status)}</td>
                                     <td style="text-align:right">${j.unique_companies || j.companies_scraped || 0}</td>
-                                    <td style="text-align:right"><span style="color:${pctColor(j.phone_pct)}">${j.phone_pct}%</span></td>
-                                    <td style="text-align:right"><span style="color:${pctColor(j.email_pct)}">${j.email_pct}%</span></td>
-                                    <td style="text-align:right"><span style="color:${pctColor(j.web_pct)}">${j.web_pct}%</span></td>
-                                    <td style="text-align:right">
-                                        <div style="display:inline-flex; align-items:center; gap:4px">
-                                            <div style="width:40px; height:6px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden">
-                                                <div style="height:100%; width:${j.quality_score}%; background:${pctColor(j.quality_score)}; border-radius:3px"></div>
-                                            </div>
-                                            <span style="font-size:var(--font-xs); color:var(--text-secondary)">${j.quality_score}%</span>
-                                        </div>
-                                    </td>
+                                    <td style="text-align:right">${j.phone_pct}%</td>
+                                    <td style="text-align:right">${j.email_pct}%</td>
+                                    <td style="text-align:right">${j.web_pct}%</td>
+                                    <td style="text-align:right; font-weight:600">${j.quality_score}%</td>
+                                    <td style="font-size:var(--font-xs); color:var(--text-secondary)">${escapeHtml(j.user_name || '—')}</td>
                                     <td style="text-align:right; white-space:nowrap; font-size:var(--font-xs); color:var(--text-muted)">${formatDateTime(j.created_at)}</td>
                                 </tr>
                             `).join('')}
@@ -749,7 +737,7 @@ function renderAnalysis(data, isAdmin) {
     const maxCompanies = Math.max(1, ...timeline.map(t => t.companies || 0));
     const timelinePanel = `
         <div class="card analysis-panel" style="grid-column: 1 / -1">
-            <h3 class="analysis-panel-title">📈 Activité hebdomadaire</h3>
+            <h3 class="analysis-panel-title">📈 Activité hebdomadaire ${info('Nombre de batches et d\'entreprises traitées par semaine (12 dernières semaines)')}</h3>
             ${timeline.length === 0 ? '<p style="color:var(--text-muted)">Aucune activité récente</p>' : `
                 <div style="display:flex; gap:var(--space-sm); align-items:flex-end; height:120px; padding-top:var(--space-md)">
                     ${timeline.map(t => {
@@ -760,7 +748,7 @@ function renderAnalysis(data, isAdmin) {
                             <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:2px" title="${t.week}: ${t.batches} batches, ${t.companies || 0} entreprises">
                                 <div style="display:flex; gap:2px; align-items:flex-end; height:100px; width:100%">
                                     <div style="flex:1; height:${bHeight}%; background:var(--accent); border-radius:3px 3px 0 0; min-height:4px; transition:height 0.3s ease"></div>
-                                    <div style="flex:1; height:${cHeight}%; background:var(--success); border-radius:3px 3px 0 0; min-height:4px; opacity:0.7; transition:height 0.3s ease"></div>
+                                    <div style="flex:1; height:${cHeight}%; background:var(--text-muted); border-radius:3px 3px 0 0; min-height:4px; opacity:0.5; transition:height 0.3s ease"></div>
                                 </div>
                                 <span style="font-size:10px; color:var(--text-muted); text-align:center; writing-mode:horizontal-tb">${weekLabel}</span>
                             </div>
@@ -769,7 +757,49 @@ function renderAnalysis(data, isAdmin) {
                 </div>
                 <div style="display:flex; gap:var(--space-lg); margin-top:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
                     <span><span style="display:inline-block; width:10px; height:10px; background:var(--accent); border-radius:2px; vertical-align:middle; margin-right:4px"></span> Batches</span>
-                    <span><span style="display:inline-block; width:10px; height:10px; background:var(--success); border-radius:2px; vertical-align:middle; margin-right:4px; opacity:0.7"></span> Entreprises</span>
+                    <span><span style="display:inline-block; width:10px; height:10px; background:var(--text-muted); border-radius:2px; vertical-align:middle; margin-right:4px; opacity:0.5"></span> Entreprises</span>
+                </div>
+            `}
+        </div>
+    `;
+
+    // ── Panel 6: System Usage ───────────────────────────────────
+    const systemPanel = `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">🖥️ Utilisation du système ${info('Historique complet des batches : qui a lancé quoi, quand, avec quel worker, et combien de temps ça a pris.')}</h3>
+            ${systemUsage.length === 0 ? '<p style="color:var(--text-muted)">Aucun batch</p>' : `
+                <div style="overflow-x:auto">
+                    <table class="analysis-table">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left">Recherche</th>
+                                <th>Statut</th>
+                                <th style="text-align:right">Entreprises</th>
+                                <th style="text-align:left">Utilisateur</th>
+                                <th style="text-align:left">Worker</th>
+                                <th style="text-align:left">Stratégie</th>
+                                <th style="text-align:right">Durée</th>
+                                <th style="text-align:right">Lancé le</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${systemUsage.map(u => {
+                                const dur = u.duration_seconds ? _formatDuration(u.duration_seconds) : '—';
+                                return `
+                                    <tr class="analysis-table-row" onclick="window.location.hash='#/job/${encodeURIComponent(u.query_id)}'">
+                                        <td style="font-weight:600; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(u.query_name)}">${escapeHtml(u.query_name)}</td>
+                                        <td>${statusBadge(u.status)}</td>
+                                        <td style="text-align:right">${u.companies_scraped || 0}/${u.batch_size || 0}</td>
+                                        <td style="font-size:var(--font-xs)">${escapeHtml(u.user_name || '—')}</td>
+                                        <td style="font-size:var(--font-xs); font-family:var(--font-mono, monospace)">${escapeHtml(u.worker_id || '—')}</td>
+                                        <td style="font-size:var(--font-xs)">${u.strategy === 'maps' ? '🗺️ Maps' : '📊 SIRENE'}</td>
+                                        <td style="text-align:right; font-size:var(--font-xs)">${dur}</td>
+                                        <td style="text-align:right; white-space:nowrap; font-size:var(--font-xs); color:var(--text-muted)">${formatDateTime(u.created_at)}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
                 </div>
             `}
         </div>
@@ -783,21 +813,22 @@ function renderAnalysis(data, isAdmin) {
             ${sectorPanel}
             ${jobsPanel}
             ${timelinePanel}
+            ${systemPanel}
         </div>
     `;
 }
 
 // ── Analysis helpers ─────────────────────────────────────────────
-function _metricBar(label, value, total, pct) {
-    const color = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger, #ef4444)';
+function _metricBar(label, value, total, pct, tooltip) {
+    const infoHtml = tooltip ? ` <span class="info-tooltip" title="${escapeHtml(tooltip)}">ℹ️</span>` : '';
     return `
         <div>
             <div style="display:flex; justify-content:space-between; font-size:var(--font-sm); margin-bottom:3px">
-                <span style="color:var(--text-secondary)">${label}</span>
-                <span style="font-weight:600; color:${color}">${value.toLocaleString('fr-FR')} / ${total.toLocaleString('fr-FR')} (${pct}%)</span>
+                <span style="color:var(--text-secondary)">${label}${infoHtml}</span>
+                <span style="font-weight:600; color:var(--text-primary)">${value.toLocaleString('fr-FR')} / ${total.toLocaleString('fr-FR')} (${pct}%)</span>
             </div>
             <div style="height:8px; background:var(--bg-tertiary); border-radius:4px; overflow:hidden">
-                <div style="height:100%; width:${pct}%; background:${color}; border-radius:4px; transition:width 0.5s ease"></div>
+                <div style="height:100%; width:${pct}%; background:var(--accent); border-radius:4px; transition:width 0.5s ease"></div>
             </div>
         </div>
     `;
@@ -825,4 +856,16 @@ function _renderMethodBreakdown(methods, countKey) {
             }).join('')}
         </div>
     `;
+}
+
+function _formatDuration(seconds) {
+    if (!seconds || seconds < 0) return '—';
+    const s = Math.round(seconds);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    if (m < 60) return `${m}m ${rem}s`;
+    const h = Math.floor(m / 60);
+    const remM = m % 60;
+    return `${h}h ${remM}m`;
 }
