@@ -340,22 +340,36 @@ export async function checkAuthRequired() {
 }
 
 export async function loginUser(username, password) {
-    try {
-        const resp = await fetch(`${API_BASE}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ username, password }),
-        });
-        const data = await resp.json();
-        if (resp.ok && data.status === 'ok') {
-            _currentUser = data.user;
-            return { ok: true, user: data.user };
+    const maxRetries = 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const resp = await fetch(`${API_BASE}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ username, password }),
+            });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'ok') {
+                _currentUser = data.user;
+                return { ok: true, user: data.user };
+            }
+            // 503 = DB cold start — retry with backoff
+            if (resp.status === 503 && attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+                continue;
+            }
+            return { ok: false, error: data.error || 'Identifiants incorrects.' };
+        } catch (err) {
+            // Network error — retry
+            if (attempt < maxRetries) {
+                await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+                continue;
+            }
+            return { ok: false, error: err.message };
         }
-        return { ok: false, error: data.error || 'Identifiants incorrects.' };
-    } catch (err) {
-        return { ok: false, error: err.message };
     }
+    return { ok: false, error: 'Serveur temporairement indisponible. Réessayez.' };
 }
 
 export async function logoutUser() {
