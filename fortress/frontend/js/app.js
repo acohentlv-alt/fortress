@@ -12,6 +12,7 @@ import { renderNewBatch } from './pages/new-batch.js';
 import { renderOpenQuery } from './pages/open-query.js';
 import { renderUpload } from './pages/upload.js';
 import { renderLogin } from './pages/login.js';
+import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 
 // ── Page Cleanup System ──────────────────────────────────────────
@@ -77,6 +78,11 @@ function _updateUserDisplay(user) {
     el.style.display = 'block';
 }
 
+function _showIntroPage() {
+    _showSidebar(false);
+    renderIntro(getPageContent());
+}
+
 function _showLoginPage() {
     _showSidebar(false);
     renderLogin(getPageContent(), (user) => {
@@ -112,7 +118,11 @@ function _setupLogout() {
 async function navigate() {
     const hash = window.location.hash || '#/';
 
-    // Login route — skip auth check
+    // Intro + Login routes — skip auth check
+    if (hash === '#/intro') {
+        _showIntroPage();
+        return;
+    }
     if (hash === '#/login') {
         _showLoginPage();
         return;
@@ -121,7 +131,7 @@ async function navigate() {
     // Auth guard — verify session before rendering
     const user = getCachedUser();
     if (!user) {
-        _showLoginPage();
+        _showIntroPage();
         return;
     }
 
@@ -221,8 +231,8 @@ async function initApp() {
     const user = await getCurrentUser();
 
     if (!user) {
-        // Not authenticated — show login page
-        _showLoginPage();
+        // Not authenticated — show intro page
+        _showIntroPage();
         return;
     }
 
@@ -259,12 +269,16 @@ function _setupSidebarToggle() {
 // ── Event Listeners ──────────────────────────────────────────────
 window.addEventListener('hashchange', () => {
     const hash = window.location.hash || '#/';
+    if (hash === '#/intro') {
+        _showIntroPage();
+        return;
+    }
     if (hash === '#/login') {
         _showLoginPage();
         return;
     }
     if (!getCachedUser()) {
-        _showLoginPage();
+        _showIntroPage();
         return;
     }
     navigate();
