@@ -2,8 +2,15 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, untagCompany } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, untagCompany, enrichCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
+
+// ── Selection state ──────────────────────────────────────────────
+let selectionMode = false;
+const selectedSirens = new Set();
+let _currentQueryId = null;
+let _currentPage = 1;
+let _currentSort = 'completude';
 
 export async function renderJob(container, queryId) {
     queryId = decodeURIComponent(queryId);
@@ -118,6 +125,9 @@ export async function renderJob(container, queryId) {
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
             <h2 style="font-size:var(--font-lg); font-weight:600">Entreprises</h2>
             <div style="display:flex; gap:var(--space-sm)">
+                <button id="btn-select-mode" class="btn-select-mode" title="Sélectionner">
+                    ☑ Sélectionner
+                </button>
                 <select id="job-sort" style="background:var(--bg-input); border:1px solid var(--border-default); border-radius:var(--radius-sm); padding:var(--space-sm) var(--space-md); color:var(--text-primary); font-family:var(--font-family); font-size:var(--font-sm)">
                     <option value="completude">Tri: Complétude</option>
                     <option value="name">Tri: Nom</option>
@@ -129,6 +139,13 @@ export async function renderJob(container, queryId) {
             <div class="loading"><div class="spinner"></div></div>
         </div>
     `;
+
+    // Reset selection state for this job
+    selectionMode = false;
+    selectedSirens.clear();
+    _currentQueryId = queryId;
+    _currentPage = 1;
+    _currentSort = 'completude';
 
     // Load companies
     await loadCompanies(queryId, 1, 'completude');
@@ -175,6 +192,9 @@ export async function renderJob(container, queryId) {
     document.getElementById('job-sort').addEventListener('change', (e) => {
         loadCompanies(queryId, 1, e.target.value);
     });
+
+    // Selection mode toggle
+    _setupSelectionMode(queryId);
 
     // Delete button
     const deleteBtn = document.getElementById('btn-delete-job');
@@ -249,6 +269,8 @@ export async function renderJob(container, queryId) {
 }
 
 async function loadCompanies(queryId, page, sort) {
+    _currentPage = page;
+    _currentSort = sort;
     const companiesContainer = document.getElementById('job-companies-container');
     companiesContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
@@ -266,7 +288,11 @@ async function loadCompanies(queryId, page, sort) {
     const totalPages = Math.ceil((data.total || 0) / (data.page_size || 20));
     companiesContainer.innerHTML = `
         <div class="company-grid" id="job-company-grid">
-            ${data.companies.map(c => companyCard(c, { removable: true })).join('')}
+            ${data.companies.map(c => companyCard(c, {
+                removable: !selectionMode,
+                selectable: selectionMode,
+                checked: selectedSirens.has(c.siren),
+            })).join('')}
         </div>
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(queryId, p, sort))}
     `;
@@ -275,37 +301,176 @@ async function loadCompanies(queryId, page, sort) {
     const grid = document.getElementById('job-company-grid');
     if (grid) {
         grid.addEventListener('click', (e) => {
+            // Remove button handler
             const btn = e.target.closest('.card-remove-btn');
-            if (!btn) return;
-            e.stopPropagation();
-            const siren = btn.dataset.siren;
-            const card = btn.closest('.company-card');
-            const name = card?.querySelector('.company-card-name')?.textContent || siren;
+            if (btn) {
+                e.stopPropagation();
+                const siren = btn.dataset.siren;
+                const card = btn.closest('.company-card');
+                const name = card?.querySelector('.company-card-name')?.textContent || siren;
 
-            showConfirmModal({
-                title: '× Retirer cette entreprise ?',
-                body: `
-                    <p><strong>${escapeHtml(name)}</strong></p>
-                    <p>SIREN: ${siren}</p>
-                    <p style="color:var(--text-muted)">L'entreprise sera retirée de cette requête.
-                    Ses données restent dans la base.</p>
-                `,
-                confirmLabel: 'Retirer',
-                danger: true,
-                onConfirm: async () => {
-                    const result = await untagCompany(siren, queryId);
-                    if (result._ok !== false) {
-                        showToast(`${name} retirée`, 'success');
-                        // Fade out the card
-                        if (card) {
-                            card.classList.add('card-fade-out');
-                            card.addEventListener('animationend', () => card.remove());
+                showConfirmModal({
+                    title: '× Retirer cette entreprise ?',
+                    body: `
+                        <p><strong>${escapeHtml(name)}</strong></p>
+                        <p>SIREN: ${siren}</p>
+                        <p style="color:var(--text-muted)">L'entreprise sera retirée de cette requête.
+                        Ses données restent dans la base.</p>
+                    `,
+                    confirmLabel: 'Retirer',
+                    danger: true,
+                    onConfirm: async () => {
+                        const result = await untagCompany(siren, queryId);
+                        if (result._ok !== false) {
+                            showToast(`${name} retirée`, 'success');
+                            if (card) {
+                                card.classList.add('card-fade-out');
+                                card.addEventListener('animationend', () => card.remove());
+                            }
+                        } else {
+                            showToast('Erreur lors du retrait', 'error');
                         }
-                    } else {
-                        showToast('Erreur lors du retrait', 'error');
-                    }
-                },
-            });
+                    },
+                });
+                return;
+            }
+        });
+
+        // Checkbox handler for selection mode
+        grid.addEventListener('change', (e) => {
+            const cb = e.target.closest('.card-checkbox');
+            if (!cb) return;
+            const siren = cb.dataset.siren;
+            const card = cb.closest('.company-card');
+            if (cb.checked) {
+                selectedSirens.add(siren);
+                card?.classList.add('card-selected');
+            } else {
+                selectedSirens.delete(siren);
+                card?.classList.remove('card-selected');
+            }
+            _updateBulkBar();
         });
     }
+}
+
+// ── Selection mode toggle ────────────────────────────────────────
+function _setupSelectionMode(queryId) {
+    const btn = document.getElementById('btn-select-mode');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        selectionMode = !selectionMode;
+        btn.classList.toggle('active', selectionMode);
+        btn.innerHTML = selectionMode ? '✖ Annuler' : '☑ Sélectionner';
+        if (!selectionMode) {
+            selectedSirens.clear();
+            _removeBulkBar();
+        }
+        // Re-render cards with/without checkboxes
+        loadCompanies(queryId, _currentPage, _currentSort);
+    });
+}
+
+// ── Floating action bar ─────────────────────────────────────────
+function _updateBulkBar() {
+    let bar = document.getElementById('bulk-action-bar');
+    if (selectedSirens.size === 0) {
+        _removeBulkBar();
+        return;
+    }
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'bulk-action-bar';
+        bar.className = 'bulk-action-bar';
+        document.body.appendChild(bar);
+    }
+    const n = selectedSirens.size;
+    bar.innerHTML = `
+        <span class="bulk-count">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
+        <button class="btn btn-secondary" id="bulk-select-all">Tout sélectionner</button>
+        <button class="btn btn-primary" id="bulk-enrich-maps">🗺️ Maps</button>
+        <button class="btn btn-secondary" id="bulk-enrich-crawl">🌐 Site Web</button>
+        <button class="btn btn-danger" id="bulk-delete">🗑️ Supprimer</button>
+    `;
+
+    // Select all on current page
+    document.getElementById('bulk-select-all').onclick = () => {
+        const grid = document.getElementById('job-company-grid');
+        if (!grid) return;
+        const boxes = grid.querySelectorAll('.card-checkbox');
+        const allChecked = [...boxes].every(b => b.checked);
+        boxes.forEach(b => {
+            b.checked = !allChecked;
+            const siren = b.dataset.siren;
+            const card = b.closest('.company-card');
+            if (!allChecked) {
+                selectedSirens.add(siren);
+                card?.classList.add('card-selected');
+            } else {
+                selectedSirens.delete(siren);
+                card?.classList.remove('card-selected');
+            }
+        });
+        _updateBulkBar();
+    };
+
+    // Enrich Maps
+    document.getElementById('bulk-enrich-maps').onclick = () => _bulkEnrich(['maps_lookup']);
+    // Enrich Crawl
+    document.getElementById('bulk-enrich-crawl').onclick = () => _bulkEnrich(['website_crawl']);
+    // Delete
+    document.getElementById('bulk-delete').onclick = () => _bulkDelete();
+}
+
+function _removeBulkBar() {
+    const bar = document.getElementById('bulk-action-bar');
+    if (bar) bar.remove();
+}
+
+async function _bulkEnrich(modules) {
+    const sirens = [...selectedSirens];
+    const label = modules.includes('maps_lookup') ? 'Maps' : 'Site Web';
+    showToast(`⏳ Enrichissement ${label} de ${sirens.length} entreprise(s)…`, 'info');
+
+    let ok = 0, fail = 0;
+    for (const siren of sirens) {
+        try {
+            const res = await enrichCompany(siren, modules);
+            if (res._ok !== false) ok++; else fail++;
+        } catch { fail++; }
+    }
+
+    showToast(`✅ ${ok} enrichie(s)${fail ? `, ❌ ${fail} échouée(s)` : ''}`, ok > 0 ? 'success' : 'error');
+    selectedSirens.clear();
+    selectionMode = false;
+    _removeBulkBar();
+    const btn = document.getElementById('btn-select-mode');
+    if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
+    await loadCompanies(_currentQueryId, _currentPage, _currentSort);
+}
+
+async function _bulkDelete() {
+    const sirens = [...selectedSirens];
+    showConfirmModal({
+        title: `🗑️ Retirer ${sirens.length} entreprise(s) ?`,
+        body: `<p>Les entreprises seront retirées de cette requête.<br>Leurs données restent dans la base.</p>`,
+        confirmLabel: 'Retirer',
+        danger: true,
+        onConfirm: async () => {
+            let ok = 0;
+            for (const siren of sirens) {
+                try {
+                    const res = await untagCompany(siren, _currentQueryId);
+                    if (res._ok !== false) ok++;
+                } catch { /* skip */ }
+            }
+            showToast(`${ok} entreprise(s) retirée(s)`, 'success');
+            selectedSirens.clear();
+            selectionMode = false;
+            _removeBulkBar();
+            const btn = document.getElementById('btn-select-mode');
+            if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
+            await loadCompanies(_currentQueryId, _currentPage, _currentSort);
+        },
+    });
 }

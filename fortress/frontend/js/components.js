@@ -170,6 +170,10 @@ export function companyCard(company, opts = {}) {
         <button class="card-remove-btn" data-siren="${siren}" title="Retirer de cette requête"
             onclick="event.stopPropagation();">×</button>
     ` : '';
+    const checkbox = opts.selectable ? `
+        <input type="checkbox" class="card-checkbox" data-siren="${siren}"
+            onclick="event.stopPropagation();" ${opts.checked ? 'checked' : ''}>
+    ` : '';
 
     // Detect if company has ANY enrichment data
     const hasData = company.phone || company.email || company.website;
@@ -177,9 +181,10 @@ export function companyCard(company, opts = {}) {
     // Compact row for SIRENE-only companies (no enrichment)
     if (!hasData && !opts.forceExpand) {
         return `
-            <div class="company-card company-card-compact" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'"
+            <div class="company-card company-card-compact${opts.checked ? ' card-selected' : ''}" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'"
                  style="padding:var(--space-md) var(--space-lg); min-height:auto">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-md)">
+                    ${checkbox}
                     <div style="min-width:0; flex:1">
                         <div style="display:flex; align-items:baseline; gap:var(--space-sm); min-width:0">
                             <span class="company-card-name" style="font-size:var(--font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1">${escapeHtml(company.denomination || '—')}</span>
@@ -202,11 +207,14 @@ export function companyCard(company, opts = {}) {
 
     // Full card for enriched companies
     return `
-        <div class="company-card" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'">
+        <div class="company-card${opts.checked ? ' card-selected' : ''}" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'">
             <div class="company-card-header">
-                <div>
-                    <div class="company-card-name">${escapeHtml(company.denomination || '—')}</div>
-                    <div class="company-card-siren">${formatSiren(siren)}</div>
+                <div style="display:flex; align-items:flex-start; gap:var(--space-sm)">
+                    ${checkbox}
+                    <div>
+                        <div class="company-card-name">${escapeHtml(company.denomination || '—')}</div>
+                        <div class="company-card-siren">${formatSiren(siren)}</div>
+                    </div>
                 </div>
                 <div style="display:flex; gap:6px; align-items:center;">
                     ${removeBtn}
