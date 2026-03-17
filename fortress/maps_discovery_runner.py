@@ -60,10 +60,14 @@ def _normalize_name(name: str) -> str:
     """Normalize a business name for comparison.
 
     Removes accents, lowercases, strips legal forms and punctuation.
+    Splits on apostrophes so "d'agriculture" → "d agriculture" (matches SIRENE).
     """
     # Decompose accents
     nfkd = unicodedata.normalize("NFKD", name.lower())
     ascii_name = "".join(c for c in nfkd if not unicodedata.combining(c))
+    # Split on apostrophes BEFORE removing punctuation
+    # so "d'agriculture" → "d agriculture" not "dagriculture"
+    ascii_name = ascii_name.replace("'", " ").replace("\u2019", " ")
     # Remove punctuation except spaces
     cleaned = re.sub(r"[^a-z0-9\s]", "", ascii_name)
     # Remove common legal forms
@@ -479,63 +483,10 @@ async def run(query_id: str) -> None:
                     if q_idx < total_queries:
                         await asyncio.sleep(3)
 
-                # ── Phase 3: Website crawl for missing emails ─────────
-                # Find companies that need website crawling from DB
-                # (already persisted by _persist_result callback)
-                crawl_targets: list[tuple[str, str, str]] = []
-                async with pool.connection() as conn:
-                    rows = await conn.execute("""
-                        SELECT c.siren, ct.website, c.denomination
-                        FROM contacts ct
-                        JOIN companies c ON c.siren = ct.siren
-                        WHERE ct.siren IN (
-                            SELECT siren FROM query_tags WHERE query_name = %s
-                        )
-                        AND ct.source = 'google_maps'
-                        AND ct.website IS NOT NULL
-                        AND ct.website != ''
-                        AND NOT EXISTS (
-                            SELECT 1 FROM contacts ct2
-                            WHERE ct2.siren = ct.siren
-                            AND ct2.source = 'website_crawl'
-                        )
-                    """, (query_name,))
-                    for row in await rows.fetchall():
-                        crawl_targets.append((row[0], row[1], row[2]))
-
-                if crawl_targets:
-                    log.info(
-                        "maps_discovery_runner.crawl_phase",
-                        targets=len(crawl_targets),
-                    )
-                    async with CurlClient() as curl_client:
-                        for siren, website_url, maps_name in crawl_targets:
-                            try:
-                                crawl_result = await curl_client.crawl(
-                                    website_url,
-                                    extract_emails=True,
-                                    extract_social=True,
-                                )
-                                if crawl_result and crawl_result.get("emails"):
-                                    email = crawl_result["emails"][0]
-                                    social = crawl_result.get("social") or {}
-                                    crawl_contact = Contact(
-                                        siren=siren,
-                                        source=ContactSource.WEBSITE_CRAWL,
-                                        email=email,
-                                        website=website_url,
-                                        social_linkedin=social.get("linkedin"),
-                                        social_facebook=social.get("facebook"),
-                                        social_twitter=social.get("twitter"),
-                                    )
-                                    async with pool.connection() as conn:
-                                        await upsert_contact(conn, crawl_contact)
-                            except Exception as exc:
-                                log.debug(
-                                    "maps_discovery_runner.crawl_error",
-                                    url=website_url,
-                                    error=str(exc),
-                                )
+                # Web crawl skipped in Maps-first discovery mode.
+                # Maps provides phone + website with 90%+ hit rates.
+                # Email enrichment via website crawl can be triggered
+                # separately per-company or as a follow-up batch.
 
                 # ── Mark completed ────────────────────────────────────
                 await _update_job_safe(
