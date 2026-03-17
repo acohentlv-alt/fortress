@@ -19,6 +19,7 @@ import {
     animateCounter, renderProgressRing, showConfirmModal, showToast,
 } from '../components.js';
 import { registerCleanup } from '../app.js';
+import { getCachedUser } from '../api.js';
 
 let pollInterval = null;
 
@@ -109,6 +110,10 @@ async function renderMonitorList(container) {
 }
 
 async function renderJobMonitor(container, queryId) {
+    // Role detection for conditional rendering
+    const user = getCachedUser();
+    const isAdmin = user?.role === 'admin';
+
     // ── Render skeleton ONCE ─────────────────────────────────────
     container.innerHTML = `
         <div id="mon-breadcrumb"></div>
@@ -159,17 +164,23 @@ async function renderJobMonitor(container, queryId) {
             </div>
         </div>
 
-        <!-- Pipeline Stage + Wave -->
+        <!-- Pipeline Stage + Wave (admin only) -->
+        ${isAdmin ? `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); margin-bottom:var(--space-xl); flex-wrap:wrap">
             <div id="mon-pipeline">${renderPipelineStages(null)}</div>
             <div id="mon-wave"></div>
         </div>
 
-        <!-- Pool Breakdown -->
+        <!-- Pool Breakdown (admin only) -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <h3 class="detail-section-title">Répartition du pool</h3>
             <div id="mon-triage">—</div>
         </div>
+        ` : `
+        <div id="mon-pipeline" style="display:none"></div>
+        <div id="mon-wave" style="display:none"></div>
+        <div id="mon-triage" style="display:none"></div>
+        `}
 
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">

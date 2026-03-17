@@ -241,6 +241,11 @@ async function initApp() {
     _setupSidebarToggle();
     _updateUserDisplay(user);
     _setupLogout();
+    // Hide admin-only nav items for regular users
+    if (user.role !== 'admin') {
+        const queryNav = document.getElementById('nav-query');
+        if (queryNav) queryNav.style.display = 'none';
+    }
     initGlobalSearch();
     navigate();
     _setupRunningJobs();
