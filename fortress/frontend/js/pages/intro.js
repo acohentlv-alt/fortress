@@ -291,15 +291,46 @@ export function renderIntro(container) {
                         <span class="land-h1-gradient">votre portefeuille clients ?</span>
                     </h2>
                     <p class="land-cta-sub">
-                        Demandez un accès à la plateforme ou contactez-nous
-                        pour une démonstration personnalisée.
+                        Remplissez le formulaire ci-dessous pour demander un accès
+                        ou recevoir une démonstration personnalisée.
                     </p>
-                    <div class="land-cta-buttons">
-                        <a href="mailto:acohen.tlv@gmail.com?subject=Demande%20d'accès%20Fortress" class="land-btn-primary">
-                            ✉️ Contactez-nous
-                        </a>
+
+                    <!-- Contact Form -->
+                    <form id="land-contact-form" class="land-form" autocomplete="on">
+                        <div class="land-form-row">
+                            <div class="land-form-field">
+                                <label class="land-form-label" for="land-name">Nom complet *</label>
+                                <input type="text" id="land-name" class="land-form-input"
+                                    placeholder="Jean Dupont" required maxlength="200" autocomplete="name">
+                            </div>
+                            <div class="land-form-field">
+                                <label class="land-form-label" for="land-email">Email professionnel *</label>
+                                <input type="email" id="land-email" class="land-form-input"
+                                    placeholder="jean@entreprise.fr" required maxlength="200" autocomplete="email">
+                            </div>
+                        </div>
+                        <div class="land-form-field">
+                            <label class="land-form-label" for="land-company">Entreprise</label>
+                            <input type="text" id="land-company" class="land-form-input"
+                                placeholder="Nom de votre entreprise (optionnel)" maxlength="200" autocomplete="organization">
+                        </div>
+                        <div class="land-form-field">
+                            <label class="land-form-label" for="land-message">Message *</label>
+                            <textarea id="land-message" class="land-form-input land-form-textarea"
+                                placeholder="Décrivez votre besoin : secteur ciblé, volume estimé, questions..."
+                                required maxlength="2000" rows="4"></textarea>
+                        </div>
+                        <div class="land-form-actions">
+                            <button type="submit" id="land-submit" class="land-btn-primary" style="width:100%">
+                                ✉️ Envoyer ma demande
+                            </button>
+                        </div>
+                        <div id="land-form-status" class="land-form-status" style="display:none"></div>
+                    </form>
+
+                    <div style="margin-top:var(--space-xl, 24px)">
                         <a href="#/login" class="land-btn-secondary">
-                            Se connecter →
+                            Déjà un compte ? Se connecter →
                         </a>
                     </div>
                 </div>
@@ -386,6 +417,63 @@ export function renderIntro(container) {
     }, { threshold: 0.5 });
 
     container.querySelectorAll('[data-count]').forEach(el => counterObserver.observe(el));
+
+
+    // ── Contact form submission ──────────────────────────────────
+    const contactForm = document.getElementById('land-contact-form');
+    if (contactForm) {
+        contactForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('land-submit');
+            const statusEl = document.getElementById('land-form-status');
+
+            const name = document.getElementById('land-name').value.trim();
+            const email = document.getElementById('land-email').value.trim();
+            const company = document.getElementById('land-company').value.trim();
+            const message = document.getElementById('land-message').value.trim();
+
+            if (!name || !email || !message) return;
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Envoi en cours...';
+            statusEl.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/contact', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email, company, message })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.ok) {
+                    statusEl.className = 'land-form-status land-form-success';
+                    statusEl.innerHTML = '✅ ' + (data.message || 'Demande envoyée !');
+                    statusEl.style.display = 'block';
+                    contactForm.reset();
+                    btn.textContent = '✅ Envoyé !';
+                    // Re-enable after 5s
+                    setTimeout(() => {
+                        btn.disabled = false;
+                        btn.textContent = '✉️ Envoyer ma demande';
+                    }, 5000);
+                } else {
+                    const errMsg = data.detail || data.message || 'Erreur lors de l\'envoi';
+                    statusEl.className = 'land-form-status land-form-error';
+                    statusEl.innerHTML = '❌ ' + errMsg;
+                    statusEl.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = '✉️ Envoyer ma demande';
+                }
+            } catch (err) {
+                statusEl.className = 'land-form-status land-form-error';
+                statusEl.innerHTML = '❌ Erreur de connexion. Veuillez réessayer.';
+                statusEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = '✉️ Envoyer ma demande';
+            }
+        });
+    }
 
     // ── Nav background on scroll ─────────────────────────────────
     let handleScroll = null;

@@ -18,6 +18,7 @@ const ACTION_ICONS = {
     export: '📥',
     note_added: '📝',
     note_deleted: '🗑️',
+    contact_request: '✉️',
 };
 
 const ACTION_LABELS = {
@@ -29,6 +30,7 @@ const ACTION_LABELS = {
     export: 'Export effectué',
     note_added: 'Note ajoutée',
     note_deleted: 'Note supprimée',
+    contact_request: 'Demande de contact',
 };
 
 function _timeAgo(dateStr) {
