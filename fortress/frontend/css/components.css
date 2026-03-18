@@ -2477,12 +2477,12 @@
 /* ── Inline Edit Button ──────────────────────────────────────────── */
 .btn-inline-edit {
     background: none; border: none; cursor: pointer;
-    font-size: 14px; padding: 2px 4px; opacity: 0;
+    font-size: 14px; padding: 2px 4px; opacity: 0.4;
     transition: opacity var(--transition-fast);
     border-radius: var(--radius-sm);
     flex-shrink: 0; margin-left: var(--space-xs);
 }
-.detail-row:hover .btn-inline-edit { opacity: 0.5; }
+.detail-row:hover .btn-inline-edit { opacity: 0.6; }
 .btn-inline-edit:hover { opacity: 1 !important; background: var(--bg-hover); }
 
 /* ── Contacts List Table ─────────────────────────────────────────── */
