@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 async def get_stats(request: Request):
-    """Dashboard statistics — shared workspace (all users see all data)."""
+    """Dashboard statistics — shared workspace."""
     scope_clause = ""
     scope_params: tuple = ()
     jobs_scope = ""
@@ -55,7 +55,7 @@ async def get_stats(request: Request):
 
 @router.get("/recent-activity")
 async def get_recent_activity(request: Request):
-    """Recent scrape_jobs activity — shared workspace."""
+    """Last 10 job updates — shared workspace."""
     rows = await fetch_all("""
         SELECT query_id, query_name,
                CASE
@@ -79,7 +79,7 @@ async def get_recent_activity(request: Request):
 
 @router.get("/stats/by-job")
 async def get_stats_by_job(request: Request):
-    """Job-level stats aggregated by normalized query_name — shared workspace."""
+    """Job-level stats — shared workspace."""
     user_filter = ""
 
     groups = await fetch_all(f"""
@@ -102,10 +102,10 @@ async def get_stats_by_job(request: Request):
     all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.query_name) AS group_key,
-            sj.query_id, sj.query_name,
-            CASE
+            sj.query_id, sj.query_name, 
+            CASE 
                 WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
-                ELSE sj.status
+                ELSE sj.status 
             END AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
             sj.total_companies, sj.wave_current, sj.wave_total,
@@ -209,10 +209,7 @@ async def get_data_bank(request: Request):
 
 @router.get("/analysis")
 async def get_analysis(request: Request):
-    """Data analysis dashboard — returns quality, enricher performance, timeline, jobs.
-
-    Shared workspace — all users see all data.
-    """
+    """Data analysis dashboard — shared workspace."""
     scope_clause = ""
     scope_params: tuple = ()
     jobs_where = "WHERE sj.status != 'deleted'"
@@ -468,7 +465,7 @@ async def get_all_data(
     Admin: all enriched data. User: scoped to own jobs.
     Supports text search (name/SIREN) and department filter.
     """
-    # Shared workspace: no user scoping
+    # Shared workspace — no user scoping
     scope_clause = ""
     scope_params: list = []
 
@@ -538,7 +535,7 @@ async def get_stats_by_sector(request: Request):
     Admin: all data. User: scoped to their own jobs.
     Returns unique company counts per sector so totals match the dashboard.
     """
-    # Shared workspace: no user scoping
+    # Shared workspace — no user scoping
     scope_clause = ""
     scope_params: tuple = ()
 
