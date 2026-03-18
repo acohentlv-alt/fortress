@@ -385,7 +385,7 @@ async def _upsert_company(conn, siren: str, fields: dict, extra: dict, stats: di
 
         if extra:
             # COALESCE handles NULL extra_data for existing SIRENE companies
-            sets.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s")
+            sets.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s::jsonb")
             vals.append(Json(extra))
 
         if sets:
