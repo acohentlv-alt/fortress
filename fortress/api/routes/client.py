@@ -103,42 +103,48 @@ async def upload_client_file(file: UploadFile = File(...)):
         async with get_conn() as conn:
             for row_idx, row in enumerate(rows):
                 try:
-                    await _ingest_row(conn, row, headers, mapping, stats, query_id)
+                    # Savepoint per row: if one row fails, only that
+                    # savepoint rolls back — the outer transaction stays clean.
+                    async with conn.transaction():
+                        await _ingest_row(conn, row, headers, mapping, stats, query_id)
                 except Exception as exc:
                     stats["rows_skipped"] += 1
                     err_msg = f"Row {row_idx + 2}: {type(exc).__name__}: {exc}"
                     logger.warning("Ingest error: %s", err_msg)
-                    if len(stats["errors"]) < 20:  # Cap error list
+                    if len(stats["errors"]) < 20:
                         stats["errors"].append(err_msg)
 
                 # Update progress every 50 rows
                 if (row_idx + 1) % 50 == 0:
                     scraped = stats["companies_inserted"] + stats["companies_updated"]
-                    await conn.execute("""
-                        UPDATE scrape_jobs
-                        SET companies_scraped = %s, updated_at = %s
-                        WHERE query_id = %s
-                    """, (scraped, datetime.now(tz=timezone.utc), query_id))
+                    async with conn.transaction():
+                        await conn.execute("""
+                            UPDATE scrape_jobs
+                            SET companies_scraped = %s, updated_at = %s
+                            WHERE query_id = %s
+                        """, (scraped, datetime.now(tz=timezone.utc), query_id))
 
             # Tag all ingested companies in query_tags
-            await conn.execute("""
-                INSERT INTO query_tags (siren, query_name, tagged_at)
-                SELECT DISTINCT sa.siren, %s, NOW()
-                FROM scrape_audit sa
-                WHERE sa.query_id = %s
-                ON CONFLICT (siren, query_name) DO NOTHING
-            """, (query_id, query_id))
+            async with conn.transaction():
+                await conn.execute("""
+                    INSERT INTO query_tags (siren, query_name, tagged_at)
+                    SELECT DISTINCT sa.siren, %s, NOW()
+                    FROM scrape_audit sa
+                    WHERE sa.query_id = %s
+                    ON CONFLICT (siren, query_name) DO NOTHING
+                """, (query_id, query_id))
 
             # Mark job completed
             scraped = stats["companies_inserted"] + stats["companies_updated"]
-            await conn.execute("""
-                UPDATE scrape_jobs
-                SET status = 'completed',
-                    companies_scraped = %s,
-                    companies_qualified = %s,
-                    updated_at = %s
-                WHERE query_id = %s
-            """, (scraped, stats["contacts_upserted"], datetime.now(tz=timezone.utc), query_id))
+            async with conn.transaction():
+                await conn.execute("""
+                    UPDATE scrape_jobs
+                    SET status = 'completed',
+                        companies_scraped = %s,
+                        companies_qualified = %s,
+                        updated_at = %s
+                    WHERE query_id = %s
+                """, (scraped, stats["contacts_upserted"], datetime.now(tz=timezone.utc), query_id))
 
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})

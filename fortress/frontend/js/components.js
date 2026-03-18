@@ -395,7 +395,6 @@ export function renderTriageBar(triage) {
 export function renderPipelineStages(activeStage) {
     const stages = [
         { id: 'maps', icon: '🗺️', label: 'Maps' },
-        { id: 'crawl', icon: '🌐', label: 'Crawl' },
         { id: 'save', icon: '💾', label: 'Sauvegarde' },
     ];
 
