@@ -59,7 +59,11 @@ async def get_recent_activity(request: Request):
     rows = await fetch_all("""
         SELECT query_id, query_name,
                CASE
-                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
+                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180
+                        AND COALESCE(companies_qualified, 0) >= COALESCE(batch_size, total_companies, 1)
+                        THEN 'completed'
+                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180
+                        THEN 'failed'
                    ELSE status
                END AS status,
                total_companies, companies_scraped, companies_failed,
@@ -104,7 +108,11 @@ async def get_stats_by_job(request: Request):
             UPPER(sj.query_name) AS group_key,
             sj.query_id, sj.query_name, 
             CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
+                     THEN 'completed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     THEN 'failed'
                 ELSE sj.status 
             END AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
@@ -353,7 +361,11 @@ async def get_analysis(request: Request):
         SELECT
             sj.query_id, sj.query_name,
             CASE
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
+                     THEN 'completed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     THEN 'failed'
                 ELSE sj.status
             END AS status,
             sj.companies_scraped,
@@ -417,7 +429,11 @@ async def get_analysis(request: Request):
         SELECT
             sj.query_id, sj.query_name,
             CASE
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
+                     THEN 'completed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     THEN 'failed'
                 ELSE sj.status
             END AS status,
             sj.companies_scraped,

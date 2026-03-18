@@ -170,7 +170,7 @@ export async function renderCompany(container, siren) {
                     <h3 class="detail-section-title">📞 Contact</h3>
                     ${detailRow('Téléphone', mc.phone
         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_phone'), sourceLabel(mc.phone_source), 'phone')}
+        : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
                     ${detailRow('Email', mc.email
             ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
             : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
