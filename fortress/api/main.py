@@ -39,6 +39,12 @@ async def lifespan(app: FastAPI):
     db = pool_status()
     if db["connected"]:
         logger.info("🏰 Fortress API started — database connected")
+        # Ensure activity_log table exists on startup
+        try:
+            from fortress.api.routes.activity import _ensure_table
+            await _ensure_table()
+        except Exception as e:
+            logger.warning("Could not ensure activity_log table at startup: %s", e)
     else:
         logger.warning("🏰 Fortress API started — database OFFLINE: %s", db["error"])
     yield
