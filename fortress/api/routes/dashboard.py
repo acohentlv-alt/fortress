@@ -214,12 +214,15 @@ async def get_data_bank(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Data Analysis — comprehensive analytics in one call
+# Data Analysis — focused analytics: quality, gaps, enrichers, pipeline
 # ---------------------------------------------------------------------------
 
 @router.get("/analysis")
 async def get_analysis(request: Request):
-    """Data analysis dashboard — shared workspace."""
+    """Data analysis dashboard — 4 focused panels.
+
+    Returns: quality, gaps, enrichers, pipeline.
+    """
     scope_clause = ""
     scope_params: tuple = ()
     jobs_where = "WHERE sj.status != 'deleted'"
@@ -271,71 +274,95 @@ async def get_analysis(request: Request):
         "overall_score": overall,
     }
 
-    # ── 2. Enricher performance (admin only) ─────────────────────
+    # ── 2. Data gaps — what's missing ────────────────────────────
+    gaps = await fetch_one(f"""
+        WITH tagged AS (
+            SELECT DISTINCT qt.siren FROM query_tags qt {scope_clause}
+        ),
+        enriched AS (
+            SELECT
+                t.siren,
+                MAX(ct.phone)   AS phone,
+                MAX(ct.email)   AS email,
+                MAX(ct.website) AS website
+            FROM tagged t
+            LEFT JOIN contacts ct ON ct.siren = t.siren
+            GROUP BY t.siren
+        )
+        SELECT
+            COUNT(*)                                                              AS total,
+            COUNT(*) FILTER (WHERE phone IS NULL)                                 AS missing_phone,
+            COUNT(*) FILTER (WHERE email IS NULL)                                 AS missing_email,
+            COUNT(*) FILTER (WHERE website IS NULL)                               AS missing_website,
+            COUNT(*) FILTER (WHERE phone IS NULL AND email IS NULL AND website IS NULL) AS missing_all,
+            COUNT(*) FILTER (WHERE phone IS NOT NULL AND email IS NOT NULL AND website IS NOT NULL) AS complete
+        FROM enriched
+    """, scope_params)
+
+    gaps_data = gaps or {}
+
+    # ── 3. Enricher health — simplified ──────────────────────────
     enrichers = {}
 
-    # From enrichment_log: method breakdown
-    maps_methods = await fetch_all("""
-        SELECT
-            COALESCE(maps_method, 'unknown') AS method,
-            COUNT(*) AS count,
-            COUNT(*) FILTER (WHERE outcome = 'qualified') AS qualified
-        FROM enrichment_log
-        WHERE maps_method IS NOT NULL
-        GROUP BY maps_method
-        ORDER BY count DESC
-    """)
-
-    crawl_methods = await fetch_all("""
-        SELECT
-            COALESCE(crawl_method, 'unknown') AS method,
-            COUNT(*) AS count,
-            COUNT(*) FILTER (WHERE emails_found > 0) AS with_emails
-        FROM enrichment_log
-        WHERE crawl_method IS NOT NULL AND crawl_method != 'skipped'
-        GROUP BY crawl_method
-        ORDER BY count DESC
-    """)
-
-    # From scrape_audit: timing and success rates
+    # All-time stats from scrape_audit
     audit_stats = await fetch_all("""
         SELECT
             action,
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE result = 'success') AS success,
-            ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
+            ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms,
+            MAX(created_at) AS last_run
         FROM scrape_audit
         WHERE action IN ('maps_lookup', 'website_crawl')
         GROUP BY action
     """)
 
+    # Last 24h stats from scrape_audit
+    audit_24h = await fetch_all("""
+        SELECT
+            action,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE result = 'success') AS success
+        FROM scrape_audit
+        WHERE action IN ('maps_lookup', 'website_crawl')
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY action
+    """)
+
     audit_map = {r["action"]: r for r in (audit_stats or [])}
+    audit_24h_map = {r["action"]: r for r in (audit_24h or [])}
 
     # Maps enricher
-    maps_audit = audit_map.get("maps_lookup", {})
-    maps_total = maps_audit.get("total", 0) or 0
-    maps_success = maps_audit.get("success", 0) or 0
-    enrichers["maps_lookup"] = {
+    maps_all = audit_map.get("maps_lookup", {})
+    maps_24h = audit_24h_map.get("maps_lookup", {})
+    maps_total = maps_all.get("total", 0) or 0
+    maps_success = maps_all.get("success", 0) or 0
+    enrichers["maps"] = {
         "total": maps_total,
         "success": maps_success,
         "rate": round(100 * maps_success / max(maps_total, 1)),
-        "avg_time_ms": maps_audit.get("avg_time_ms") or 0,
-        "methods": {r["method"]: {"count": r["count"], "qualified": r["qualified"]} for r in (maps_methods or [])},
+        "avg_time_s": round((maps_all.get("avg_time_ms") or 0) / 1000, 1),
+        "last_run": str(maps_all.get("last_run") or ""),
+        "last_24h_total": maps_24h.get("total", 0) or 0,
+        "last_24h_success": maps_24h.get("success", 0) or 0,
     }
 
     # Crawl enricher
-    crawl_audit = audit_map.get("website_crawl", {})
-    crawl_total = crawl_audit.get("total", 0) or 0
-    crawl_success = crawl_audit.get("success", 0) or 0
-    enrichers["website_crawl"] = {
+    crawl_all = audit_map.get("website_crawl", {})
+    crawl_24h = audit_24h_map.get("website_crawl", {})
+    crawl_total = crawl_all.get("total", 0) or 0
+    crawl_success = crawl_all.get("success", 0) or 0
+    enrichers["crawl"] = {
         "total": crawl_total,
         "success": crawl_success,
         "rate": round(100 * crawl_success / max(crawl_total, 1)),
-        "avg_time_ms": crawl_audit.get("avg_time_ms") or 0,
-        "methods": {r["method"]: {"count": r["count"], "with_emails": r["with_emails"]} for r in (crawl_methods or [])},
+        "avg_time_s": round((crawl_all.get("avg_time_ms") or 0) / 1000, 1),
+        "last_run": str(crawl_all.get("last_run") or ""),
+        "last_24h_total": crawl_24h.get("total", 0) or 0,
+        "last_24h_success": crawl_24h.get("success", 0) or 0,
     }
 
-    # Overall enrichment outcomes from enrichment_log
+    # Outcomes from enrichment_log
     outcomes = await fetch_all("""
         SELECT outcome, COUNT(*) AS count
         FROM enrichment_log
@@ -344,125 +371,92 @@ async def get_analysis(request: Request):
     """)
     enrichers["outcomes"] = {r["outcome"]: r["count"] for r in (outcomes or [])}
 
-    # ── 3. Weekly timeline (last 12 weeks) ───────────────────────
-    timeline = await fetch_all(f"""
+    # ── 4. Pipeline health ───────────────────────────────────────
+    pipeline_counts = await fetch_one(f"""
         SELECT
-            TO_CHAR(DATE_TRUNC('week', sj.created_at), 'YYYY-"W"IW') AS week,
-            COUNT(DISTINCT sj.query_id) AS batches,
-            SUM(sj.companies_scraped) AS companies,
-            SUM(sj.companies_qualified) AS qualified
-        FROM scrape_jobs sj
-        {jobs_where}
-        AND sj.created_at >= NOW() - INTERVAL '12 weeks'
-        GROUP BY DATE_TRUNC('week', sj.created_at)
-        ORDER BY DATE_TRUNC('week', sj.created_at) ASC
+            COUNT(*) FILTER (WHERE status = 'completed')        AS completed_total,
+            COUNT(*) FILTER (WHERE status = 'failed')           AS failed_total,
+            COUNT(*) FILTER (WHERE status IN ('in_progress', 'queued', 'triage')
+                            AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180)
+                                                                AS running_now,
+            COUNT(*) FILTER (WHERE status = 'completed'
+                            AND created_at >= NOW() - INTERVAL '7 days')
+                                                                AS completed_7d,
+            COUNT(*) FILTER (WHERE status = 'failed'
+                            AND created_at >= NOW() - INTERVAL '7 days')
+                                                                AS failed_7d,
+            SUM(COALESCE(companies_qualified, 0))               AS total_qualified,
+            SUM(COALESCE(replaced_count, 0))                    AS total_replaced
+        FROM scrape_jobs
+        WHERE status != 'deleted'
     """)
 
-    # ── 4. Recent jobs with quality metrics ──────────────────────
+    # Weekly quality trend (last 12 weeks)
+    weekly_trend = await fetch_all(f"""
+        WITH weekly_jobs AS (
+            SELECT
+                DATE_TRUNC('week', sj.created_at) AS week,
+                sj.query_name,
+                COUNT(DISTINCT qt.siren) AS companies,
+                COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
+                COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
+                COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website
+            FROM scrape_jobs sj
+            JOIN query_tags qt ON UPPER(qt.query_name) = UPPER(sj.query_name)
+            LEFT JOIN contacts ct ON ct.siren = qt.siren
+            WHERE sj.status = 'completed'
+              AND sj.created_at >= NOW() - INTERVAL '12 weeks'
+            GROUP BY week, sj.query_name
+        )
+        SELECT
+            TO_CHAR(week, 'YYYY-"W"IW') AS week,
+            SUM(companies) AS companies,
+            ROUND(AVG(
+                CASE WHEN companies > 0 THEN
+                    (100.0 * with_phone / companies +
+                     100.0 * with_email / companies +
+                     100.0 * with_website / companies) / 3
+                ELSE 0 END
+            )) AS avg_quality
+        FROM weekly_jobs
+        GROUP BY week
+        ORDER BY week ASC
+    """)
+
+    # Last 5 completed/failed jobs (compact)
     recent_jobs = await fetch_all(f"""
         SELECT
             sj.query_id, sj.query_name,
             CASE
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                WHEN sj.status IN ('in_progress', 'queued', 'triage')
+                     AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
                      AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
                      THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                WHEN sj.status IN ('in_progress', 'queued', 'triage')
+                     AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
                      THEN 'failed'
                 ELSE sj.status
             END AS status,
             sj.companies_scraped,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
-            sj.created_at, sj.updated_at,
-            sj.worker_id,
-            sj.strategy,
-            COALESCE(u.display_name, u.username, 'système') AS user_name,
-            -- Quality metrics via subquery
-            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
-             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
-             WHERE ct.phone IS NOT NULL) AS phones_found,
-            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
-             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
-             WHERE ct.email IS NOT NULL) AS emails_found,
-            (SELECT COUNT(DISTINCT ct.siren) FROM contacts ct
-             JOIN query_tags qt ON qt.siren = ct.siren AND UPPER(qt.query_name) = UPPER(sj.query_name)
-             WHERE ct.website IS NOT NULL) AS websites_found,
-            (SELECT COUNT(DISTINCT qt2.siren) FROM query_tags qt2
-             WHERE UPPER(qt2.query_name) = UPPER(sj.query_name)) AS unique_companies
+            sj.created_at
         FROM scrape_jobs sj
-        LEFT JOIN users u ON u.id = sj.user_id
-        {jobs_where}
-        AND sj.status IN ('completed', 'failed', 'cancelled')
-        ORDER BY sj.created_at DESC
-        LIMIT 20
-    """)
-
-    # Compute per-job quality scores
-    for job in (recent_jobs or []):
-        uc = job.get("unique_companies", 0) or 0
-        job["phone_pct"] = round(100 * (job.get("phones_found", 0) or 0) / max(uc, 1))
-        job["email_pct"] = round(100 * (job.get("emails_found", 0) or 0) / max(uc, 1))
-        job["web_pct"] = round(100 * (job.get("websites_found", 0) or 0) / max(uc, 1))
-        job["quality_score"] = round((job["phone_pct"] + job["email_pct"] + job["web_pct"]) / 3)
-
-    # ── 5. Sector quality breakdown ──────────────────────────────
-    sectors = await fetch_all(f"""
-        SELECT
-            UPPER(SPLIT_PART(qt.query_name, ' ', 1)) AS sector,
-            COUNT(DISTINCT qt.siren) AS companies,
-            COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
-            COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
-            COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website
-        FROM query_tags qt
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
-        {scope_clause}
-        GROUP BY sector
-        ORDER BY companies DESC
-    """, scope_params)
-
-    for s in (sectors or []):
-        sc = s.get("companies", 0) or 0
-        s["phone_pct"] = round(100 * (s.get("with_phone", 0) or 0) / max(sc, 1))
-        s["email_pct"] = round(100 * (s.get("with_email", 0) or 0) / max(sc, 1))
-        s["web_pct"] = round(100 * (s.get("with_website", 0) or 0) / max(sc, 1))
-        s["quality_score"] = round((s["phone_pct"] + s["email_pct"] + s["web_pct"]) / 3)
-
-    # ── 6. System usage — all jobs with user/worker info ─────────
-    system_usage = await fetch_all(f"""
-        SELECT
-            sj.query_id, sj.query_name,
-            CASE
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
-                     THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     THEN 'failed'
-                ELSE sj.status
-            END AS status,
-            sj.companies_scraped,
-            COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
-            sj.strategy,
-            sj.worker_id,
-            sj.created_at, sj.updated_at,
-            COALESCE(u.display_name, u.username, 'système') AS user_name,
-            -- Duration in seconds (NULL if still running)
-            CASE WHEN sj.status IN ('completed', 'failed', 'cancelled')
-                 THEN EXTRACT(EPOCH FROM (sj.updated_at - sj.created_at))
-                 ELSE NULL
-            END AS duration_seconds
-        FROM scrape_jobs sj
-        LEFT JOIN users u ON u.id = sj.user_id
         {jobs_where}
         ORDER BY sj.created_at DESC
-        LIMIT 50
+        LIMIT 5
     """)
+
+    pipeline_data = {
+        **(pipeline_counts or {}),
+        "weekly_trend": weekly_trend or [],
+        "recent_jobs": recent_jobs or [],
+    }
 
     return {
         "quality": quality_data,
+        "gaps": gaps_data,
         "enrichers": enrichers,
-        "timeline": timeline or [],
-        "recent_jobs": recent_jobs or [],
-        "sectors": sectors or [],
-        "system_usage": system_usage or [],
+        "pipeline": pipeline_data,
     }
 
 
