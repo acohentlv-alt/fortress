@@ -201,6 +201,7 @@ export async function renderSearch(container) {
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Dépt</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Forme</th>
                             <th style="text-align:center; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Statut</th>
+                            <th style="text-align:center; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Enrichi</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -221,6 +222,12 @@ export async function renderSearch(container) {
                                     ${c.statut === 'A'
                                         ? '<span style="color:var(--success); font-weight:600">●</span>'
                                         : '<span style="color:var(--text-muted)">○</span>'
+                                    }
+                                </td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); text-align:center">
+                                    ${c.is_enriched
+                                        ? '<span style="background:rgba(16,185,129,0.15); color:var(--success); font-size:var(--font-xs); font-weight:600; padding:2px 8px; border-radius:var(--radius-full)">✅ Enrichi</span>'
+                                        : '<span style="color:var(--text-muted)">—</span>'
                                     }
                                 </td>
                             </tr>

@@ -232,6 +232,19 @@ export async function updateCompany(siren, fields) {
     return await patchJSON(`/companies/${siren}`, fields);
 }
 
+// ── Company Notes ────────────────────────────────────────────────
+export async function getCompanyNotes(siren) {
+    return await request(`/notes/${siren}`);
+}
+
+export async function addCompanyNote(siren, text) {
+    return await postJSON(`/notes/${siren}`, { text });
+}
+
+export async function deleteCompanyNote(noteId) {
+    return await request(`/notes/${noteId}`, { method: 'DELETE' });
+}
+
 // ── Batch Execution ──────────────────────────────────────────────
 export async function runBatch({ sector, department, size, mode, city, naf_code, strategy, search_queries }) {
     const body = {
@@ -334,6 +347,12 @@ export async function getClientStats() {
 
 export async function clearClientSirens() {
     return await request('/client/clear', { method: 'DELETE' });
+}
+
+// ── Contact List (flat view) ─────────────────────────────────────
+export async function getContactsList(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return await request('/contacts/list' + (qs ? '?' + qs : ''));
 }
 
 // ── Dashboard Delete Actions ─────────────────────────────────────

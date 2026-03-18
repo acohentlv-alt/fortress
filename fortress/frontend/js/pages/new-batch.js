@@ -48,7 +48,7 @@ export async function renderNewBatch(container) {
         <h1 class="page-title">🚀 Nouvelle Recherche</h1>
         <p class="page-subtitle">Lancez une collecte de données B2B via Google Maps</p>
 
-        <div class="batch-form" style="max-width:640px">
+        <div class="batch-form">
             <!-- Search Queries -->
             <div class="form-group">
                 <label class="form-label">🔍 Que cherchez-vous ?</label>

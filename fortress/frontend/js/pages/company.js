@@ -7,9 +7,14 @@
  * Features:
  *   - Smart Enrichment Panel with goal-oriented checkboxes
  *   - Actionable empty states for unenriched fields
+ *   - Notes (comments) system per company
+ *   - 2-column Contact + Dirigeants layout at top
+ *   - Context-aware breadcrumb (search vs upload vs batch)
  */
 
-import { getCompany, enrichCompany, updateCompany, getCompanyEnrichHistory, extractApiError } from '../api.js';
+import { getCompany, enrichCompany, updateCompany, getCompanyEnrichHistory,
+         getCompanyNotes, addCompanyNote, deleteCompanyNote,
+         extractApiError, getCachedUser } from '../api.js';
 import {
     breadcrumb, formatSiren, formatSiret, formatDate,
     statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
@@ -64,6 +69,34 @@ function enrichmentPanelHTML() {
     `;
 }
 
+// ── Context-aware breadcrumb ─────────────────────────────────────
+function _buildBreadcrumb(co, tags) {
+    const items = [{ label: 'Dashboard', href: '#/' }];
+
+    // Determine origin from tags
+    let parentLabel = 'Recherche';
+    let parentHref = '#/search';
+
+    if (tags && tags.length > 0) {
+        const firstTag = tags[0].query_name || '';
+        if (firstTag.startsWith('upload_') || firstTag.startsWith('Import: ')) {
+            parentLabel = 'Import / Export';
+            parentHref = '#/upload';
+        } else if (firstTag.startsWith('enrich ')) {
+            parentLabel = 'Recherche';
+            parentHref = '#/search';
+        } else if (firstTag) {
+            // Batch result — link to the job
+            parentLabel = firstTag;
+            parentHref = `#/job/${encodeURIComponent(firstTag)}`;
+        }
+    }
+
+    items.push({ label: parentLabel, href: parentHref });
+    items.push({ label: co.denomination });
+    return breadcrumb(items);
+}
+
 export async function renderCompany(container, siren) {
     const data = await getCompany(siren);
 
@@ -86,11 +119,7 @@ export async function renderCompany(container, siren) {
 
 
     container.innerHTML = `
-        ${breadcrumb([
-        { label: 'Dashboard', href: '#/' },
-        { label: 'Recherche', href: '#/search' },
-        { label: co.denomination },
-    ])}
+        ${_buildBreadcrumb(co, tags)}
 
         <div class="company-detail">
             <!-- Left Column: Identity Card -->
@@ -125,6 +154,9 @@ export async function renderCompany(container, siren) {
                     </div>
                 ` : ''}
 
+                <!-- Smart Enrichment Panel — MOVED TO TOP of identity -->
+                ${enrichmentPanelHTML()}
+
                 <!-- Tags -->
                 ${tags.length > 0 ? `
                     <div style="margin-top: var(--space-2xl)">
@@ -148,16 +180,77 @@ export async function renderCompany(container, siren) {
                         </div>
                     </div>
                 ` : ''}
-
-                <!-- Smart Enrichment Panel -->
-                ${enrichmentPanelHTML()}
             </div>
 
             <!-- Right Column: Data Sections -->
             <div class="company-detail-data">
-                <!-- 1. Identité juridique -->
+
+                <!-- TOP ROW: Contact + Dirigeants side by side -->
+                <div class="detail-top-row">
+                    <!-- Contact Card -->
+                    <div class="detail-section">
+                        <h3 class="detail-section-title">📞 Contact</h3>
+                        ${detailRow('Téléphone', mc.phone
+        ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
+        : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
+                        ${detailRow('Email', mc.email
+                ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
+                : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
+                        ${detailRow('Site web', mc.website
+                    ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
+                    : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
+                        ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
+                        ${detailRow('LinkedIn', mc.social_linkedin
+                            ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
+                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
+                        ${detailRow('Facebook', mc.social_facebook
+                            ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
+                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
+                        ${detailRow('Twitter', mc.social_twitter
+                            ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
+                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
+                        ${mc.rating ? `
+                            <div class="detail-row" style="margin-top:var(--space-md)">
+                                <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
+                                <span class="detail-value">
+                                    <span style="font-weight:700">${mc.rating}</span>
+                                    <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
+                                    <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
+                                </span>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <!-- Dirigeants Card -->
+                    <div class="detail-section">
+                        <h3 class="detail-section-title">👤 Dirigeants</h3>
+                        ${officers.length > 0 ? officers.map(o => `
+                            <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
+                                <div style="display:flex; justify-content:space-between; align-items:center">
+                                    <span style="font-weight:600">
+                                        ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
+                                    </span>
+                                    <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
+                                </div>
+                                ${o.email_direct || o.ligne_directe ? `
+                                    <div style="display:flex; gap:var(--space-md); font-size:var(--font-sm); color:var(--text-secondary)">
+                                        ${o.ligne_directe ? `<span style="color:var(--success); font-weight:600">📞 ${escapeHtml(o.ligne_directe)}</span>` : ''}
+                                        ${o.email_direct ? `<span>📧 ${escapeHtml(o.email_direct)}</span>` : ''}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `).join('') : `
+                            <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
+                                Aucun dirigeant référencé
+                            </div>
+                        `}
+                    </div>
+                </div>
+
+                <!-- 3. Identité juridique -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">🏛️ Identité juridique</h3>
+                    ${detailRow('Dénomination', escapeHtml(co.denomination), 'Registre SIRENE', 'denomination')}
                     ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
                     ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
                     ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
@@ -165,42 +258,7 @@ export async function renderCompany(container, siren) {
                     ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
                 </div>
 
-                <!-- 2. Contact — MOVED UP (was #5) -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">📞 Contact</h3>
-                    ${detailRow('Téléphone', mc.phone
-        ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
-                    ${detailRow('Email', mc.email
-            ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-            : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
-                    ${detailRow('Site web', mc.website
-                ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-                : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
-                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
-                    ${mc.maps_url ? detailRow('Google Maps', `<a href="${mc.maps_url}" target="_blank" rel="noopener" style="color:var(--accent); font-weight:600">🗺️ Voir sur Google Maps ↗</a>`, '🗺️ Google Maps') : ''}
-                    ${detailRow('LinkedIn', mc.social_linkedin
-                        ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
-                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
-                    ${detailRow('Facebook', mc.social_facebook
-                        ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
-                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
-                    ${detailRow('Twitter', mc.social_twitter
-                        ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
-                        : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
-                    ${mc.rating ? `
-                        <div class="detail-row" style="margin-top:var(--space-md)">
-                            <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
-                            <span class="detail-value">
-                                <span style="font-weight:700">${mc.rating}</span>
-                                <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
-                                <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
-                            </span>
-                        </div>
-                    ` : ''}
-                </div>
-
-                <!-- 3. Localisation -->
+                <!-- 4. Localisation -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📍 Localisation</h3>
                     ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse')}
@@ -209,7 +267,7 @@ export async function renderCompany(container, siren) {
                     ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
-                <!-- 4. Activité & Effectif -->
+                <!-- 5. Activité & Effectif -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📊 Activité</h3>
                     ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
@@ -217,7 +275,7 @@ export async function renderCompany(container, siren) {
                     ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
-                <!-- 5. Données financières -->
+                <!-- 6. Données financières -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">💰 Données financières</h3>
                     ${detailRow("Chiffre d'affaires",
@@ -230,31 +288,7 @@ export async function renderCompany(container, siren) {
             : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
                 </div>
 
-                <div class="detail-section">
-                    <h3 class="detail-section-title">👤 Dirigeants</h3>
-                    ${officers.length > 0 ? officers.map(o => `
-                        <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
-                            <div style="display:flex; justify-content:space-between; align-items:center">
-                                <span style="font-weight:600">
-                                    ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
-                                </span>
-                                <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
-                            </div>
-                            ${o.email_direct || o.ligne_directe ? `
-                                <div style="display:flex; gap:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
-                                    ${o.email_direct ? `<span>📧 ${escapeHtml(o.email_direct)}</span>` : ''}
-                                    ${o.ligne_directe ? `<span>📞 ${escapeHtml(o.ligne_directe)}</span>` : ''}
-                                </div>
-                            ` : ''}
-                        </div>
-                    `).join('') : `
-                        <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
-                            Aucun dirigeant référencé
-                        </div>
-                    `}
-                </div>
-
-                <!-- 6b. Données supplémentaires (extra_data JSONB) -->
+                <!-- 7. Données supplémentaires (extra_data JSONB) -->
                 ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
                 <div class="detail-section">
                     <h3 class="detail-section-title">📋 Données supplémentaires</h3>
@@ -269,7 +303,31 @@ export async function renderCompany(container, siren) {
                 </div>
                 ` : ''}
 
-                <!-- 7. Enrichment History Timeline -->
+                <!-- 8. Notes (Comments) — CRM step 1 -->
+                <div class="detail-section">
+                    <h3 class="detail-section-title" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer" id="notes-toggle">
+                        <span>📝 Notes</span>
+                        <span class="notes-toggle-chevron" id="notes-chevron" style="font-size:var(--font-xs); transition:transform 0.2s">▼</span>
+                    </h3>
+                    <div id="notes-section" style="display:none">
+                        <div id="notes-list">
+                            <div class="loading" style="padding:var(--space-lg) 0"><div class="spinner"></div></div>
+                        </div>
+                        <div style="margin-top:var(--space-md); display:flex; gap:var(--space-sm)">
+                            <textarea id="note-input" placeholder="Ajouter une note…"
+                                style="flex:1; min-height:60px; padding:var(--space-sm) var(--space-md);
+                                background:var(--bg-input); border:1px solid var(--border-default);
+                                border-radius:var(--radius-sm); color:var(--text-primary);
+                                font-family:var(--font-family); font-size:var(--font-sm);
+                                resize:vertical; outline:none"></textarea>
+                            <button id="note-submit-btn" class="btn btn-primary" style="align-self:flex-end; white-space:nowrap">
+                                Ajouter
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 9. Enrichment History Timeline -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📜 Historique d'enrichissement</h3>
                     <div id="enrich-history-container">
@@ -288,6 +346,122 @@ export async function renderCompany(container, siren) {
 
     // ── Inline editing on detail rows ───────────────────────────
     _initInlineEditing(container, siren, { co, mc });
+
+    // ── Notes system ────────────────────────────────────────────
+    _initNotes(siren);
+}
+
+// ── Notes System ─────────────────────────────────────────────────
+function _initNotes(siren) {
+    const toggle = document.getElementById('notes-toggle');
+    const section = document.getElementById('notes-section');
+    const chevron = document.getElementById('notes-chevron');
+    if (!toggle || !section) return;
+
+    let loaded = false;
+
+    toggle.addEventListener('click', () => {
+        const visible = section.style.display !== 'none';
+        section.style.display = visible ? 'none' : 'block';
+        chevron.style.transform = visible ? '' : 'rotate(180deg)';
+        if (!loaded) {
+            loaded = true;
+            _loadNotes(siren);
+        }
+    });
+
+    // Submit button
+    const submitBtn = document.getElementById('note-submit-btn');
+    const input = document.getElementById('note-input');
+    if (submitBtn && input) {
+        submitBtn.addEventListener('click', async () => {
+            const text = input.value.trim();
+            if (!text) return;
+            submitBtn.disabled = true;
+            try {
+                const res = await addCompanyNote(siren, text);
+                if (res._ok !== false) {
+                    input.value = '';
+                    showToast('Note ajoutée ✅', 'success');
+                    _loadNotes(siren);
+                } else {
+                    showToast(extractApiError(res), 'error');
+                }
+            } catch {
+                showToast('Erreur lors de l\'ajout', 'error');
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    }
+}
+
+async function _loadNotes(siren) {
+    const container = document.getElementById('notes-list');
+    if (!container) return;
+
+    const data = await getCompanyNotes(siren);
+    const notes = (data && data.notes) || [];
+    const currentUser = getCachedUser();
+
+    if (notes.length === 0) {
+        container.innerHTML = `
+            <div style="color:var(--text-muted); font-style:italic; padding:var(--space-sm) 0; font-size:var(--font-sm)">
+                Aucune note — ajoutez la première ci-dessous
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = notes.map(n => {
+        const canDelete = currentUser && (currentUser.id === n.user_id || currentUser.role === 'admin');
+        return `
+            <div class="note-item" style="padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xs)">
+                    <span style="font-size:var(--font-xs); font-weight:600; color:var(--text-secondary)">
+                        ${n.username === currentUser?.username ? '👑' : '👤'} ${escapeHtml(n.username)}
+                        <span style="color:var(--text-muted); font-weight:400; margin-left:var(--space-sm)">
+                            ${_formatNoteDate(n.created_at)}
+                        </span>
+                    </span>
+                    ${canDelete ? `<button class="btn-ghost btn-icon note-delete-btn" data-note-id="${n.id}" title="Supprimer" style="font-size:var(--font-xs); color:var(--text-muted)">🗑️</button>` : ''}
+                </div>
+                <div style="font-size:var(--font-sm); color:var(--text-primary); white-space:pre-wrap; line-height:1.5">${escapeHtml(n.text)}</div>
+            </div>
+        `;
+    }).join('');
+
+    // Wire delete buttons
+    container.querySelectorAll('.note-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const noteId = btn.dataset.noteId;
+            btn.disabled = true;
+            try {
+                const res = await deleteCompanyNote(noteId);
+                if (res._ok !== false) {
+                    showToast('Note supprimée', 'success');
+                    _loadNotes(siren);
+                } else {
+                    showToast(extractApiError(res), 'error');
+                }
+            } catch {
+                showToast('Erreur de suppression', 'error');
+            }
+        });
+    });
+}
+
+function _formatNoteDate(dateStr) {
+    if (!dateStr) return '—';
+    try {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            + ' à '
+            + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+        return dateStr;
+    }
 }
 
 // ── Inline Edit Logic ────────────────────────────────────────────
@@ -551,4 +725,3 @@ function _formatTimelineDate(dateStr) {
         return dateStr;
     }
 }
-

@@ -11,6 +11,7 @@ import { renderMonitor } from './pages/monitor.js';
 import { renderNewBatch } from './pages/new-batch.js';
 import { renderOpenQuery } from './pages/open-query.js';
 import { renderUpload } from './pages/upload.js';
+import { renderContacts } from './pages/contacts.js';
 import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
@@ -44,6 +45,7 @@ const routes = [
     { pattern: /^#\/monitor\/(.+)$/, handler: renderMonitor, nav: 'monitor' },
     { pattern: /^#\/monitor$/, handler: renderMonitor, nav: 'monitor' },
     { pattern: /^#\/upload$/, handler: renderUpload, nav: 'upload' },
+    { pattern: /^#\/contacts$/, handler: renderContacts, nav: 'contacts' },
 ];
 
 function getPageContent() {
@@ -146,6 +148,10 @@ async function navigate() {
             const navEl = document.querySelector(`[data-page="${route.nav}"]`);
             if (navEl) navEl.classList.add('active');
 
+            // Hide header search on Base SIRENE page (it has its own search bar)
+            const headerSearch = document.querySelector('.header-search');
+            if (headerSearch) headerSearch.style.display = route.nav === 'search' ? 'none' : '';
+
             // Clean up previous page (intervals, listeners, etc.)
             _runCleanup();
 
@@ -187,13 +193,28 @@ function initGlobalSearch() {
     if (!input) return;
     let debounceTimer;
 
+    function _doSearch(q) {
+        if (!q) return;
+        const hash = window.location.hash || '#/';
+        const onDashboard = hash === '#/' || hash === '#/dashboard' || hash === '';
+        if (onDashboard) {
+            // On dashboard: switch to "Toutes les Données" tab and search within it
+            const btn = document.getElementById('btn-all-data');
+            if (btn) { btn.click(); }
+            // Set the search term in the All Data search input after a tick
+            setTimeout(() => {
+                const allDataSearch = document.getElementById('alldata-search');
+                if (allDataSearch) { allDataSearch.value = q; allDataSearch.dispatchEvent(new Event('input')); }
+            }, 100);
+        } else {
+            window.location.hash = `#/search?q=${encodeURIComponent(q)}`;
+        }
+    }
+
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             const q = input.value.trim();
-            if (q) {
-                window.location.hash = `#/search?q=${encodeURIComponent(q)}`;
-                input.blur();
-            }
+            if (q) { _doSearch(q); input.blur(); }
         }
     });
 
@@ -201,9 +222,7 @@ function initGlobalSearch() {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
             const q = input.value.trim();
-            if (q.length >= 3) {
-                window.location.hash = `#/search?q=${encodeURIComponent(q)}`;
-            }
+            if (q.length >= 3) { _doSearch(q); }
         }, 500);
     });
 }

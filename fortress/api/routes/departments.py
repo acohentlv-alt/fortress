@@ -88,7 +88,9 @@ async def get_department_jobs(dept: str):
             COUNT(DISTINCT co.siren) AS companies_in_dept
         FROM scrape_jobs sj
         JOIN query_tags qt ON qt.query_name = sj.query_name
+                           OR qt.query_name = sj.query_id
         JOIN companies co ON co.siren = qt.siren AND co.departement = %s
+        WHERE sj.status != 'deleted'
         GROUP BY sj.id
         ORDER BY sj.created_at DESC
     """, (dept,))

@@ -184,12 +184,13 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
 
 @router.post("/{query_id}/resume")
-async def resume_batch(query_id: str):
-    """Resume an interrupted or failed batch job.
+async def resume_batch(query_id: str, request: Request):
+    """Resume an interrupted or failed batch job. Admin only."""
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
-    Re-launches the same job with the same parameters.
-    The runner will skip SIRENs already in scrape_audit for this query_id.
-    """
     job = await fetch_one(
         """SELECT query_id, query_name, status, filters_json, strategy,
                   EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_stale

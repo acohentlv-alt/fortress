@@ -292,3 +292,36 @@ ALTER TABLE officers ADD COLUMN IF NOT EXISTS type_fonction  TEXT;
 
 -- Scrape jobs: upload mode tracking
 ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'discovery';
+
+-- ---------------------------------------------------------------------------
+-- Company notes — per-company text annotations (CRM step 1)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS company_notes (
+    id          SERIAL          PRIMARY KEY,
+    siren       VARCHAR(9)      NOT NULL REFERENCES companies(siren) ON DELETE CASCADE,
+    user_id     INTEGER         NOT NULL REFERENCES users(id),
+    username    VARCHAR(50)     NOT NULL,
+    text        TEXT            NOT NULL,
+    created_at  TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_notes_siren ON company_notes(siren);
+
+-- ---------------------------------------------------------------------------
+-- Activity log — admin audit trail of all user actions
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          SERIAL          PRIMARY KEY,
+    user_id     INTEGER         REFERENCES users(id),
+    username    VARCHAR(100),
+    action      VARCHAR(50)     NOT NULL,
+    target_type VARCHAR(50),
+    target_id   TEXT,
+    details     TEXT,
+    created_at  TIMESTAMP       DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_time ON activity_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log (user_id, created_at DESC);

@@ -91,8 +91,8 @@ export async function renderDashboard(container) {
 
         <!-- View Toggle -->
         <div class="view-toggle" style="flex-wrap:wrap">
-            <button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>
-            <button class="view-toggle-btn" id="btn-by-job">📋 Par Recherche</button>
+            ${user?.role === 'admin' ? '<button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>' : ''}
+            <button class="view-toggle-btn ${user?.role !== 'admin' ? 'active' : ''}" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-dept">📍 Par Département</button>
             <button class="view-toggle-btn" id="btn-by-upload">📤 Par Upload</button>
             <button class="view-toggle-btn" id="btn-all-data">🗃️ Toutes les Données</button>
@@ -102,8 +102,17 @@ export async function renderDashboard(container) {
         <div id="dashboard-view"><div class="loading"><div class="spinner"></div></div></div>
     `;
 
-    // Render initial view — Analysis is default
-    _loadAnalysisView(container);
+    // Render initial view — Analysis for admin, Par Recherche for others
+    if (user?.role === 'admin') {
+        _loadAnalysisView(container);
+    } else {
+        const byJobData = await getDashboardStatsByJob();
+        if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
+            renderByJobFromAPI(byJobData, container);
+        } else {
+            renderByJob(jobs, container);
+        }
+    }
 
     // Master Export handler — dropdown with CSV + XLSX
     const exportBtn = document.getElementById('btn-master-export');
@@ -126,10 +135,13 @@ export async function renderDashboard(container) {
     });
 
     // Toggle handlers
-    document.getElementById('btn-analysis').addEventListener('click', () => {
-        setActiveToggle('btn-analysis');
-        _loadAnalysisView(container);
-    });
+    const analysisBtn = document.getElementById('btn-analysis');
+    if (analysisBtn) {
+        analysisBtn.addEventListener('click', () => {
+            setActiveToggle('btn-analysis');
+            _loadAnalysisView(container);
+        });
+    }
 
     document.getElementById('btn-by-job').addEventListener('click', async () => {
         setActiveToggle('btn-by-job');

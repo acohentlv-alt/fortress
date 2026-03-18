@@ -57,7 +57,8 @@ async def search_sirene(
                     await cur.execute("""
                         SELECT siren, denomination, enseigne, naf_code, naf_libelle,
                                forme_juridique, tranche_effectif,
-                               adresse, ville, code_postal, departement, statut
+                               adresse, ville, code_postal, departement, statut,
+                               EXISTS(SELECT 1 FROM contacts ct WHERE ct.siren = companies.siren) AS is_enriched
                         FROM companies
                         WHERE siren = %s
                     """, (clean_digits,))
@@ -96,7 +97,8 @@ async def search_sirene(
                     await cur.execute(f"""
                         SELECT siren, denomination, enseigne, naf_code, naf_libelle,
                                forme_juridique, tranche_effectif,
-                               adresse, ville, code_postal, departement, statut
+                               adresse, ville, code_postal, departement, statut,
+                               EXISTS(SELECT 1 FROM contacts ct WHERE ct.siren = companies.siren) AS is_enriched
                         FROM companies
                         WHERE {where_clause}
                         ORDER BY denomination

@@ -1,6 +1,6 @@
 """Jobs API routes — job-based views, delete, cancel, and company listing."""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
@@ -48,8 +48,12 @@ async def list_jobs():
 
 
 @router.delete("/{query_id}")
-async def delete_job(query_id: str):
-    """Soft-delete a batch. Removes query_tags but preserves company/contact data."""
+async def delete_job(query_id: str, request: Request):
+    """Soft-delete a batch. Removes query_tags but preserves company/contact data. Admin only."""
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+
     async with get_conn() as conn:
         row = await (await conn.execute(
             "SELECT status, query_name, companies_scraped, batch_size FROM scrape_jobs WHERE query_id = %s",
@@ -66,10 +70,11 @@ async def delete_job(query_id: str):
             "UPDATE scrape_jobs SET status = 'deleted', updated_at = NOW() WHERE query_id = %s",
             (query_id,),
         )
-        # Remove query_tags for this job's query_name
+        # Remove query_tags scoped to THIS batch only (via scrape_audit)
+        # so sibling batches sharing the same query_name keep their tags
         await conn.execute(
-            "DELETE FROM query_tags WHERE query_name = %s",
-            (row[1],),
+            "DELETE FROM query_tags WHERE query_name = %s AND siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)",
+            (row[1], query_id),
         )
         await conn.commit()
 
@@ -77,12 +82,11 @@ async def delete_job(query_id: str):
 
 
 @router.post("/{query_id}/cancel")
-async def cancel_job(query_id: str):
-    """Request graceful cancellation of a running batch.
-
-    Sets cancel_requested=TRUE in scrape_jobs. The runner checks this flag
-    before each wave and stops gracefully, preserving already-collected data.
-    """
+async def cancel_job(query_id: str, request: Request):
+    """Request graceful cancellation of a running batch. Admin only."""
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     async with get_conn() as conn:
         row = await (await conn.execute(
             "SELECT status FROM scrape_jobs WHERE query_id = %s",
@@ -107,12 +111,11 @@ async def cancel_job(query_id: str):
 
 
 @router.post("/{query_id}/retry")
-async def retry_job(query_id: str):
-    """Retry a failed or completed batch.
-
-    Resets progress counters, flips status back to 'queued',
-    and spawns a fresh runner subprocess.
-    """
+async def retry_job(query_id: str, request: Request):
+    """Retry a failed or completed batch. Admin only."""
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     import os
     import subprocess
     import sys

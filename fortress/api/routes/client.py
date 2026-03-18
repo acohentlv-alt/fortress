@@ -242,20 +242,48 @@ async def preview_upload(file: UploadFile = File(...)):
 async def client_stats():
     """Return upload history and stats."""
     try:
-        uploads = await fetch_all("""
-            SELECT query_id, query_name, status, batch_size,
-                   companies_scraped, companies_qualified,
-                   created_at, updated_at
-            FROM scrape_jobs
-            WHERE mode = 'upload'
-            ORDER BY created_at DESC
+        uploads_raw = await fetch_all("""
+            SELECT sj.query_id, sj.query_name, sj.status, sj.batch_size,
+                   sj.companies_scraped, sj.companies_qualified,
+                   sj.created_at, sj.updated_at,
+                   COUNT(DISTINCT sa.siren) AS siren_count
+            FROM scrape_jobs sj
+            LEFT JOIN scrape_audit sa ON sa.query_id = sj.query_id
+            WHERE sj.mode = 'upload'
+            GROUP BY sj.query_id, sj.query_name, sj.status, sj.batch_size,
+                     sj.companies_scraped, sj.companies_qualified,
+                     sj.created_at, sj.updated_at
+            ORDER BY sj.created_at DESC
             LIMIT 20
         """)
+
+        # Count total unique SIRENs across all upload jobs
+        total_row = await fetch_one("""
+            SELECT COUNT(DISTINCT sa.siren) AS total
+            FROM scrape_audit sa
+            JOIN scrape_jobs sj ON sj.query_id = sa.query_id
+            WHERE sj.mode = 'upload'
+        """)
+        total_sirens = (total_row or {}).get("total", 0)
+
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
 
+    # Reshape for frontend: extract filename from query_name "Import: filename"
+    uploads = []
+    for u in (uploads_raw or []):
+        qn = u.get("query_name", "")
+        source_file = qn.replace("Import: ", "") if qn.startswith("Import: ") else qn
+        uploads.append({
+            **u,
+            "source_file": source_file,
+            "siren_count": u.get("siren_count", 0),
+            "uploaded_at": u.get("created_at"),
+        })
+
     return {
-        "uploads": uploads or [],
+        "uploads": uploads,
+        "total_sirens": total_sirens,
     }
 
 
