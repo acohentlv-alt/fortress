@@ -295,7 +295,7 @@ export function renderIntro(container) {
                         pour une démonstration personnalisée.
                     </p>
                     <div class="land-cta-buttons">
-                        <a href="mailto:contact@fortress.fr?subject=Demande%20d'accès%20Fortress" class="land-btn-primary">
+                        <a href="mailto:acohen.tlv@gmail.com?subject=Demande%20d'accès%20Fortress" class="land-btn-primary">
                             ✉️ Contactez-nous
                         </a>
                         <a href="#/login" class="land-btn-secondary">
