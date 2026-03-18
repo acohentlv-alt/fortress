@@ -242,13 +242,22 @@ export async function renderCompany(container, siren) {
             : unenrichedField('financials'))}
                 </div>
 
-                <!-- 6. Dirigeants -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">👤 Dirigeants</h3>
                     ${officers.length > 0 ? officers.map(o => `
-                        <div class="detail-row">
-                            <span class="detail-label">${escapeHtml(o.role || 'Dirigeant')}</span>
-                            <span class="detail-value" style="font-weight:600">${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}</span>
+                        <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
+                            <div style="display:flex; justify-content:space-between; align-items:center">
+                                <span style="font-weight:600">
+                                    ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
+                                </span>
+                                <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
+                            </div>
+                            ${o.email_direct || o.ligne_directe ? `
+                                <div style="display:flex; gap:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
+                                    ${o.email_direct ? `<span>📧 ${escapeHtml(o.email_direct)}</span>` : ''}
+                                    ${o.ligne_directe ? `<span>📞 ${escapeHtml(o.ligne_directe)}</span>` : ''}
+                                </div>
+                            ` : ''}
                         </div>
                     `).join('') : `
                         <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
@@ -256,6 +265,21 @@ export async function renderCompany(container, siren) {
                         </div>
                     `}
                 </div>
+
+                <!-- 6b. Données supplémentaires (extra_data JSONB) -->
+                ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
+                <div class="detail-section">
+                    <h3 class="detail-section-title">📋 Données supplémentaires</h3>
+                    <div style="background:var(--bg-tertiary, var(--bg-secondary)); border-radius:var(--radius-md); padding:var(--space-sm) 0; border:1px solid var(--border-subtle)">
+                        ${Object.entries(co.extra_data).map(([k, v]) => `
+                            <div class="detail-row" style="padding:var(--space-xs) var(--space-md)">
+                                <span class="detail-label" style="color:var(--text-muted)">${escapeHtml(k)}</span>
+                                <span class="detail-value">${escapeHtml(String(v))}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
 
                 <!-- 7. Enrichment History Timeline -->
                 <div class="detail-section">

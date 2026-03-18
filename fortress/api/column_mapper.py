@@ -49,6 +49,8 @@ class MappingResult:
 # ---------------------------------------------------------------------------
 
 # Each entry: (target_table, target_field, [list of normalized alias patterns])
+# ORDER MATTERS: more-specific entries must come before generic ones.
+# Officer fields before contacts to prevent "email direct dirigeant" → contacts.email.
 ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
     # ── SIREN / Registration ──
     ("companies", "siren", [
@@ -69,12 +71,12 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
         "nom commercial", "trading name", "brand name",
     ]),
     ("companies", "naf_code", [
-        "code naf 2008", "code naf", "naf 2008", "naf", "code ape", "ape",
+        "code naf 2008", "code naf", "naf 2008", "code ape", "ape",
         "naf code", "activite principale",
     ]),
     ("companies", "naf_libelle", [
         "libelle naf 2008", "libelle naf", "libelle activite",
-        "activite", "naf libelle", "secteur activite",
+        "naf libelle", "secteur activite",
         "secteur d activite",
     ]),
     ("companies", "forme_juridique", [
@@ -85,15 +87,13 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
     # ── Address ──
     ("companies", "adresse", [
         "rue", "adresse", "street", "address", "voie",
-        "numero et rue", "adresse postale",
+        "numero et rue",
     ]),
     ("companies", "code_postal", [
         "code postal", "cp", "postal code", "zip",
-        "code postal legal",
     ]),
     ("companies", "ville", [
         "ville", "city", "commune", "localite",
-        "ville legale",
     ]),
     ("companies", "departement", [
         "departement", "dept", "department",
@@ -110,80 +110,32 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
         "tranche effectif", "taille entreprise",
     ]),
     ("companies", "effectif_exact", [
-        "effectif exact", "effectif exact de l entreprise",
-        "effectif exact a l adresse", "nombre exact de salaries",
+        "effectif exact de l entreprise", "effectif exact a l adresse",
+        "effectif exact", "nombre exact de salaries",
     ]),
     ("companies", "chiffre_affaires", [
         "chiffre d affaires brut", "chiffre d affaires",
-        "ca brut", "ca", "revenue", "turnover",
         "chiffre affaires",
     ]),
     ("companies", "annee_ca", [
         "annee du ca brut", "annee du ca", "annee ca",
-        "year revenue",
     ]),
     ("companies", "tranche_ca", [
         "tranche du ca brut", "tranche du ca",
-        "tranche ca", "revenue range",
+        "tranche ca",
     ]),
     ("companies", "date_fondation", [
         "date de fondation", "date fondation",
+        "annee de fondation",
         "date creation", "founded",
     ]),
-    # Note: "Année de fondation" (year only) is handled specially in ingestion
     ("companies", "type_etablissement", [
         "type d etablissement", "type etablissement",
         "establishment type",
     ]),
 
-    # ── Contact fields ──
-    ("contacts", "phone", [
-        "numero de telephone", "telephone", "tel", "phone",
-        "phone number", "tel fixe", "telephone fixe",
-    ]),
-    ("contacts", "email", [
-        "email", "e mail", "courriel", "mail",
-        "email entreprise", "certified email",
-        "adresse email", "adresse e mail",
-    ]),
-    ("contacts", "website", [
-        "site web", "website", "url", "site internet",
-        "web", "site", "adresse web",
-    ]),
-    ("contacts", "social_linkedin", [
-        "linkedin", "reseaux sociaux", "social",
-        "social linkedin", "lien linkedin",
-    ]),
-    ("contacts", "social_facebook", [
-        "facebook", "social facebook", "lien facebook",
-    ]),
-    ("contacts", "social_twitter", [
-        "twitter", "x com", "social twitter",
-    ]),
-
-    # ── Officer (person) fields ──
-    ("officers", "civilite", [
-        "civilite", "title", "mr mrs",
-    ]),
-    ("officers", "prenom", [
-        "prenom", "deuxieme prenom", "first name",
-        "given name",
-    ]),
-    ("officers", "nom", [
-        "nom", "last name", "surname", "family name",
-        "nom de famille",
-    ]),
-    ("officers", "role", [
-        "fonction", "function", "job title", "poste",
-        "role", "libelle personnalise",
-    ]),
-    ("officers", "code_fonction", [
-        "code fonction", "function code",
-    ]),
-    ("officers", "type_fonction", [
-        "type de fonction", "function type",
-        "type fonction",
-    ]),
+    # ── Officer (person) fields — MUST come before contacts ──
+    # So "email direct dirigeant" matches officers.email_direct, not contacts.email
     ("officers", "email_direct", [
         "email direct dirigeant", "email direct",
         "direct email", "email personnel",
@@ -193,9 +145,56 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
         "ligne directe", "direct line", "direct phone",
         "telephone direct", "tel direct",
     ]),
+    ("officers", "code_fonction", [
+        "code fonction", "function code",
+    ]),
+    ("officers", "type_fonction", [
+        "type de fonction", "function type",
+        "type fonction",
+    ]),
+    ("officers", "civilite", [
+        "civilite", "title",
+    ]),
+    ("officers", "prenom", [
+        "prenom", "deuxieme prenom", "first name",
+        "given name",
+    ]),
+    ("officers", "nom", [
+        "nom", "nom de famille", "last name", "surname", "family name",
+    ]),
+    ("officers", "role", [
+        "fonction", "function", "job title", "poste",
+        "libelle personnalise",
+    ]),
+
+    # ── Contact fields — AFTER officers ──
+    ("contacts", "phone", [
+        "numero de telephone", "telephone", "tel", "phone",
+        "phone number", "tel fixe", "telephone fixe",
+    ]),
+    ("contacts", "email", [
+        "email entreprise", "certified email",
+        "adresse email", "adresse e mail",
+        "e mail", "courriel", "email", "mail",
+    ]),
+    ("contacts", "website", [
+        "site web", "website", "url", "site internet",
+        "web", "adresse web",
+    ]),
+    ("contacts", "social_linkedin", [
+        "reseaux sociaux", "social linkedin", "lien linkedin",
+        "linkedin",
+    ]),
+    ("contacts", "social_facebook", [
+        "facebook", "social facebook", "lien facebook",
+    ]),
+    ("contacts", "social_twitter", [
+        "twitter", "x com", "social twitter",
+    ]),
 ]
 
 # Columns to skip entirely (no value for the database)
+# These are EXACT normalized matches — no substring matching.
 SKIP_PATTERNS: set[str] = {
     "genre", "source de la donnee contact", "identifiant kompass",
     "company url",  # Kompass profile URL, not the company's website
@@ -204,13 +203,15 @@ SKIP_PATTERNS: set[str] = {
     "emps", "email preference service",
     "pays", "code pays", "etat",  # We know it's France
     "complement d adresse", "complement d adresse postale",
-    "rue postale", "boite postale",
+    "rue postale", "boite postale", "adresse postale",
     "registration address", "pays d enregistrement",
     "rue d enregistrement", "complement d enregistrement",
     "boite d enregistrement",
     "adresse legale", "pays legal", "rue legale",
     "complement legal", "ville legale", "code postal legal",
     "recherche par texte",  # Kompass internal search text
+    "fax",  # Obsolete, no fax field in schema
+    "pays d export", "pays d import",  # Low-value for B2B leads
 }
 
 
@@ -302,7 +303,16 @@ def map_columns(headers: list[str]) -> MappingResult:
     Returns a MappingResult with all columns classified.
     """
     result = MappingResult()
-    used_targets: set[tuple[str, str]] = set()  # Prevent double-mapping
+    used_targets: set[tuple[str, str]] = set()
+
+    # Fields that can be mapped from multiple source columns
+    # (take the first non-empty value during ingestion)
+    allow_duplicates = {
+        ("companies", "enseigne"),
+        ("companies", "tranche_effectif"),
+        ("companies", "effectif_exact"),
+        ("companies", "date_fondation"),
+    }
 
     for col_idx, header in enumerate(headers):
         if not header:
@@ -324,53 +334,65 @@ def map_columns(headers: list[str]) -> MappingResult:
             ))
             continue
 
-        # Try alias registry
+        # Two-pass matching: exact first, then longest-alias substring
         matched = False
+
+        # Pass 1: exact match (normalized header == alias exactly)
         for target_table, target_field, aliases in ALIAS_REGISTRY:
             if (target_table, target_field) in used_targets:
-                # Already mapped this field from an earlier column
-                # Exception: officer fields CAN appear per-row (multiple officers)
-                if target_table != "officers":
+                if target_table != "officers" and (target_table, target_field) not in allow_duplicates:
                     continue
-
-            if norm in aliases or any(alias in norm for alias in aliases):
+            if norm in aliases:
                 result.columns.append(MappedColumn(
                     source_name=header,
                     target_table=target_table,
                     target_field=target_field,
-                    confidence=1.0 if norm in aliases else 0.8,
+                    confidence=1.0,
                 ))
                 used_targets.add((target_table, target_field))
-
                 if target_field == "siren":
                     result.siren_column = col_idx
                 if target_table == "officers" and target_field in ("prenom", "nom"):
                     result.has_officer_data = True
-
                 matched = True
                 break
 
+        # Pass 2: longest-alias substring match
+        # ("email direct dirigeant" contains "email direct" which is longer
+        #  than "email", so officers.email_direct wins over contacts.email)
         if not matched:
-            # Check if it's a well-known skip pattern (partial match)
-            skip = False
-            for skip_pat in SKIP_PATTERNS:
-                if skip_pat in norm or norm in skip_pat:
-                    skip = True
-                    break
+            best_match = None
+            best_alias_len = 0
+            for target_table, target_field, aliases in ALIAS_REGISTRY:
+                if (target_table, target_field) in used_targets:
+                    if target_table != "officers" and (target_table, target_field) not in allow_duplicates:
+                        continue
+                for alias in aliases:
+                    if alias in norm and len(alias) > best_alias_len:
+                        best_match = (target_table, target_field)
+                        best_alias_len = len(alias)
 
-            if skip:
+            if best_match:
+                target_table, target_field = best_match
                 result.columns.append(MappedColumn(
                     source_name=header,
-                    target_table="skip",
-                    target_field="",
+                    target_table=target_table,
+                    target_field=target_field,
+                    confidence=0.8,
                 ))
-            else:
-                # Overflow → extra_data
-                result.columns.append(MappedColumn(
-                    source_name=header,
-                    target_table="extra_data",
-                    target_field=header.strip(),
-                ))
+                used_targets.add((target_table, target_field))
+                if target_field == "siren":
+                    result.siren_column = col_idx
+                if target_table == "officers" and target_field in ("prenom", "nom"):
+                    result.has_officer_data = True
+                matched = True
+
+        if not matched:
+            # Overflow → extra_data
+            result.columns.append(MappedColumn(
+                source_name=header,
+                target_table="extra_data",
+                target_field=header.strip(),
+            ))
 
     return result
-""", "CodeMarkdownLanguage": "python", "Complexity": 8, "Description": "Core intelligence module for the Smart Upload Engine — maps arbitrary column names from any French data provider to Fortress fields, with SIREN/SIRET/TVA normalization", "EmptyFile": false, "IsArtifact": false, "Overwrite": false, "TargetFile": "/Users/alancohen/Downloads/Project Alan copy/fortress/fortress/api/column_mapper.py"

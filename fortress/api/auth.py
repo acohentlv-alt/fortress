@@ -98,10 +98,10 @@ def decode_session_token(token: str) -> SessionUser | None:
 # ---------------------------------------------------------------------------
 
 async def get_user_by_username(conn, username: str) -> dict | None:
-    """Fetch a user row by username. Returns dict or None."""
+    """Fetch a user row by username (case-insensitive). Returns dict or None."""
     import psycopg.rows
     cur = await conn.execute(
-        "SELECT id, username, password_hash, role, display_name FROM users WHERE username = %s",
+        "SELECT id, username, password_hash, role, display_name FROM users WHERE LOWER(username) = LOWER(%s)",
         (username,),
     )
     row = await cur.fetchone()

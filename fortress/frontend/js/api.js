@@ -278,8 +278,32 @@ export async function checkHealth() {
     }
 }
 
-// ── Client Upload (BLUE triage dedup) ────────────────────────────
-export async function uploadClientCSV(file) {
+// ── Client Upload (Smart Ingestion) ──────────────────────────────
+
+/** Preview file mapping without ingesting. Returns column mapping summary. */
+export async function previewUpload(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const resp = await fetch(`${API_BASE}/client/preview`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin',
+        });
+        let data;
+        try { data = await resp.json(); } catch { data = {}; }
+        if (data && typeof data === 'object') {
+            data._status = resp.status;
+            data._ok = resp.ok;
+        }
+        return data;
+    } catch (err) {
+        return { _status: 0, _ok: false, error: err.message };
+    }
+}
+
+/** Upload and ingest file with smart column mapping. */
+export async function uploadClientFile(file) {
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -299,6 +323,9 @@ export async function uploadClientCSV(file) {
         return { _status: 0, _ok: false, error: err.message };
     }
 }
+
+// Keep backward compat
+export const uploadClientCSV = uploadClientFile;
 
 export async function getClientStats() {
     return await request('/client/stats');

@@ -451,12 +451,15 @@ async def get_company(siren: str):
     """Full company detail with enriched data, contacts, and officers."""
     company = await fetch_one("""
         SELECT
-            co.siren, co.siret_siege, co.denomination,
+            co.siren, co.siret_siege, co.denomination, co.enseigne,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.region, co.statut,
-            co.date_creation, co.tranche_effectif,
+            co.date_creation, co.tranche_effectif, co.effectif_exact,
             co.latitude, co.longitude, co.fortress_id,
+            co.chiffre_affaires, co.annee_ca, co.tranche_ca,
+            co.date_fondation, co.type_etablissement,
+            co.extra_data,
             co.created_at, co.updated_at
         FROM companies co
         WHERE co.siren = %s
@@ -478,7 +481,9 @@ async def get_company(siren: str):
 
     # Officers / Dirigeants
     officers = await fetch_all("""
-        SELECT nom, prenom, role, source
+        SELECT nom, prenom, role, source,
+               civilite, email_direct, ligne_directe,
+               code_fonction, type_fonction
         FROM officers
         WHERE siren = %s
         ORDER BY nom
