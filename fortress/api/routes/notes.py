@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -61,6 +62,15 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
         row = await result.fetchone()
         await conn.commit()
 
+    await log_activity(
+        user_id=user_id,
+        username=username,
+        action='note_added',
+        target_type='company',
+        target_id=siren,
+        details=f"Note ajoutée sur {siren}",
+    )
+
     return {
         "id": row[0],
         "siren": siren,
@@ -93,5 +103,14 @@ async def delete_note(note_id: int, request: Request):
     async with get_conn() as conn:
         await conn.execute("DELETE FROM company_notes WHERE id = %s", (note_id,))
         await conn.commit()
+
+    await log_activity(
+        user_id=user.get("id"),
+        username=user.get("username", "admin"),
+        action='note_deleted',
+        target_type='company',
+        target_id=str(note_id),
+        details=f"Note #{note_id} supprimée",
+    )
 
     return {"deleted": True, "id": note_id}

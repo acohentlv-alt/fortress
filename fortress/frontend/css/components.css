@@ -686,33 +686,36 @@
 /* ── Card Delete Button (dashboard cards) ────────────────────────── */
 .card-delete-btn {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    background: none;
-    border: none;
+    top: -8px;
+    right: -8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
     color: var(--text-muted);
-    font-size: 1rem;
-    width: 26px;
-    height: 26px;
+    font-size: 0.85rem;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
+    border-radius: 50%;
     cursor: pointer;
     transition: all var(--transition-fast);
-    opacity: 0.5;
-    z-index: 5;
+    opacity: 0.6;
+    z-index: 10;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
 
 .dept-card:hover .card-delete-btn,
 .job-group-card:hover .card-delete-btn {
-    opacity: 0.8;
+    opacity: 0.9;
 }
 
 .card-delete-btn:hover {
     opacity: 1 !important;
     background: rgba(239, 68, 68, 0.15);
+    border-color: var(--danger, #ef4444);
     color: var(--danger, #ef4444);
+    transform: scale(1.15);
 }
 
 .company-card-header {

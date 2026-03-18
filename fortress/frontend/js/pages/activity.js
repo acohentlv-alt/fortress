@@ -16,6 +16,8 @@ const ACTION_ICONS = {
     cancel_job: '⏹️',
     delete_tags: '🏷️',
     export: '📥',
+    note_added: '📝',
+    note_deleted: '🗑️',
 };
 
 const ACTION_LABELS = {
@@ -25,6 +27,8 @@ const ACTION_LABELS = {
     cancel_job: 'Batch annulé',
     delete_tags: 'Tags supprimés',
     export: 'Export effectué',
+    note_added: 'Note ajoutée',
+    note_deleted: 'Note supprimée',
 };
 
 function _timeAgo(dateStr) {
