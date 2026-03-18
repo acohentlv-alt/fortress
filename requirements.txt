@@ -17,6 +17,7 @@ psycopg_pool>=3.2
 # Data processing
 polars>=1.0
 pyarrow>=14.0
+openpyxl>=3.1
 
 # HTTP clients
 curl_cffi>=0.14
