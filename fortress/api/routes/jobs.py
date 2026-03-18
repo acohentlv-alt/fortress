@@ -120,7 +120,7 @@ async def retry_job(query_id: str):
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            "SELECT status, query_name FROM scrape_jobs WHERE query_id = %s",
+            "SELECT status, query_name, strategy FROM scrape_jobs WHERE query_id = %s",
             (query_id,),
         )).fetchone()
 
@@ -156,7 +156,9 @@ async def retry_job(query_id: str):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{query_id}.log"
 
-    runner_cmd = [sys.executable, "-m", "fortress.runner", query_id]
+    strategy = row[2] or "sirene"
+    runner_module = "fortress.maps_discovery_runner" if strategy == "maps" else "fortress.runner"
+    runner_cmd = [sys.executable, "-m", runner_module, query_id]
 
     # Sandbox workaround
     launcher = Path("/tmp/fortress_launcher.py")

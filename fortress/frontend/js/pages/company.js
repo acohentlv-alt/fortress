@@ -223,11 +223,11 @@ export async function renderCompany(container, siren) {
                     ${detailRow("Chiffre d'affaires",
         co.chiffre_affaires
             ? formatCurrency(co.chiffre_affaires)
-            : unenrichedField('financials'))}
+            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
                     ${detailRow('Résultat net',
         co.resultat_net
             ? formatCurrency(co.resultat_net)
-            : unenrichedField('financials'))}
+            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
                 </div>
 
                 <div class="detail-section">
@@ -281,7 +281,7 @@ export async function renderCompany(container, siren) {
     `;
 
     // ── Wire up Smart Enrichment Panel ───────────────────────────
-    _initEnrichmentPanel(siren);
+    _initEnrichmentPanel(siren, container);
 
     // ── Load Enrichment History ──────────────────────────────────
     _loadEnrichHistory(siren, data.contacts || []);
@@ -382,7 +382,7 @@ function _initInlineEditing(container, siren, { co, mc }) {
 }
 
 // ── Enrichment Panel Logic ───────────────────────────────────────
-function _initEnrichmentPanel(siren) {
+function _initEnrichmentPanel(siren, container) {
     const panel = document.getElementById('enrich-panel');
     const submitBtn = document.getElementById('enrich-submit-btn');
     if (!panel || !submitBtn) return;
@@ -430,14 +430,8 @@ function _initEnrichmentPanel(siren) {
             panel.classList.add('enrich-panel-highlight');
             setTimeout(() => panel.classList.remove('enrich-panel-highlight'), 2000);
 
-            // Auto-check the relevant checkbox
-            if (targetModule) {
-                const cb = panel.querySelector(`input[value="${targetModule}"]`);
-                if (cb && !cb.checked) {
-                    cb.checked = true;
-                    updateSubmitState();
-                }
-            }
+            // Scroll-and-highlight only — no checkbox toggling
+            // (the panel has a single hardcoded module, no checkboxes)
         });
     });
 }
@@ -483,8 +477,8 @@ async function _loadEnrichHistory(siren, contacts) {
     // Try API first
     try {
         const apiData = await getCompanyEnrichHistory(siren);
-        if (apiData && Array.isArray(apiData) && apiData.length > 0) {
-            timeline = apiData;
+        if (apiData && apiData.history && Array.isArray(apiData.history) && apiData.history.length > 0) {
+            timeline = apiData.history;
         }
     } catch { /* fallback below */ }
 

@@ -274,7 +274,7 @@ async def enrich_company(siren: str, body: EnrichRequest):
         log_fh = open(log_path, "a")
         proc = subprocess.Popen(
             [sys.executable, "-m", "fortress.runner", query_id],
-            cwd=str(fortress_root),
+            cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
             stdout=log_fh,
             stderr=log_fh,
             start_new_session=True,

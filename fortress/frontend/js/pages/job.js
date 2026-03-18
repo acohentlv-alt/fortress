@@ -20,11 +20,13 @@ export async function renderJob(container, queryId) {
         getJobQuality(queryId),
     ]);
 
-    if (!job || job.error) {
+    if (!job || job._ok === false || job.error) {
+        const isServerError = job && job._ok === false && job._status >= 500;
         container.innerHTML = `
             <div class="empty-state">
-                <div class="empty-state-icon">❌</div>
-                <div class="empty-state-text">Job introuvable</div>
+                <div class="empty-state-icon">${isServerError ? '⚠️' : '❌'}</div>
+                <div class="empty-state-text">${isServerError ? 'Serveur temporairement indisponible' : 'Job introuvable'}</div>
+                <p style="color:var(--text-muted)">${isServerError ? 'Veuillez réessayer dans quelques instants.' : ''}</p>
                 <a href="#/" class="btn btn-primary">Retour au Dashboard</a>
             </div>
         `;
@@ -494,7 +496,9 @@ async function _bulkEnrich(modules) {
     showToast(`⏳ Enrichissement ${label} de ${sirens.length} entreprise(s)…`, 'info');
 
     let ok = 0, fail = 0;
-    for (const siren of sirens) {
+    for (let i = 0; i < sirens.length; i++) {
+        const siren = sirens[i];
+        showToast(`⏳ ${label} : ${i + 1}/${sirens.length}…`, 'info');
         try {
             const res = await enrichCompany(siren, modules);
             if (res._ok !== false) ok++; else fail++;

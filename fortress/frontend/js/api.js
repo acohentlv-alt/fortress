@@ -261,6 +261,7 @@ export async function bulkExportCSV(sirens) {
     const resp = await fetch(`${API_BASE}/export/bulk/csv`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ sirens }),
     });
     return resp;

@@ -88,12 +88,16 @@ async def _fetch_export_data(query_id: str) -> list[dict]:
 
 
 @router.get("/master/csv")
-async def export_master_csv():
+async def export_master_csv(request: Request):
     """Download all SCRAPED companies across all queries as CSV.
 
-    Scoped to query_tags (only companies we've actually processed),
+    Admin only. Scoped to query_tags (only companies we've actually processed),
     not the full 14.7M SIRENE table.
     """
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     rows = await fetch_all("""
         WITH best_contact AS (
             SELECT DISTINCT ON (c2.siren)
@@ -148,8 +152,12 @@ async def export_master_csv():
 
 
 @router.get("/master/xlsx")
-async def export_master_xlsx():
-    """Download all SCRAPED companies across all queries as XLSX."""
+async def export_master_xlsx(request: Request):
+    """Download all SCRAPED companies across all queries as XLSX. Admin only."""
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     rows = await fetch_all("""
         WITH best_contact AS (
             SELECT DISTINCT ON (c2.siren)

@@ -191,7 +191,7 @@ async def resume_batch(query_id: str):
     The runner will skip SIRENs already in scrape_audit for this query_id.
     """
     job = await fetch_one(
-        """SELECT query_id, query_name, status, filters_json,
+        """SELECT query_id, query_name, status, filters_json, strategy,
                   EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_stale
            FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
         (query_id,),
@@ -218,14 +218,8 @@ async def resume_batch(query_id: str):
         (query_id,),
     )
 
-    # Determine runner module from strategy
-    strategy = "sirene"
-    if job["filters_json"]:
-        try:
-            filters = json.loads(job["filters_json"]) if isinstance(job["filters_json"], str) else job["filters_json"]
-            strategy = filters.get("strategy", "sirene")
-        except Exception:
-            pass
+    # Determine runner module from strategy column
+    strategy = job.get("strategy") or "sirene"
 
     if strategy == "maps":
         runner_module = "fortress.maps_discovery_runner"

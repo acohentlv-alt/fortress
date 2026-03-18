@@ -155,10 +155,12 @@ async function renderJobMonitor(container, queryId) {
                             <div class="monitor-metric-value" id="mon-batch">0</div>
                             <div class="monitor-metric-label">Cible</div>
                         </div>
+                        ${isAdmin ? `
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-replaced">0</div>
                             <div class="monitor-metric-label">Substitutions</div>
                         </div>
+                        ` : '<div id="mon-replaced" style="display:none">0</div>'}
                     </div>
                 </div>
             </div>

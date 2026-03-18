@@ -98,6 +98,7 @@ async def get_stats_by_job(request: Request):
             SUM(COALESCE(sj.triage_black, 0)) AS total_black,
             MAX(sj.updated_at) AS last_updated
         FROM scrape_jobs sj
+        WHERE sj.status != 'deleted'
         {user_filter}
         GROUP BY UPPER(sj.query_name)
         ORDER BY MAX(sj.updated_at) DESC
@@ -120,6 +121,7 @@ async def get_stats_by_job(request: Request):
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,
             sj.created_at, sj.updated_at
         FROM scrape_jobs sj
+        WHERE sj.status != 'deleted'
         {user_filter}
         ORDER BY sj.created_at DESC
     """)
@@ -588,9 +590,13 @@ async def get_stats_by_sector(request: Request):
 
 @router.delete("/sector/{sector_name}/tags")
 async def delete_sector_tags(sector_name: str, request: Request):
-    """Remove all query_tags for a sector. Soft-deletes associated jobs."""
+    """Remove all query_tags for a sector. Soft-deletes associated jobs. Admin only."""
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
+
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     async with get_conn() as conn:
         # Find all query_names matching this sector
@@ -623,9 +629,13 @@ async def delete_sector_tags(sector_name: str, request: Request):
 
 @router.delete("/department/{dept}/tags")
 async def delete_department_tags(dept: str, request: Request):
-    """Remove all query_tags for companies in a specific department."""
+    """Remove all query_tags for companies in a specific department. Admin only."""
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
+
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     async with get_conn() as conn:
         deleted = await conn.execute("""
@@ -645,9 +655,13 @@ async def delete_department_tags(dept: str, request: Request):
 
 @router.delete("/job-group/{query_name}")
 async def delete_job_group(query_name: str, request: Request):
-    """Soft-delete all batches with this query_name (case-insensitive) and remove their tags."""
+    """Soft-delete all batches with this query_name (case-insensitive) and remove their tags. Admin only."""
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
+
+    user = getattr(request.state, 'user', None)
+    if not user or user.role != 'admin':
+        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     async with get_conn() as conn:
         # Soft-delete all matching jobs
