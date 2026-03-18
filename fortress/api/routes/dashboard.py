@@ -263,76 +263,76 @@ async def get_analysis(request: Request):
 
     # ── 2. Enricher performance (admin only) ─────────────────────
     enrichers = {}
-    if is_admin:
-        # From enrichment_log: method breakdown
-        maps_methods = await fetch_all("""
-            SELECT
-                COALESCE(maps_method, 'unknown') AS method,
-                COUNT(*) AS count,
-                COUNT(*) FILTER (WHERE outcome = 'qualified') AS qualified
-            FROM enrichment_log
-            WHERE maps_method IS NOT NULL
-            GROUP BY maps_method
-            ORDER BY count DESC
-        """)
 
-        crawl_methods = await fetch_all("""
-            SELECT
-                COALESCE(crawl_method, 'unknown') AS method,
-                COUNT(*) AS count,
-                COUNT(*) FILTER (WHERE emails_found > 0) AS with_emails
-            FROM enrichment_log
-            WHERE crawl_method IS NOT NULL AND crawl_method != 'skipped'
-            GROUP BY crawl_method
-            ORDER BY count DESC
-        """)
+    # From enrichment_log: method breakdown
+    maps_methods = await fetch_all("""
+        SELECT
+            COALESCE(maps_method, 'unknown') AS method,
+            COUNT(*) AS count,
+            COUNT(*) FILTER (WHERE outcome = 'qualified') AS qualified
+        FROM enrichment_log
+        WHERE maps_method IS NOT NULL
+        GROUP BY maps_method
+        ORDER BY count DESC
+    """)
 
-        # From scrape_audit: timing and success rates
-        audit_stats = await fetch_all("""
-            SELECT
-                action,
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE result = 'success') AS success,
-                ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
-            FROM scrape_audit
-            WHERE action IN ('maps_lookup', 'website_crawl')
-            GROUP BY action
-        """)
+    crawl_methods = await fetch_all("""
+        SELECT
+            COALESCE(crawl_method, 'unknown') AS method,
+            COUNT(*) AS count,
+            COUNT(*) FILTER (WHERE emails_found > 0) AS with_emails
+        FROM enrichment_log
+        WHERE crawl_method IS NOT NULL AND crawl_method != 'skipped'
+        GROUP BY crawl_method
+        ORDER BY count DESC
+    """)
 
-        audit_map = {r["action"]: r for r in (audit_stats or [])}
+    # From scrape_audit: timing and success rates
+    audit_stats = await fetch_all("""
+        SELECT
+            action,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE result = 'success') AS success,
+            ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
+        FROM scrape_audit
+        WHERE action IN ('maps_lookup', 'website_crawl')
+        GROUP BY action
+    """)
 
-        # Maps enricher
-        maps_audit = audit_map.get("maps_lookup", {})
-        maps_total = maps_audit.get("total", 0) or 0
-        maps_success = maps_audit.get("success", 0) or 0
-        enrichers["maps_lookup"] = {
-            "total": maps_total,
-            "success": maps_success,
-            "rate": round(100 * maps_success / max(maps_total, 1)),
-            "avg_time_ms": maps_audit.get("avg_time_ms") or 0,
-            "methods": {r["method"]: {"count": r["count"], "qualified": r["qualified"]} for r in (maps_methods or [])},
-        }
+    audit_map = {r["action"]: r for r in (audit_stats or [])}
 
-        # Crawl enricher
-        crawl_audit = audit_map.get("website_crawl", {})
-        crawl_total = crawl_audit.get("total", 0) or 0
-        crawl_success = crawl_audit.get("success", 0) or 0
-        enrichers["website_crawl"] = {
-            "total": crawl_total,
-            "success": crawl_success,
-            "rate": round(100 * crawl_success / max(crawl_total, 1)),
-            "avg_time_ms": crawl_audit.get("avg_time_ms") or 0,
-            "methods": {r["method"]: {"count": r["count"], "with_emails": r["with_emails"]} for r in (crawl_methods or [])},
-        }
+    # Maps enricher
+    maps_audit = audit_map.get("maps_lookup", {})
+    maps_total = maps_audit.get("total", 0) or 0
+    maps_success = maps_audit.get("success", 0) or 0
+    enrichers["maps_lookup"] = {
+        "total": maps_total,
+        "success": maps_success,
+        "rate": round(100 * maps_success / max(maps_total, 1)),
+        "avg_time_ms": maps_audit.get("avg_time_ms") or 0,
+        "methods": {r["method"]: {"count": r["count"], "qualified": r["qualified"]} for r in (maps_methods or [])},
+    }
 
-        # Overall enrichment outcomes from enrichment_log
-        outcomes = await fetch_all("""
-            SELECT outcome, COUNT(*) AS count
-            FROM enrichment_log
-            GROUP BY outcome
-            ORDER BY count DESC
-        """)
-        enrichers["outcomes"] = {r["outcome"]: r["count"] for r in (outcomes or [])}
+    # Crawl enricher
+    crawl_audit = audit_map.get("website_crawl", {})
+    crawl_total = crawl_audit.get("total", 0) or 0
+    crawl_success = crawl_audit.get("success", 0) or 0
+    enrichers["website_crawl"] = {
+        "total": crawl_total,
+        "success": crawl_success,
+        "rate": round(100 * crawl_success / max(crawl_total, 1)),
+        "avg_time_ms": crawl_audit.get("avg_time_ms") or 0,
+        "methods": {r["method"]: {"count": r["count"], "with_emails": r["with_emails"]} for r in (crawl_methods or [])},
+    }
+
+    # Overall enrichment outcomes from enrichment_log
+    outcomes = await fetch_all("""
+        SELECT outcome, COUNT(*) AS count
+        FROM enrichment_log
+        GROUP BY outcome
+        ORDER BY count DESC
+    """)
+    enrichers["outcomes"] = {r["outcome"]: r["count"] for r in (outcomes or [])}
 
     # ── 3. Weekly timeline (last 12 weeks) ───────────────────────
     timeline = await fetch_all(f"""
