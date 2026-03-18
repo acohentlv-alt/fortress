@@ -309,14 +309,14 @@ a:hover { color: var(--accent); }
     transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease;
 }
 
-/* ── Sidebar Collapsed State ──────────────────────────────────── */
+/* ── Sidebar Collapsed State — Premium Icon Rail ─────────────── */
 .sidebar.collapsed {
     width: var(--sidebar-collapsed);
 }
 
+/* Hide text elements smoothly */
 .sidebar.collapsed .sidebar-brand-text,
 .sidebar.collapsed .sidebar-brand-badge,
-.sidebar.collapsed .sidebar-section-label,
 .sidebar.collapsed .nav-item span:not(.nav-item-icon),
 .sidebar.collapsed .sidebar-footer-version,
 .sidebar.collapsed .sidebar-footer-logout,
@@ -329,41 +329,112 @@ a:hover { color: var(--accent); }
     pointer-events: none;
 }
 
+/* Section labels → thin centered divider lines */
+.sidebar.collapsed .sidebar-section-label {
+    opacity: 1 !important;
+    width: 32px !important;
+    height: 1px;
+    background: var(--border-subtle);
+    margin: var(--space-xs) auto;
+    padding: 0;
+    font-size: 0;
+    line-height: 0;
+    color: transparent;
+    pointer-events: none;
+    overflow: hidden;
+    transition: none;
+}
+
+/* Brand area: centered icon, same height as header */
 .sidebar.collapsed .sidebar-brand {
-    padding: var(--space-lg) var(--space-sm);
+    padding: 0;
     justify-content: center;
-}
-
-.sidebar.collapsed .sidebar-nav {
-    padding: var(--space-lg) var(--space-xs);
     align-items: center;
+    height: var(--header-height);
+    gap: 0;
 }
 
+.sidebar.collapsed .sidebar-brand-icon {
+    font-size: 1.5rem;
+}
+
+/* Nav: centered column */
+.sidebar.collapsed .sidebar-nav {
+    padding: var(--space-md) 0;
+    align-items: center;
+    gap: 2px;
+}
+
+/* Nav items: uniform 40×40 centered rounded squares */
 .sidebar.collapsed .nav-item {
     justify-content: center;
-    padding: var(--space-sm);
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-sm);
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius);
+    margin: 0 auto;
+    transition: all var(--transition-fast);
+}
+
+.sidebar.collapsed .nav-item:hover {
+    background: var(--bg-hover);
+    transform: scale(1.08);
+}
+
+.sidebar.collapsed .nav-item.active {
+    background: var(--accent-subtle);
+    box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
 .sidebar.collapsed .nav-item-icon {
     margin: 0;
     width: auto;
+    font-size: 1.25rem;
 }
 
+/* Footer: clean minimal stack */
 .sidebar.collapsed .sidebar-footer {
-    padding: var(--space-md) var(--space-xs);
+    padding: var(--space-sm) 0 var(--space-md);
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: var(--space-sm);
+    border-top: 1px solid var(--border-subtle);
 }
 
+/* User display → small initials circle */
+.sidebar.collapsed #user-display {
+    font-size: var(--font-xs) !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: var(--accent-subtle) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    margin-bottom: 0 !important;
+    border: 1px solid var(--border-default);
+}
+
+/* Toggle: bordered pill, always visible */
 .sidebar.collapsed .sidebar-toggle {
+    width: 36px;
+    height: 36px;
     justify-content: center;
-    padding: var(--space-sm);
-    width: 44px;
+    padding: 0;
+    margin: 0 auto;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius);
     align-self: center;
+    background: transparent;
+}
+
+.sidebar.collapsed .sidebar-toggle:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+    transform: scale(1.08);
 }
 
 .sidebar.collapsed ~ .main-content {
@@ -390,9 +461,9 @@ a:hover { color: var(--accent); }
     .sidebar {
         width: var(--sidebar-collapsed);
     }
+    /* Hide text */
     .sidebar .sidebar-brand-text,
     .sidebar .sidebar-brand-badge,
-    .sidebar .sidebar-section-label,
     .sidebar .nav-item span:not(.nav-item-icon),
     .sidebar .sidebar-footer-version,
     .sidebar .sidebar-footer-logout,
@@ -403,34 +474,71 @@ a:hover { color: var(--accent); }
         white-space: nowrap;
         pointer-events: none;
     }
+    /* Section labels → divider lines */
+    .sidebar .sidebar-section-label {
+        opacity: 1 !important;
+        width: 32px !important;
+        height: 1px;
+        background: var(--border-subtle);
+        margin: var(--space-xs) auto;
+        padding: 0;
+        font-size: 0;
+        line-height: 0;
+        color: transparent;
+        pointer-events: none;
+        overflow: hidden;
+    }
     .sidebar .sidebar-brand {
-        padding: var(--space-lg) var(--space-sm);
+        padding: 0;
         justify-content: center;
+        align-items: center;
+        height: var(--header-height);
+        gap: 0;
     }
     .sidebar .sidebar-nav {
-        padding: var(--space-lg) var(--space-xs);
+        padding: var(--space-md) 0;
         align-items: center;
+        gap: 2px;
     }
     .sidebar .nav-item {
         justify-content: center;
-        padding: var(--space-sm);
-        width: 44px;
-        height: 44px;
-        border-radius: var(--radius-sm);
+        padding: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: var(--radius);
+        margin: 0 auto;
     }
     .sidebar .nav-item-icon {
         margin: 0;
         width: auto;
+        font-size: 1.25rem;
     }
     .sidebar .sidebar-footer {
-        padding: var(--space-md) var(--space-xs);
+        padding: var(--space-sm) 0 var(--space-md);
         align-items: center;
+        gap: var(--space-sm);
     }
     .sidebar .sidebar-toggle {
+        width: 36px;
+        height: 36px;
         justify-content: center;
-        padding: var(--space-sm);
-        width: 44px;
-        align-self: center;
+        padding: 0;
+        margin: 0 auto;
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius);
+    }
+    .sidebar #user-display {
+        font-size: var(--font-xs) !important;
+        width: 32px !important;
+        height: 32px !important;
+        border-radius: 50% !important;
+        background: var(--accent-subtle) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        overflow: hidden !important;
+        margin-bottom: 0 !important;
+        border: 1px solid var(--border-default);
     }
     .main-content {
         margin-left: var(--sidebar-collapsed);
