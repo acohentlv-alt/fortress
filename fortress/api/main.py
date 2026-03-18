@@ -26,7 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import activity, admin, auth as auth_routes, batch, client, companies, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
+from fortress.api.routes import activity, admin, auth as auth_routes, batch, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -58,6 +58,24 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ pg_trgm extension + trigram index ready")
         except Exception as e:
             logger.warning("Could not create trigram index at startup: %s", e)
+        # Ensure contact_requests table exists
+        try:
+            from fortress.api.db import get_conn
+            async with get_conn() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS contact_requests (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(200) NOT NULL,
+                        email VARCHAR(200) NOT NULL,
+                        company VARCHAR(200) DEFAULT '',
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                await conn.commit()
+                logger.info("✅ contact_requests table ready")
+        except Exception as e:
+            logger.warning("Could not create contact_requests table: %s", e)
     else:
         logger.warning("🏰 Fortress API started — database OFFLINE: %s", db["error"])
     yield
@@ -112,6 +130,7 @@ _PUBLIC_PATHS = {
     "/api/auth/check",
     "/api/auth/login",
     "/api/auth/logout",
+    "/api/contact",
 }
 
 _COOKIE_NAME = "fortress_session"
@@ -172,6 +191,7 @@ app.include_router(sirene.router)
 app.include_router(admin.router)
 app.include_router(notes.router)
 app.include_router(contacts_list.router)
+app.include_router(contact.router)
 app.include_router(activity.router)
 
 # Serve frontend static files

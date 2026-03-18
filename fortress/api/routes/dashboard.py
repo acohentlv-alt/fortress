@@ -311,7 +311,7 @@ async def get_analysis(request: Request):
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE result = 'success') AS success,
             ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms,
-            MAX(created_at) AS last_run
+            MAX(timestamp) AS last_run
         FROM scrape_audit
         WHERE action IN ('maps_lookup', 'website_crawl')
         GROUP BY action
@@ -325,7 +325,7 @@ async def get_analysis(request: Request):
             COUNT(*) FILTER (WHERE result = 'success') AS success
         FROM scrape_audit
         WHERE action IN ('maps_lookup', 'website_crawl')
-          AND created_at >= NOW() - INTERVAL '24 hours'
+          AND timestamp >= NOW() - INTERVAL '24 hours'
         GROUP BY action
     """)
 
