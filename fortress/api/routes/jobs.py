@@ -22,7 +22,11 @@ async def list_jobs(request: Request):
         SELECT
             sj.query_id, sj.query_name, 
             CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
+                     THEN 'completed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     THEN 'failed'
                 ELSE sj.status 
             END AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
@@ -35,7 +39,8 @@ async def list_jobs(request: Request):
             sj.filters_json,
             UPPER(SPLIT_PART(sj.query_name, ' ', 1)) AS sector,
             sj.user_id,
-            sj.worker_id
+            sj.worker_id,
+            sj.mode
         FROM scrape_jobs sj
         WHERE sj.status != 'deleted'
     """
@@ -197,7 +202,11 @@ async def get_job(query_id: str):
         SELECT
             sj.query_id, sj.query_name, 
             CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
+                     THEN 'completed'
+                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
+                     THEN 'failed'
                 ELSE sj.status 
             END AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
@@ -207,7 +216,8 @@ async def get_job(query_id: str):
             sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             COALESCE(sj.replaced_count, 0) AS replaced_count,
-            COALESCE(sj.companies_qualified, 0) AS companies_qualified
+            COALESCE(sj.companies_qualified, 0) AS companies_qualified,
+            sj.mode
         FROM scrape_jobs sj
         WHERE sj.query_id = %s
     """, (query_id,))

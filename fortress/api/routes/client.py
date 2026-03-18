@@ -257,6 +257,41 @@ async def client_stats():
     }
 
 
+@router.delete("/clear")
+async def clear_client_sirens():
+    """Clear all client-uploaded data (upload-mode jobs and their query_tags)."""
+    try:
+        async with get_conn() as conn:
+            # Get upload job query_names to clear their tags
+            jobs = await conn.execute(
+                "SELECT query_name FROM scrape_jobs WHERE mode = 'upload'"
+            )
+            job_rows = await jobs.fetchall()
+            query_names = [r[0] for r in job_rows] if job_rows else []
+
+            deleted_tags = 0
+            for qn in query_names:
+                res = await conn.execute(
+                    "DELETE FROM query_tags WHERE query_name = %s", (qn,)
+                )
+                deleted_tags += res.rowcount
+
+            # Delete the upload jobs themselves
+            res = await conn.execute(
+                "DELETE FROM scrape_jobs WHERE mode = 'upload'"
+            )
+            deleted_jobs = res.rowcount
+            await conn.commit()
+
+        return {
+            "cleared": True,
+            "deleted_jobs": deleted_jobs,
+            "deleted_tags": deleted_tags,
+        }
+    except RuntimeError as exc:
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Internal: Row ingestion
 # ---------------------------------------------------------------------------

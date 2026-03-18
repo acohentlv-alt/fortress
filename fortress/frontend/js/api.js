@@ -357,7 +357,7 @@ export async function deleteJobGroup(queryName) {
 }
 
 export async function deleteCompanyTag(siren) {
-    return await request(`/companies/${siren}/tags/*`, { method: 'DELETE' });
+    return await request(`/companies/${siren}/tags/`, { method: 'DELETE' });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────

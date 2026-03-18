@@ -446,6 +446,22 @@ async def untag_company(siren: str, query_name: str):
     return {"untagged": True, "siren": siren, "query_name": query_name}
 
 
+@router.delete("/{siren}/tags/")
+async def untag_company_all(siren: str):
+    """Remove a company from ALL query results (all tags). Never deletes data."""
+    async with get_conn() as conn:
+        result = await conn.execute(
+            "DELETE FROM query_tags WHERE siren = %s RETURNING siren",
+            (siren,),
+        )
+        rows = await result.fetchall()
+        count = len(rows)
+        if count == 0:
+            return JSONResponse(status_code=404, content={"error": "No tags found for this SIREN"})
+        await conn.commit()
+    return {"untagged": True, "siren": siren, "removed_count": count}
+
+
 @router.get("/{siren}")
 async def get_company(siren: str):
     """Full company detail with enriched data, contacts, and officers."""

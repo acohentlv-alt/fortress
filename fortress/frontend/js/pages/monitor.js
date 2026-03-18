@@ -308,6 +308,7 @@ async function renderJobMonitor(container, queryId) {
         // Progress = qualified companies / batch_size (only phone-confirmed count)
         const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
         const isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
+        const isUpload = job.mode === 'upload';
 
         // ── Breadcrumb + Title ──────────────────────────────────
         $.breadcrumb.innerHTML = breadcrumb([
@@ -358,15 +359,18 @@ async function renderJobMonitor(container, queryId) {
             animateCounter($.replaced, replaced);
         }
 
-        // ── Pipeline Stage ──────────────────────────────────────
-        let stage = null;
-        if (isRunning) {
-            // Determine active stage from job status/progress
-            if (job.status === 'triage') stage = null; // Pre-pipeline
-            else stage = 'maps'; // Default active stage during enrichment
-            // If we have website crawl data indicators, we could detect crawl stage here
+        // ── Pipeline Stage (hide for uploads) ──────────────────
+        if (isUpload) {
+            $.pipeline.style.display = 'none';
+            if ($.pipeline.parentElement) $.pipeline.parentElement.style.display = 'none';
+        } else {
+            let stage = null;
+            if (isRunning) {
+                if (job.status === 'triage') stage = null;
+                else stage = 'maps';
+            }
+            $.pipeline.innerHTML = renderPipelineStages(stage);
         }
-        $.pipeline.innerHTML = renderPipelineStages(stage);
 
         // ── Wave Chip ───────────────────────────────────────────
         const waveCurrent = job.wave_current || 0;
@@ -379,14 +383,19 @@ async function renderJobMonitor(container, queryId) {
                </div>`
             : '';
 
-        // ── Triage Bar ──────────────────────────────────────────
-        $.triage.innerHTML = renderTriageBar({
-            green: job.triage_green,
-            yellow: job.triage_yellow,
-            red: job.triage_red,
-            black: job.triage_black,
-            blue: job.triage_blue,
-        });
+        // ── Triage Bar (hide for uploads) ────────────────────────
+        if (isUpload) {
+            $.triage.style.display = 'none';
+            if ($.triage.parentElement) $.triage.parentElement.style.display = 'none';
+        } else {
+            $.triage.innerHTML = renderTriageBar({
+                green: job.triage_green,
+                yellow: job.triage_yellow,
+                red: job.triage_red,
+                black: job.triage_black,
+                blue: job.triage_blue,
+            });
+        }
 
         // ── Quality Gauges ──────────────────────────────────────
         try {
