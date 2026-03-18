@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # Multi-worker — identifies this machine in scrape_jobs.worker_id
     worker_id: str = ""
 
+    # SMTP (Gmail) — for contact form email forwarding
+    smtp_user: str = ""           # e.g. acohen.tlv@gmail.com
+    smtp_password: str = ""       # Gmail App Password (16 chars, no spaces)
+    contact_notify_email: str = ""  # Where to send notifications (defaults to smtp_user)
+
     # Testing
     test_db_url: str = ""  # Set via TEST_DB_URL env var to override db_url in tests
 
