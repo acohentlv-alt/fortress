@@ -167,8 +167,9 @@ async def upload_client_file(file: UploadFile = File(...)):
     # ── Step 5: Build mapping summary for frontend ──
     mapping_summary = _build_mapping_summary(mapping)
 
-    # Remove internal error list from response, keep count only
-    error_count = len(stats.pop("errors", []))
+    # Keep first 5 errors for diagnosability, strip the rest
+    errors = stats.pop("errors", [])
+    error_count = len(errors)
 
     return {
         "status": "ok",
@@ -177,6 +178,7 @@ async def upload_client_file(file: UploadFile = File(...)):
         "total_rows": len(rows),
         "stats": stats,
         "error_count": error_count,
+        "error_samples": errors[:5],
         "mapping": mapping_summary,
     }
 
