@@ -1,6 +1,6 @@
 """Jobs API routes — job-based views, delete, cancel, and company listing."""
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
@@ -9,14 +9,8 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.get("")
-async def list_jobs(request: Request):
-    """All jobs with status and progress.
-
-    Admin sees ALL jobs from all users/workers.
-    Regular users see only their own jobs.
-    """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
+async def list_jobs():
+    """All jobs with status and progress — shared workspace."""
 
     base_query = """
         SELECT
