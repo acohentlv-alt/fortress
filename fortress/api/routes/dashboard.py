@@ -13,24 +13,10 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 async def get_stats(request: Request):
-    """Dashboard statistics.
-
-    Admin: stats from ALL query_tags (the data bank).
-    User: stats scoped to their own jobs' query_names.
-    """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-
-    # Build a WHERE clause on query_tags for user scoping
-    if is_admin:
-        scope_clause = ""
-        scope_params: tuple = ()
-        jobs_scope = ""
-    else:
-        user_id = user.id if user else -1
-        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
-        scope_params = (user_id,)
-        jobs_scope = f"WHERE user_id = {user_id}" if user else ""
+    """Dashboard statistics — shared workspace (all users see all data)."""
+    scope_clause = ""
+    scope_params: tuple = ()
+    jobs_scope = ""
 
     stats = await fetch_one(f"""
         WITH tagged AS (
@@ -59,9 +45,9 @@ async def get_stats(request: Request):
                 FILTER (WHERE departement IS NOT NULL)         AS departments_covered,
             (SELECT COUNT(*) FROM scrape_jobs {jobs_scope})    AS total_jobs,
             (SELECT COUNT(*) FROM scrape_jobs
-             WHERE status = 'completed' {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS completed_jobs,
+             WHERE status = 'completed') AS completed_jobs,
             (SELECT COUNT(*) FROM scrape_jobs
-             WHERE status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180 {'AND user_id = ' + str(user_id) if not is_admin else ''}) AS running_jobs
+             WHERE status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180) AS running_jobs
         FROM enriched
     """, scope_params)
     return stats or {}
@@ -69,42 +55,21 @@ async def get_stats(request: Request):
 
 @router.get("/recent-activity")
 async def get_recent_activity(request: Request):
-    """Last 10 job updates (user-scoped)."""
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-
-    if is_admin:
-        rows = await fetch_all("""
-            SELECT query_id, query_name, 
-                   CASE 
-                       WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
-                       ELSE status 
-                   END AS status,
-                   total_companies, companies_scraped, companies_failed,
-                   wave_current, wave_total,
-                   triage_black, triage_green, triage_yellow, triage_red,
-                   created_at, updated_at, worker_id
-            FROM scrape_jobs
-            ORDER BY updated_at DESC
-            LIMIT 10
-        """)
-    else:
-        user_id = user.id if user else -1
-        rows = await fetch_all("""
-            SELECT query_id, query_name, 
-                   CASE 
-                       WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
-                       ELSE status 
-                   END AS status,
-                   total_companies, companies_scraped, companies_failed,
-                   wave_current, wave_total,
-                   triage_black, triage_green, triage_yellow, triage_red,
-                   created_at, updated_at
-            FROM scrape_jobs
-            WHERE user_id = %s
-            ORDER BY updated_at DESC
-            LIMIT 10
-        """, (user_id,))
+    """Recent scrape_jobs activity — shared workspace."""
+    rows = await fetch_all("""
+        SELECT query_id, query_name,
+               CASE
+                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180 THEN 'failed'
+                   ELSE status
+               END AS status,
+               total_companies, companies_scraped, companies_failed,
+               wave_current, wave_total,
+               triage_black, triage_green, triage_yellow, triage_red,
+               created_at, updated_at, worker_id
+        FROM scrape_jobs
+        ORDER BY updated_at DESC
+        LIMIT 10
+    """)
     return rows
 
 
@@ -114,13 +79,8 @@ async def get_recent_activity(request: Request):
 
 @router.get("/stats/by-job")
 async def get_stats_by_job(request: Request):
-    """Job-level stats aggregated by normalized query_name.
-
-    Admin: all jobs. User: own jobs only.
-    """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-    user_filter = "" if is_admin else f"WHERE sj.user_id = {user.id if user else -1}"
+    """Job-level stats aggregated by normalized query_name — shared workspace."""
+    user_filter = ""
 
     groups = await fetch_all(f"""
         SELECT
@@ -142,10 +102,10 @@ async def get_stats_by_job(request: Request):
     all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.query_name) AS group_key,
-            sj.query_id, sj.query_name, 
-            CASE 
+            sj.query_id, sj.query_name,
+            CASE
                 WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180 THEN 'failed'
-                ELSE sj.status 
+                ELSE sj.status
             END AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
             sj.total_companies, sj.wave_current, sj.wave_total,
@@ -251,21 +211,11 @@ async def get_data_bank(request: Request):
 async def get_analysis(request: Request):
     """Data analysis dashboard — returns quality, enricher performance, timeline, jobs.
 
-    Admin: all data + enricher performance breakdown.
-    User: scoped to own jobs (no enricher details).
+    Shared workspace — all users see all data.
     """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-
-    if is_admin:
-        scope_clause = ""
-        scope_params: tuple = ()
-        jobs_where = "WHERE sj.status != 'deleted'"
-    else:
-        user_id = user.id if user else -1
-        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
-        scope_params = (user_id,)
-        jobs_where = f"WHERE sj.status != 'deleted' AND sj.user_id = {user_id}"
+    scope_clause = ""
+    scope_params: tuple = ()
+    jobs_where = "WHERE sj.status != 'deleted'"
 
     # ── 1. Quality scores ────────────────────────────────────────
     quality = await fetch_one(f"""
@@ -518,17 +468,9 @@ async def get_all_data(
     Admin: all enriched data. User: scoped to own jobs.
     Supports text search (name/SIREN) and department filter.
     """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-
-    # Build user scope
-    if is_admin:
-        scope_clause = ""
-        scope_params: list = []
-    else:
-        user_id = user.id if user else -1
-        scope_clause = "AND qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
-        scope_params = [user_id]
+    # Shared workspace: no user scoping
+    scope_clause = ""
+    scope_params: list = []
 
     # Build search filter
     search_clause = ""
@@ -596,16 +538,9 @@ async def get_stats_by_sector(request: Request):
     Admin: all data. User: scoped to their own jobs.
     Returns unique company counts per sector so totals match the dashboard.
     """
-    user = getattr(request.state, 'user', None)
-    is_admin = user and user.role == 'admin'
-
-    if is_admin:
-        scope_clause = ""
-        scope_params: tuple = ()
-    else:
-        user_id = user.id if user else -1
-        scope_clause = "WHERE qt.query_name IN (SELECT query_name FROM scrape_jobs WHERE user_id = %s)"
-        scope_params = (user_id,)
+    # Shared workspace: no user scoping
+    scope_clause = ""
+    scope_params: tuple = ()
 
     rows = await fetch_all(f"""
         SELECT

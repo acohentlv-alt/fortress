@@ -40,18 +40,10 @@ async def list_jobs(request: Request):
         WHERE sj.status != 'deleted'
     """
 
-    if is_admin:
-        # Admin sees everything
-        rows = await fetch_all(
-            base_query + " ORDER BY sj.updated_at DESC"
-        )
-    else:
-        # Regular user sees only their own batches
-        user_id = user.id if user else None
-        rows = await fetch_all(
-            base_query + " AND sj.user_id = %s ORDER BY sj.updated_at DESC",
-            (user_id,),
-        )
+    # Shared workspace: all users see all jobs
+    rows = await fetch_all(
+        base_query + " ORDER BY sj.updated_at DESC"
+    )
 
     return rows
 
