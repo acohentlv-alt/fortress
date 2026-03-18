@@ -473,7 +473,7 @@ async def get_company(siren: str):
         SELECT
             phone, email, email_type, website, source,
             social_linkedin, social_facebook, social_twitter,
-            rating, review_count, collected_at
+            rating, review_count, maps_url, address, collected_at
         FROM contacts
         WHERE siren = %s
         ORDER BY collected_at DESC
@@ -531,6 +531,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         "social_twitter": None, "social_twitter_source": None,
         "rating": None, "rating_source": None,
         "review_count": None,
+        "maps_url": None, "maps_url_source": None,
+        "address": None, "address_source": None,
         "sources": [],
     }
     for c in contacts:
@@ -538,7 +540,7 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         if src:
             merged["sources"].append(src)
         for key in ("phone", "email", "website", "social_linkedin",
-                     "social_facebook", "social_twitter"):
+                     "social_facebook", "social_twitter", "maps_url", "address"):
             if merged[key] is None and c.get(key):
                 merged[key] = c[key]
                 merged[f"{key}_source"] = src

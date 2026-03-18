@@ -41,7 +41,7 @@ function unenrichedField(module) {
     </span>`;
 }
 
-// ── Enrichment Panel — Maps → Crawl pipeline (no checkboxes) ─────
+// ── Enrichment Panel — Maps only ─────────────────────────────────
 function enrichmentPanelHTML() {
     return `
         <div class="enrich-panel" id="enrich-panel">
@@ -55,18 +55,6 @@ function enrichmentPanelHTML() {
                         <div class="enrich-step-time">~5 secondes</div>
                     </div>
                 </div>
-                <div class="enrich-step-arrow">→</div>
-                <div class="enrich-step">
-                    <span class="enrich-step-icon">🌐</span>
-                    <div>
-                        <div class="enrich-step-label">Site Web</div>
-                        <div class="enrich-step-desc">Email, LinkedIn, Facebook, réseaux sociaux</div>
-                        <div class="enrich-step-time">~20 secondes</div>
-                    </div>
-                </div>
-            </div>
-            <div style="font-size:var(--font-xs); color:var(--text-muted); text-align:center; margin-top:var(--space-sm)">
-                ⏱️ Durée estimée : ~25 secondes par entreprise
             </div>
             <button class="enrich-submit" id="enrich-submit-btn">
                 <span class="enrich-spinner"></span>
@@ -399,8 +387,8 @@ function _initEnrichmentPanel(siren) {
     const submitBtn = document.getElementById('enrich-submit-btn');
     if (!panel || !submitBtn) return;
 
-    // Fixed pipeline: always send both modules (Maps → Crawl)
-    const modules = ['contact_web', 'contact_phone'];
+    // Maps-only enrichment
+    const modules = ['contact_phone'];
 
     // Submit handler — 200 vs 202 split
     submitBtn.addEventListener('click', async () => {

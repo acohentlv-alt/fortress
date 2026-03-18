@@ -191,17 +191,25 @@ async def resume_batch(query_id: str):
     The runner will skip SIRENs already in scrape_audit for this query_id.
     """
     job = await fetch_one(
-        """SELECT query_id, query_name, status, filters_json
+        """SELECT query_id, query_name, status, filters_json,
+                  EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_stale
            FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
         (query_id,),
     )
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
-    if job["status"] not in ("interrupted", "failed"):
+    status = job["status"]
+    seconds_stale = job.get("seconds_stale", 0) or 0
+
+    # Allow resume for: interrupted, failed, or stale in_progress (runner crashed)
+    resumable = status in ("interrupted", "failed")
+    stale_in_progress = status == "in_progress" and seconds_stale > 180
+
+    if not resumable and not stale_in_progress:
         return JSONResponse(
             status_code=400,
-            content={"error": f"Cannot resume job with status '{job['status']}'. Only interrupted or failed jobs can be resumed."},
+            content={"error": f"Cannot resume job with status '{status}'. Only interrupted, failed, or stale jobs can be resumed."},
         )
 
     # Reset status to in_progress
