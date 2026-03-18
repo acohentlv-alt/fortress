@@ -21,27 +21,28 @@ from fortress.api.db import fetch_all, fetch_one
 router = APIRouter(prefix="/api/contacts", tags=["contacts_list"])
 
 # Maximum rows to count exactly (above this, we approximate)
-_COUNT_CAP = 1001
+_COUNT_CAP = 10001
 
 
 def _format_count(exact_count: int) -> dict:
     """Return a smart count for the frontend.
 
     Rules (per user spec):
-      - Under 100: exact number
+      - Under 100: exact number ("87")
       - 100-999: rounded to nearest 100 ("200+", "500+")
-      - 1000+: rounded to nearest 500 ("1.5K+", "3K+")
-      - If we hit the cap (1001+): "1K+"
+      - 1000-9999: rounded to nearest 500 ("1.5K+", "3K+", "5.5K+")
+      - 10000+: "10K+"
     """
     if exact_count < 100:
         return {"total": exact_count, "display": str(exact_count), "exact": True}
     if exact_count >= _COUNT_CAP:
-        return {"total": _COUNT_CAP, "display": "1K+", "exact": False}
+        return {"total": _COUNT_CAP, "display": "10K+", "exact": False}
     if exact_count < 1000:
         rounded = (exact_count // 100) * 100
         return {"total": exact_count, "display": f"{rounded}+", "exact": False}
-    # 1000-1000
-    thousands = exact_count / 1000
+    # 1000-9999: round to nearest 500
+    rounded = (exact_count // 500) * 500
+    thousands = rounded / 1000
     if thousands == int(thousands):
         return {"total": exact_count, "display": f"{int(thousands)}K+", "exact": False}
     return {"total": exact_count, "display": f"{thousands:.1f}K+", "exact": False}
@@ -51,7 +52,7 @@ def _format_count(exact_count: int) -> dict:
 async def list_contacts(
     q: str = Query(None, description="Search by name, SIREN, phone, or email"),
     department: str = Query(None, description="Filter by department code"),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ):
     """Return a flat, paginated list of all enriched contacts + officers."""

@@ -2,7 +2,9 @@
  * Contacts Page — Flat searchable list of all enriched contacts
  *
  * Shows ALL contacts + officers across all enriched companies in one table.
- * Features: search, department filter, pagination, click-to-company, bulk export.
+ * Features: search, department filter, "load more" pagination, click-to-company.
+ *
+ * UX: Initially loads 5 pages (250 rows). User can "Charger plus" for more.
  */
 
 import { getContactsList, bulkExportCSV, extractApiError, checkHealth } from '../api.js';
@@ -12,8 +14,11 @@ import { DEPARTMENTS } from '../constants.js';
 export async function renderContacts(container) {
     let currentDepartment = '';
     let currentQuery = '';
-    let currentOffset = 0;
     const PAGE_SIZE = 50;
+    const INITIAL_PAGES = 5; // Load 5 pages (250 contacts) initially
+    let allResults = [];      // Accumulated results across loads
+    let hasMore = true;       // Whether there are more results to load
+    let totalDisplay = '...'; // Smart count display string
 
     container.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:var(--space-md); margin-bottom:var(--space-xl)">
@@ -64,47 +69,15 @@ export async function renderContacts(container) {
     const resultsEl = document.getElementById('contacts-results');
     let debounceTimer;
 
-    // ── Search function ──────────────────────────────────────────
-    async function doSearch(offset = 0) {
-        currentOffset = offset;
-        resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
-        const params = { limit: PAGE_SIZE, offset: currentOffset };
-        if (currentQuery) params.q = currentQuery;
-        if (currentDepartment) params.department = currentDepartment;
-
-        const data = await getContactsList(params);
-
-        if (!data || (data._status && !data._ok)) {
-            const errorMsg = extractApiError(data);
-            resultsEl.innerHTML = `
-                <div class="error-state text-center" style="padding:var(--space-2xl)">
-                    <div style="font-size:3rem; margin-bottom:var(--space-lg)">🔌</div>
-                    <div style="color:var(--text-secondary); margin-bottom:var(--space-lg)">${escapeHtml(errorMsg)}</div>
-                    <button id="contacts-retry" class="btn btn-primary">🔄 Réessayer</button>
-                </div>
-            `;
-            document.getElementById('contacts-retry')?.addEventListener('click', async () => {
-                const health = await checkHealth();
-                if (health.ok) doSearch(offset);
-                else showToast('Serveur inaccessible', 'error');
-            });
-            return;
-        }
-
-        const results = data.results || [];
-        const total = data.total || results.length;
-        const totalDisplay = data.total_display || String(total);
-        const totalExact = data.total_exact !== false;
-
-        if (results.length === 0) {
+    // ── Render the table from accumulated results ────────────────
+    function renderTable() {
+        if (allResults.length === 0) {
             resultsEl.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">📇</div>
                     <div class="empty-state-text">${currentQuery
                         ? `Aucun contact trouvé pour "${escapeHtml(currentQuery)}"`
-                        : 'Aucun contact enrichi'}
-                    </div>
+                        : 'Aucun contact enrichi'}</div>
                     <p style="color:var(--text-muted); font-size:var(--font-sm)">
                         Les contacts apparaissent ici après une recherche Maps ou un import CSV
                     </p>
@@ -113,16 +86,11 @@ export async function renderContacts(container) {
             return;
         }
 
-        const currentPage = Math.floor(currentOffset / PAGE_SIZE) + 1;
-        const totalPages = Math.ceil(total / PAGE_SIZE);
-        const hasNext = currentOffset + PAGE_SIZE < total;
-        const hasPrev = currentOffset > 0;
-
         resultsEl.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-size:var(--font-sm); color:var(--text-secondary)">
-                    ${totalDisplay} contact${total > 1 ? 's' : ''}
-                    ${totalExact && totalPages > 1 ? `— page ${currentPage}/${totalPages}` : (totalPages > 1 ? `— page ${currentPage}` : '')}
+                    ${totalDisplay} contact${allResults.length > 1 ? 's' : ''}
+                    — ${allResults.length} affiché${allResults.length > 1 ? 's' : ''}
                 </span>
             </div>
 
@@ -141,7 +109,7 @@ export async function renderContacts(container) {
                         </tr>
                     </thead>
                     <tbody>
-                        ${results.map(r => `
+                        ${allResults.map(r => `
                             <tr class="contacts-row" onclick="window.location.hash='#/company/${r.siren}'">
                                 <td class="contacts-td" style="font-weight:500; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
                                     ${escapeHtml(r.denomination || '—')}
@@ -183,28 +151,92 @@ export async function renderContacts(container) {
                 </table>
             </div>
 
-            ${totalPages > 1 ? `
-                <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-xl)">
-                    <button class="btn btn-secondary" id="contacts-prev" ${hasPrev ? '' : 'disabled'}
-                        style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">
-                        ← Précédent
-                    </button>
-                    <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">
-                        ${currentPage} / ${totalPages}
-                    </span>
-                    <button class="btn btn-secondary" id="contacts-next" ${hasNext ? '' : 'disabled'}
-                        style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">
-                        Suivant →
+            ${hasMore ? `
+                <div style="display:flex; justify-content:center; margin-top:var(--space-xl)">
+                    <button class="btn btn-secondary" id="contacts-load-more"
+                        style="padding:var(--space-md) var(--space-2xl); font-size:var(--font-base); border-radius:var(--radius-lg)">
+                        ⬇️ Charger plus
                     </button>
                 </div>
-            ` : ''}
+            ` : `
+                <div style="text-align:center; margin-top:var(--space-xl); color:var(--text-muted); font-size:var(--font-sm)">
+                    ✅ Tous les contacts affichés
+                </div>
+            `}
         `;
 
-        // Wire pagination
-        const prevBtn = document.getElementById('contacts-prev');
-        const nextBtn = document.getElementById('contacts-next');
-        if (prevBtn && hasPrev) prevBtn.addEventListener('click', () => doSearch(currentOffset - PAGE_SIZE));
-        if (nextBtn && hasNext) nextBtn.addEventListener('click', () => doSearch(currentOffset + PAGE_SIZE));
+        // Wire load-more button
+        const loadMoreBtn = document.getElementById('contacts-load-more');
+        if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', () => loadMore());
+        }
+    }
+
+    // ── Initial search: load 5 pages worth ───────────────────────
+    async function doSearch() {
+        allResults = [];
+        hasMore = true;
+        resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+        const params = { limit: PAGE_SIZE * INITIAL_PAGES, offset: 0 };
+        if (currentQuery) params.q = currentQuery;
+        if (currentDepartment) params.department = currentDepartment;
+
+        const data = await getContactsList(params);
+
+        if (!data || (data._status && !data._ok)) {
+            const errorMsg = extractApiError(data);
+            resultsEl.innerHTML = `
+                <div class="error-state text-center" style="padding:var(--space-2xl)">
+                    <div style="font-size:3rem; margin-bottom:var(--space-lg)">🔌</div>
+                    <div style="color:var(--text-secondary); margin-bottom:var(--space-lg)">${escapeHtml(errorMsg)}</div>
+                    <button id="contacts-retry" class="btn btn-primary">🔄 Réessayer</button>
+                </div>
+            `;
+            document.getElementById('contacts-retry')?.addEventListener('click', async () => {
+                const health = await checkHealth();
+                if (health.ok) doSearch();
+                else showToast('Serveur inaccessible', 'error');
+            });
+            return;
+        }
+
+        const results = data.results || [];
+        allResults = results;
+        totalDisplay = data.total_display || String(data.total || results.length);
+        hasMore = results.length >= PAGE_SIZE * INITIAL_PAGES;
+
+        renderTable();
+    }
+
+    // ── Load more: append next batch ─────────────────────────────
+    async function loadMore() {
+        const loadMoreBtn = document.getElementById('contacts-load-more');
+        if (loadMoreBtn) {
+            loadMoreBtn.disabled = true;
+            loadMoreBtn.textContent = '⏳ Chargement...';
+        }
+
+        const params = { limit: PAGE_SIZE * INITIAL_PAGES, offset: allResults.length };
+        if (currentQuery) params.q = currentQuery;
+        if (currentDepartment) params.department = currentDepartment;
+
+        const data = await getContactsList(params);
+
+        if (!data || (data._status && !data._ok)) {
+            showToast(extractApiError(data), 'error');
+            if (loadMoreBtn) {
+                loadMoreBtn.disabled = false;
+                loadMoreBtn.textContent = '⬇️ Charger plus';
+            }
+            return;
+        }
+
+        const newResults = data.results || [];
+        allResults = allResults.concat(newResults);
+        hasMore = newResults.length >= PAGE_SIZE * INITIAL_PAGES;
+
+        renderTable();
     }
 
     // ── Event listeners ──────────────────────────────────────────
@@ -212,7 +244,7 @@ export async function renderContacts(container) {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
             currentQuery = searchInput.value.trim();
-            doSearch(0);
+            doSearch();
         }, 400);
     });
 
@@ -220,13 +252,13 @@ export async function renderContacts(container) {
         if (e.key === 'Enter') {
             clearTimeout(debounceTimer);
             currentQuery = searchInput.value.trim();
-            doSearch(0);
+            doSearch();
         }
     });
 
     deptFilter.addEventListener('change', () => {
         currentDepartment = deptFilter.value;
-        doSearch(0);
+        doSearch();
     });
 
     // Export button
@@ -247,5 +279,5 @@ export async function renderContacts(container) {
     });
 
     // Initial load
-    doSearch(0);
+    doSearch();
 }
