@@ -158,21 +158,27 @@ This is a **data-quality guard**, not proof that the schema column is nullable.
 
 ## 1.3 `officers` — Directors and officers
 
-| Column         | Type          | Nullable | Default  |
-| -------------- | ------------- | -------: | -------- |
-| `id`           | `SERIAL`      |       NO | auto     |
-| `siren`        | `VARCHAR(9)`  |       NO | —        |
-| `nom`          | `TEXT`        |       NO | —        |
-| `prenom`       | `TEXT`        |      YES | `NULL`   |
-| `role`         | `TEXT`        |      YES | `NULL`   |
-| `source`       | `VARCHAR(30)` |       NO | `'inpi'` |
-| `collected_at` | `TIMESTAMP`   |       NO | `NOW()`  |
+| Column          | Type          | Nullable | Default  |
+| --------------- | ------------- | -------: | -------- |
+| `id`            | `SERIAL`      |       NO | auto     |
+| `siren`         | `VARCHAR(9)`  |       NO | —        |
+| `nom`           | `TEXT`        |       NO | —        |
+| `prenom`        | `TEXT`        |      YES | `NULL`   |
+| `role`          | `TEXT`        |      YES | `NULL`   |
+| `civilite`      | `VARCHAR(10)` |      YES | `NULL`   |
+| `email_direct`  | `VARCHAR(255)`|      YES | `NULL`   |
+| `ligne_directe` | `VARCHAR(20)` |      YES | `NULL`   |
+| `code_fonction` | `VARCHAR(20)` |      YES | `NULL`   |
+| `type_fonction` | `VARCHAR(20)` |      YES | `NULL`   |
+| `source`        | `VARCHAR(30)` |       NO | `'inpi'` |
+| `collected_at`  | `TIMESTAMP`   |       NO | `NOW()`  |
 
 ### Contract
 
 * **Application rule:** insert-only behavior
 * **Application rule:** duplicates ignored via `ON CONFLICT DO NOTHING`
 * **Logical uniqueness:** `(siren, nom, COALESCE(prenom, ''))` — expression index
+* **New fields:** `ligne_directe` and `email_direct` hold direct officer contact info (populated via CSV upload or INPI)
 
 ---
 
@@ -218,6 +224,10 @@ This is a **data-quality guard**, not proof that the schema column is nullable.
 | `batch_number`      | `INT`         |       NO | `1`     | 1-based batch index         |
 | `batch_offset`      | `INT`         |       NO | `0`     | Source offset               |
 | `filters_json`      | `TEXT`        |      YES | `NULL`  | Serialized advanced filters |
+| `strategy`          | `VARCHAR(20)` |       NO | `'sirene'` | `sirene` or `maps`       |
+| `search_queries`    | `JSONB`       |      YES | `NULL`  | Maps discovery queries      |
+| `mode`              | `VARCHAR(20)` |      YES | `'discovery'` | `discovery` or `upload` |
+| `cancel_requested`  | `BOOLEAN`     |      YES | `false` | Cancellation flag           |
 | `created_at`        | `TIMESTAMP`   |       NO | `NOW()` | Created time                |
 | `updated_at`        | `TIMESTAMP`   |       NO | `NOW()` | Heartbeat/update time       |
 
@@ -236,7 +246,7 @@ new → triage → queued → in_progress → completed | failed
 | `in_progress` | `failed`      | application |
 
 * **Application rule:** state machine is managed in application code, not DB-enforced
-* **Current gap:** retry semantics from `failed` are undefined
+* **Application rule:** `cancel_requested` checked between waves for graceful stop
 * **Operational policy:** `updated_at` is heartbeat-touched every 60s during active execution
 
 ---
@@ -259,7 +269,64 @@ new → triage → queued → in_progress → completed | failed
 
 ---
 
-## 1.7 Other tables
+## 1.7 `company_notes` — Per-company text annotations
+
+| Column       | Type          | Nullable | Default  |
+| ------------ | ------------- | -------: | -------- |
+| `id`         | `SERIAL`      |       NO | auto     |
+| `siren`      | `VARCHAR(9)`  |       NO | —        |
+| `user_id`    | `INTEGER`     |       NO | —        |
+| `username`   | `VARCHAR(50)` |       NO | —        |
+| `text`       | `TEXT`        |       NO | —        |
+| `created_at` | `TIMESTAMP`   |       NO | `NOW()`  |
+
+### Contract
+
+* **Schema guarantee:** PK `(id)`, FK to `companies(siren)` with CASCADE
+* **Application rule:** author or admin can delete, all users can read
+* **Index:** `idx_company_notes_siren` on `(siren)`
+
+---
+
+## 1.8 `activity_log` — User action audit trail
+
+| Column        | Type          | Nullable | Default |
+| ------------- | ------------- | -------: | ------- |
+| `id`          | `SERIAL`      |       NO | auto    |
+| `user_id`     | `INTEGER`     |       NO | —       |
+| `username`    | `VARCHAR(50)` |       NO | —       |
+| `action`      | `VARCHAR(50)` |       NO | —       |
+| `target_type` | `VARCHAR(30)` |      YES | `NULL`  |
+| `target_id`   | `TEXT`        |      YES | `NULL`  |
+| `details`     | `TEXT`        |      YES | `NULL`  |
+| `created_at`  | `TIMESTAMP`   |       NO | `NOW()` |
+
+### Contract
+
+* **Application rule:** append-only (no deletes except admin cleanup)
+* **Application rule:** logged for: note_added, note_deleted, company_edited, enrichment_started
+* **Index:** on `(created_at DESC)` for recent activity queries
+
+---
+
+## 1.9 `users` — Authentication
+
+| Column     | Type          | Nullable | Default |
+| ---------- | ------------- | -------: | ------- |
+| `id`       | `SERIAL`      |       NO | auto    |
+| `username` | `VARCHAR(50)` |       NO | —       |
+| `password` | `TEXT`        |       NO | —       |
+| `role`     | `VARCHAR(20)` |       NO | `'user'`|
+
+### Contract
+
+* **Schema guarantee:** PK `(id)`, UNIQUE `(username)`
+* **Application rule:** password stored as bcrypt hash
+* **Roles:** `admin` (full access), `user` (standard access)
+
+---
+
+## 1.10 Other tables
 
 | Table                | Purpose                               | Contract type        |
 | -------------------- | ------------------------------------- | -------------------- |

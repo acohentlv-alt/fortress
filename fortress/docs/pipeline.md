@@ -180,6 +180,34 @@ A company is qualified only if Maps returned **a valid phone number** (high or l
 
 ---
 
+## 2.6 Maps Discovery Strategy (Alternative Pipeline)
+
+| | |
+|---|---|
+| **Owner** | `maps_discovery_runner.py` |
+| **Input** | `search_queries` (JSONB array of Google Maps search strings) |
+| **Output** | Same as SIRENE strategy: enriched contacts in DB |
+| **Key difference** | Bypasses SIRENE pool entirely — searches Google Maps directly with user-provided queries |
+
+**When used:** When `scrape_jobs.strategy = 'maps'`. The API in `batch.py` spawns `maps_discovery_runner` instead of `runner.py`.
+
+**Flow:**
+1. Receives search queries from user (e.g., `["plombier Paris", "electricien Lyon"]`)
+2. For each query, searches Google Maps directly via Playwright
+3. Extracts business listings from Maps results
+4. Creates/updates company records in `companies` table
+5. Runs website crawl enrichment on found URLs
+6. Deduplicates and persists via same `deduplicator.py` as SIRENE strategy
+
+**Key differences from SIRENE strategy:**
+- No `query_interpreter.py` stage (no NAF/department matching)
+- No triage stage (all results are new discoveries)
+- Companies may not exist in SIRENE registry
+- Discovery is Maps-first, not DB-first
+- Uses same `on_save` immediate persistence pattern
+
+---
+
 # 3. Job Lifecycle
 
 ## State Machine (current)
