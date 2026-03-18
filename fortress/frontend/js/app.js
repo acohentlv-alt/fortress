@@ -12,6 +12,7 @@ import { renderNewBatch } from './pages/new-batch.js';
 import { renderOpenQuery } from './pages/open-query.js';
 import { renderUpload } from './pages/upload.js';
 import { renderContacts } from './pages/contacts.js';
+import { renderActivity } from './pages/activity.js';
 import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
@@ -46,6 +47,7 @@ const routes = [
     { pattern: /^#\/monitor$/, handler: renderMonitor, nav: 'monitor' },
     { pattern: /^#\/upload$/, handler: renderUpload, nav: 'upload' },
     { pattern: /^#\/contacts$/, handler: renderContacts, nav: 'contacts' },
+    { pattern: /^#\/activity$/, handler: renderActivity, nav: 'activity' },
 ];
 
 function getPageContent() {

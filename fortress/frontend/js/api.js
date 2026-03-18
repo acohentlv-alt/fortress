@@ -355,6 +355,12 @@ export async function getContactsList(params = {}) {
     return await request('/contacts/list' + (qs ? '?' + qs : ''));
 }
 
+// ── Activity Log (admin only) ────────────────────────────────────
+export async function getActivityLog(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return await request('/activity' + (qs ? '?' + qs : ''));
+}
+
 // ── Dashboard Delete Actions ─────────────────────────────────────
 export async function getSectorStats() {
     return await request('/dashboard/stats/by-sector');

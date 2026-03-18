@@ -26,7 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import admin, auth as auth_routes, batch, client, companies, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
+from fortress.api.routes import activity, admin, auth as auth_routes, batch, client, companies, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -153,6 +153,7 @@ app.include_router(sirene.router)
 app.include_router(admin.router)
 app.include_router(notes.router)
 app.include_router(contacts_list.router)
+app.include_router(activity.router)
 
 # Serve frontend static files
 _frontend_dir = Path(__file__).parent.parent / "frontend"

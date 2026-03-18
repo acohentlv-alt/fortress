@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
 
@@ -169,6 +170,17 @@ async def run_batch(body: BatchRunRequest, request: Request):
             status_code=500,
             content={"error": f"Failed to spawn runner: {exc}", "query_id": query_id},
         )
+
+    # Log activity
+    user = getattr(request.state, 'user', None)
+    await log_activity(
+        user_id=getattr(user, 'id', None) if user else None,
+        username=getattr(user, 'username', 'system') if user else 'system',
+        action='batch_launched',
+        target_type='batch',
+        target_id=query_id,
+        details=f"Recherche {sector} {dept} — {body.size} entreprises",
+    )
 
     return {
         "query_id": query_id,

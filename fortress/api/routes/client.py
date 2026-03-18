@@ -28,6 +28,7 @@ from psycopg.types.json import Json
 
 from fortress.api.column_mapper import MappingResult, map_columns, normalize_siren
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/client", tags=["client"])
 logger = logging.getLogger("fortress.api.client")
@@ -170,6 +171,17 @@ async def upload_client_file(file: UploadFile = File(...)):
     # Keep first 5 errors for diagnosability, strip the rest
     errors = stats.pop("errors", [])
     error_count = len(errors)
+
+    # Log activity
+    scraped_total = stats["companies_inserted"] + stats["companies_updated"]
+    await log_activity(
+        user_id=None,
+        username='system',
+        action='upload',
+        target_type='upload',
+        target_id=query_id,
+        details=f"Import {filename} — {scraped_total} entreprises, {stats['contacts_upserted']} contacts",
+    )
 
     return {
         "status": "ok",

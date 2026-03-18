@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -78,6 +79,15 @@ async def delete_job(query_id: str, request: Request):
         )
         await conn.commit()
 
+    await log_activity(
+        user_id=getattr(user, 'id', None),
+        username=getattr(user, 'username', 'admin'),
+        action='delete_job',
+        target_type='job',
+        target_id=query_id,
+        details=f"Suppression du batch {row[1] or query_id}",
+    )
+
     return {"deleted": True, "query_id": query_id}
 
 
@@ -106,6 +116,15 @@ async def cancel_job(query_id: str, request: Request):
             (query_id,),
         )
         await conn.commit()
+
+    await log_activity(
+        user_id=getattr(user, 'id', None),
+        username=getattr(user, 'username', 'admin'),
+        action='cancel_job',
+        target_type='job',
+        target_id=query_id,
+        details=f"Annulation du batch {query_id}",
+    )
 
     return {"cancelled": True, "query_id": query_id}
 
