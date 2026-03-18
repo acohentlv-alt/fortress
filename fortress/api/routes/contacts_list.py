@@ -4,6 +4,11 @@ Returns a paginated, searchable list of all contacts across all enriched
 companies. Joins contacts + officers via LATERAL to pick the "best" record
 per company. Only queries companies linked via query_tags (enriched data),
 never the full 14.7M SIRENE table.
+
+Performance notes (for 3K contacts/month growth):
+  - LATERAL JOINs use idx_contacts_siren and idx_officers_siren
+  - Smart count: exact for <100, approximate for larger result sets
+  - Count uses LIMIT 1001 cap to avoid full scans
 """
 
 from __future__ import annotations
@@ -14,6 +19,32 @@ from fastapi.responses import JSONResponse
 from fortress.api.db import fetch_all, fetch_one
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts_list"])
+
+# Maximum rows to count exactly (above this, we approximate)
+_COUNT_CAP = 1001
+
+
+def _format_count(exact_count: int) -> dict:
+    """Return a smart count for the frontend.
+
+    Rules (per user spec):
+      - Under 100: exact number
+      - 100-999: rounded to nearest 100 ("200+", "500+")
+      - 1000+: rounded to nearest 500 ("1.5K+", "3K+")
+      - If we hit the cap (1001+): "1K+"
+    """
+    if exact_count < 100:
+        return {"total": exact_count, "display": str(exact_count), "exact": True}
+    if exact_count >= _COUNT_CAP:
+        return {"total": _COUNT_CAP, "display": "1K+", "exact": False}
+    if exact_count < 1000:
+        rounded = (exact_count // 100) * 100
+        return {"total": exact_count, "display": f"{rounded}+", "exact": False}
+    # 1000-1000
+    thousands = exact_count / 1000
+    if thousands == int(thousands):
+        return {"total": exact_count, "display": f"{int(thousands)}K+", "exact": False}
+    return {"total": exact_count, "display": f"{thousands:.1f}K+", "exact": False}
 
 
 @router.get("/list")
@@ -49,25 +80,35 @@ async def list_contacts(
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
+    # Shared FROM + JOIN clause (used by both count and page queries)
+    from_clause = """
+        FROM query_tags qt
+        JOIN companies co ON co.siren = qt.siren
+        LEFT JOIN LATERAL (
+            SELECT * FROM contacts c WHERE c.siren = co.siren
+            ORDER BY (c.phone IS NOT NULL)::int DESC
+            LIMIT 1
+        ) ct ON true
+        LEFT JOIN LATERAL (
+            SELECT * FROM officers off2 WHERE off2.siren = co.siren
+            ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
+            LIMIT 1
+        ) o ON true
+    """
+
     try:
-        # Count total (for pagination)
+        # Smart count — cap at 1001 to avoid full scan
+        count_params = list(params) + [_COUNT_CAP]
         count_row = await fetch_one(f"""
-            SELECT COUNT(DISTINCT co.siren) AS total
-            FROM query_tags qt
-            JOIN companies co ON co.siren = qt.siren
-            LEFT JOIN LATERAL (
-                SELECT * FROM contacts c WHERE c.siren = co.siren
-                ORDER BY (c.phone IS NOT NULL)::int DESC
-                LIMIT 1
-            ) ct ON true
-            LEFT JOIN LATERAL (
-                SELECT * FROM officers off2 WHERE off2.siren = co.siren
-                ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
-                LIMIT 1
-            ) o ON true
-            WHERE {where_clause}
-        """, tuple(params) if params else None)
-        total = (count_row or {}).get("total", 0)
+            SELECT COUNT(*) AS total FROM (
+                SELECT DISTINCT co.siren
+                {from_clause}
+                WHERE {where_clause}
+                LIMIT %s
+            ) sub
+        """, tuple(count_params) if count_params else None)
+        raw_count = (count_row or {}).get("total", 0)
+        count_info = _format_count(raw_count)
 
         # Fetch page
         page_params = list(params) + [limit, offset]
@@ -79,18 +120,7 @@ async def list_contacts(
                 ct.social_linkedin, ct.rating, ct.review_count,
                 o.nom AS dirigeant_nom, o.prenom AS dirigeant_prenom,
                 o.role AS dirigeant_role, o.email_direct, o.ligne_directe
-            FROM query_tags qt
-            JOIN companies co ON co.siren = qt.siren
-            LEFT JOIN LATERAL (
-                SELECT * FROM contacts c WHERE c.siren = co.siren
-                ORDER BY (c.phone IS NOT NULL)::int DESC
-                LIMIT 1
-            ) ct ON true
-            LEFT JOIN LATERAL (
-                SELECT * FROM officers off2 WHERE off2.siren = co.siren
-                ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
-                LIMIT 1
-            ) o ON true
+            {from_clause}
             WHERE {where_clause}
             ORDER BY co.siren, co.denomination
             LIMIT %s OFFSET %s
@@ -98,7 +128,9 @@ async def list_contacts(
 
         return {
             "results": rows or [],
-            "total": total,
+            "total": count_info["total"],
+            "total_display": count_info["display"],
+            "total_exact": count_info["exact"],
             "limit": limit,
             "offset": offset,
         }
@@ -116,3 +148,4 @@ async def list_contacts(
             status_code=500,
             content={"error": f"Erreur: {error_str}"},
         )
+

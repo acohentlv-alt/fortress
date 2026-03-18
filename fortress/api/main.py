@@ -45,6 +45,19 @@ async def lifespan(app: FastAPI):
             await _ensure_table()
         except Exception as e:
             logger.warning("Could not ensure activity_log table at startup: %s", e)
+        # Ensure pg_trgm extension + trigram index for fast ILIKE search
+        try:
+            from fortress.api.db import get_conn
+            async with get_conn() as conn:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_denomination_trgm
+                    ON companies USING gin (denomination gin_trgm_ops)
+                """)
+                await conn.commit()
+                logger.info("✅ pg_trgm extension + trigram index ready")
+        except Exception as e:
+            logger.warning("Could not create trigram index at startup: %s", e)
     else:
         logger.warning("🏰 Fortress API started — database OFFLINE: %s", db["error"])
     yield

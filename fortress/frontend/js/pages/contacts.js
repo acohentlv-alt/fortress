@@ -94,6 +94,8 @@ export async function renderContacts(container) {
 
         const results = data.results || [];
         const total = data.total || results.length;
+        const totalDisplay = data.total_display || String(total);
+        const totalExact = data.total_exact !== false;
 
         if (results.length === 0) {
             resultsEl.innerHTML = `
@@ -119,8 +121,8 @@ export async function renderContacts(container) {
         resultsEl.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-size:var(--font-sm); color:var(--text-secondary)">
-                    ${total} contact${total > 1 ? 's' : ''}
-                    ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
+                    ${totalDisplay} contact${total > 1 ? 's' : ''}
+                    ${totalExact && totalPages > 1 ? `— page ${currentPage}/${totalPages}` : (totalPages > 1 ? `— page ${currentPage}` : '')}
                 </span>
             </div>
 
