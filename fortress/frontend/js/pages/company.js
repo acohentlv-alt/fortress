@@ -249,54 +249,35 @@ export async function renderCompany(container, siren) {
 
                 <!-- 3. Identité juridique -->
                 <div class="detail-section">
-                    <h3 class="detail-section-title collapsible expanded" data-section="identite">
-                        <span>🏛️ Identité juridique</span>
-                        <span class="detail-section-chevron">▶</span>
-                    </h3>
-                    <div class="detail-section-body" data-section-body="identite">
+                    <h3 class="detail-section-title">🏛️ Identité juridique</h3>
                     ${detailRow('Dénomination', escapeHtml(co.denomination), 'Registre SIRENE', 'denomination')}
                     ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
                     ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
                     ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                     ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
                     ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
-                    </div>
                 </div>
 
                 <!-- 4. Localisation -->
                 <div class="detail-section">
-                    <h3 class="detail-section-title collapsible" data-section="localisation">
-                        <span>📍 Localisation</span>
-                        <span class="detail-section-chevron">▶</span>
-                    </h3>
-                    <div class="detail-section-body collapsed" data-section-body="localisation">
+                    <h3 class="detail-section-title">📍 Localisation</h3>
                     ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse')}
                     ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal')}
                     ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville')}
                     ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    </div>
                 </div>
 
                 <!-- 5. Activité & Effectif -->
                 <div class="detail-section">
-                    <h3 class="detail-section-title collapsible" data-section="activite">
-                        <span>📊 Activité</span>
-                        <span class="detail-section-chevron">▶</span>
-                    </h3>
-                    <div class="detail-section-body collapsed" data-section-body="activite">
+                    <h3 class="detail-section-title">📊 Activité</h3>
                     ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                     ${detailRow('Libellé NAF', co.naf_libelle ? escapeHtml(co.naf_libelle) : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                     ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    </div>
                 </div>
 
                 <!-- 6. Données financières -->
                 <div class="detail-section">
-                    <h3 class="detail-section-title collapsible" data-section="financier">
-                        <span>💰 Données financières</span>
-                        <span class="detail-section-chevron">▶</span>
-                    </h3>
-                    <div class="detail-section-body collapsed" data-section-body="financier">
+                    <h3 class="detail-section-title">💰 Données financières</h3>
                     ${detailRow("Chiffre d'affaires",
         co.chiffre_affaires
             ? formatCurrency(co.chiffre_affaires)
@@ -305,17 +286,12 @@ export async function renderCompany(container, siren) {
         co.resultat_net
             ? formatCurrency(co.resultat_net)
             : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
-                    </div>
                 </div>
 
                 <!-- 7. Données supplémentaires (extra_data JSONB) -->
                 ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
                 <div class="detail-section">
-                    <h3 class="detail-section-title collapsible" data-section="extra">
-                        <span>📋 Données supplémentaires</span>
-                        <span class="detail-section-chevron">▶</span>
-                    </h3>
-                    <div class="detail-section-body collapsed" data-section-body="extra">
+                    <h3 class="detail-section-title">📋 Données supplémentaires</h3>
                     <div style="background:var(--bg-tertiary, var(--bg-secondary)); border-radius:var(--radius-md); padding:var(--space-sm) 0; border:1px solid var(--border-subtle)">
                         ${Object.entries(co.extra_data).map(([k, v]) => `
                             <div class="detail-row" style="padding:var(--space-xs) var(--space-md)">
@@ -323,7 +299,6 @@ export async function renderCompany(container, siren) {
                                 <span class="detail-value">${escapeHtml(String(v))}</span>
                             </div>
                         `).join('')}
-                    </div>
                     </div>
                 </div>
                 ` : ''}
@@ -374,29 +349,6 @@ export async function renderCompany(container, siren) {
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
-
-    // ── Collapsible sections ────────────────────────────────────
-    _initCollapsibleSections(container);
-}
-
-// ── Collapsible Sections ─────────────────────────────────────────
-function _initCollapsibleSections(container) {
-    container.querySelectorAll('.detail-section-title.collapsible').forEach(title => {
-        title.addEventListener('click', () => {
-            const sectionKey = title.dataset.section;
-            const body = container.querySelector(`[data-section-body="${sectionKey}"]`);
-            if (!body) return;
-
-            const isCollapsed = body.classList.contains('collapsed');
-            if (isCollapsed) {
-                body.classList.remove('collapsed');
-                title.classList.add('expanded');
-            } else {
-                body.classList.add('collapsed');
-                title.classList.remove('expanded');
-            }
-        });
-    });
 }
 
 // ── Notes System ─────────────────────────────────────────────────

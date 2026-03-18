@@ -21,52 +21,51 @@
                 <span class="sidebar-brand-icon">🏰</span>
                 <span class="sidebar-brand-text">Fortress</span>
                 <span class="sidebar-brand-badge">v1.0</span>
-                <button class="sidebar-toggle" id="sidebar-toggle" title="Réduire le menu">☰</button>
             </div>
 
             <nav class="sidebar-nav">
                 <div class="sidebar-section-label">Navigation</div>
 
-                <a href="#/" class="nav-item" data-page="dashboard" id="nav-dashboard">
+                <a href="#/" class="nav-item" data-page="dashboard" id="nav-dashboard" title="Dashboard">
                     <span class="nav-item-icon">📊</span>
                     <span>Dashboard</span>
                 </a>
 
-                <a href="#/search" class="nav-item" data-page="search" id="nav-search">
+                <a href="#/search" class="nav-item" data-page="search" id="nav-search" title="Base SIRENE">
                     <span class="nav-item-icon">🏦</span>
                     <span>Base SIRENE</span>
                 </a>
 
-                <a href="#/contacts" class="nav-item" data-page="contacts" id="nav-contacts">
+                <a href="#/contacts" class="nav-item" data-page="contacts" id="nav-contacts" title="Contacts">
                     <span class="nav-item-icon">📇</span>
                     <span>Contacts</span>
                 </a>
 
                 <div class="sidebar-section-label">Opérations</div>
 
-                <a href="#/new-batch" class="nav-item" data-page="new-batch" id="nav-new-batch">
+                <a href="#/new-batch" class="nav-item" data-page="new-batch" id="nav-new-batch" title="Nouvelle Recherche">
                     <span class="nav-item-icon">🚀</span>
                     <span>Nouvelle Recherche</span>
                 </a>
 
-                <a href="#/monitor" class="nav-item" data-page="monitor" id="nav-monitor">
+                <a href="#/monitor" class="nav-item" data-page="monitor" id="nav-monitor" title="Pipeline Live">
                     <span class="nav-item-icon">📡</span>
                     <span>Pipeline Live</span>
                 </a>
 
-                <a href="#/upload" class="nav-item" data-page="upload" id="nav-upload">
+                <a href="#/upload" class="nav-item" data-page="upload" id="nav-upload" title="Import / Export">
                     <span class="nav-item-icon">📤</span>
                     <span>Import / Export</span>
                 </a>
 
                 <div class="sidebar-section-label">Intelligence</div>
 
-                <a href="#/open-query" class="nav-item" data-page="query" id="nav-query">
+                <a href="#/open-query" class="nav-item" data-page="query" id="nav-query" title="Requête Libre">
                     <span class="nav-item-icon">💬</span>
                     <span>Requête Libre</span>
                 </a>
 
-                <a href="#/activity" class="nav-item" data-page="activity" id="nav-activity">
+                <a href="#/activity" class="nav-item" data-page="activity" id="nav-activity" title="Suivi">
                     <span class="nav-item-icon">📋</span>
                     <span>Suivi</span>
                 </a>
@@ -74,10 +73,12 @@
 
             <div class="sidebar-footer">
                 <div id="user-display" style="display:none; font-size:var(--font-sm); font-weight:600; color:var(--text-primary); margin-bottom:var(--space-sm)"></div>
-                <span style="font-size:var(--font-xs); color:var(--text-muted)">Fortress v1.0 · Zéro coût</span>
-                <a href="#" id="btn-logout" style="display:none; color:var(--text-muted); font-size:var(--font-xs); cursor:pointer; text-decoration:underline; margin-top:4px">
-                    Déconnexion
-                </a>
+                <span class="sidebar-footer-version">Fortress v1.0 · Zéro coût</span>
+                <a href="#" id="btn-logout" class="sidebar-footer-logout">Déconnexion</a>
+                <button class="sidebar-toggle" id="sidebar-toggle" title="Réduire le menu" aria-label="Réduire le menu" aria-expanded="true">
+                    <span class="sidebar-toggle-icon">«</span>
+                    <span class="sidebar-toggle-label">Réduire</span>
+                </button>
             </div>
         </aside>
 

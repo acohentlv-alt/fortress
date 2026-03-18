@@ -251,31 +251,62 @@ a:hover { color: var(--accent); }
 .sidebar-footer {
     padding: var(--space-lg);
     border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.sidebar-footer-version {
     font-size: var(--font-xs);
     color: var(--text-muted);
 }
 
-/* ── Sidebar Toggle Button ─────────────────────────────────────── */
-.sidebar-toggle {
-    background: none;
-    border: none;
+.sidebar-footer-logout {
+    display: none;
     color: var(--text-muted);
-    font-size: 1.2rem;
+    font-size: var(--font-xs);
     cursor: pointer;
-    padding: var(--space-sm);
-    border-radius: var(--radius-sm);
-    transition: all var(--transition-fast);
+    text-decoration: underline;
+}
+
+/* ── Sidebar Toggle Button (bottom of footer) ────────────────── */
+.sidebar-toggle {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    flex-shrink: 0;
+    gap: var(--space-sm);
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    margin-top: var(--space-sm);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-family);
+    font-size: var(--font-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
 }
 
 .sidebar-toggle:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
+    border-color: var(--border-subtle);
+}
+
+.sidebar-toggle-icon {
+    font-size: 1rem;
+    font-weight: 700;
+    width: 24px;
+    text-align: center;
+    flex-shrink: 0;
+    transition: transform var(--transition);
+}
+
+.sidebar-toggle-label {
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease;
 }
 
 /* ── Sidebar Collapsed State ──────────────────────────────────── */
@@ -287,7 +318,9 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed .sidebar-brand-badge,
 .sidebar.collapsed .sidebar-section-label,
 .sidebar.collapsed .nav-item span:not(.nav-item-icon),
-.sidebar.collapsed .sidebar-footer > *:not(.sidebar-toggle-bottom) {
+.sidebar.collapsed .sidebar-footer-version,
+.sidebar.collapsed .sidebar-footer-logout,
+.sidebar.collapsed .sidebar-toggle-label {
     opacity: 0;
     width: 0;
     overflow: hidden;
@@ -326,9 +359,21 @@ a:hover { color: var(--accent); }
     align-items: center;
 }
 
+.sidebar.collapsed .sidebar-toggle {
+    justify-content: center;
+    padding: var(--space-sm);
+    width: 44px;
+    align-self: center;
+}
+
 .sidebar.collapsed ~ .main-content {
     margin-left: var(--sidebar-collapsed);
 }
+
+/* ── Utility: fully hide sidebar (login/intro screens) ─────── */
+.sidebar.hidden { display: none; }
+.main-content.no-sidebar { margin-left: 0 !important; }
+.header.hidden { display: none; }
 
 /* ── Main Content ──────────────────────────────────────────────── */
 .main-content {
@@ -349,7 +394,9 @@ a:hover { color: var(--accent); }
     .sidebar .sidebar-brand-badge,
     .sidebar .sidebar-section-label,
     .sidebar .nav-item span:not(.nav-item-icon),
-    .sidebar .sidebar-footer > *:not(.sidebar-toggle-bottom) {
+    .sidebar .sidebar-footer-version,
+    .sidebar .sidebar-footer-logout,
+    .sidebar .sidebar-toggle-label {
         opacity: 0;
         width: 0;
         overflow: hidden;
@@ -374,6 +421,16 @@ a:hover { color: var(--accent); }
     .sidebar .nav-item-icon {
         margin: 0;
         width: auto;
+    }
+    .sidebar .sidebar-footer {
+        padding: var(--space-md) var(--space-xs);
+        align-items: center;
+    }
+    .sidebar .sidebar-toggle {
+        justify-content: center;
+        padding: var(--space-sm);
+        width: 44px;
+        align-self: center;
     }
     .main-content {
         margin-left: var(--sidebar-collapsed);

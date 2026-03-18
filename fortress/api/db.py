@@ -105,3 +105,11 @@ async def fetch_one(query: str, params: tuple | None = None) -> dict | None:
         async with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             await cur.execute(query, params)
             return await cur.fetchone()
+
+
+async def execute(query: str, params: tuple | None = None) -> None:
+    """Execute a write query (INSERT/UPDATE/DELETE) and commit."""
+    async with get_conn() as conn:
+        await conn.execute(query, params)
+        await conn.commit()
+
