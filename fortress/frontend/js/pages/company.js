@@ -41,18 +41,18 @@ function unenrichedField(module) {
     </span>`;
 }
 
-// ── Enrichment Panel — Maps only ─────────────────────────────────
+// ── Enrichment Panel — Crawl only (Maps already ran in batch) ────
 function enrichmentPanelHTML() {
     return `
         <div class="enrich-panel" id="enrich-panel">
             <div class="enrich-panel-title">⚡ Enrichissement</div>
             <div class="enrich-pipeline-preview">
                 <div class="enrich-step">
-                    <span class="enrich-step-icon">🗺️</span>
+                    <span class="enrich-step-icon">🌐</span>
                     <div>
-                        <div class="enrich-step-label">Google Maps</div>
-                        <div class="enrich-step-desc">Téléphone, adresse, site web, avis, note</div>
-                        <div class="enrich-step-time">~5 secondes</div>
+                        <div class="enrich-step-label">Site Web</div>
+                        <div class="enrich-step-desc">Email, LinkedIn, Facebook, réseaux sociaux</div>
+                        <div class="enrich-step-time">~20 secondes</div>
                     </div>
                 </div>
             </div>
@@ -387,8 +387,8 @@ function _initEnrichmentPanel(siren) {
     const submitBtn = document.getElementById('enrich-submit-btn');
     if (!panel || !submitBtn) return;
 
-    // Maps-only enrichment
-    const modules = ['contact_phone'];
+    // Crawl-only enrichment (Maps already ran in batch)
+    const modules = ['contact_web'];
 
     // Submit handler — 200 vs 202 split
     submitBtn.addEventListener('click', async () => {

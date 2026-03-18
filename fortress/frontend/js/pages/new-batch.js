@@ -221,7 +221,7 @@ export async function renderNewBatch(container) {
                 ${queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('')}
             </ul>
             <span style="color:var(--text-muted)">
-                ${batchSize} entreprises souhaitées · Pipeline : Google Maps → SIRENE → Crawl
+                ${batchSize} entreprises souhaitées · Pipeline : Google Maps → Sauvegarde
             </span>
         `;
     };
