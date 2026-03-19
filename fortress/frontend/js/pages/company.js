@@ -630,32 +630,38 @@ function _initEnrichmentPanel(siren, container) {
     const submitBtn = document.getElementById('enrich-submit-btn');
     if (!submitBtn) return;
 
-    // Crawl-only enrichment (Maps already ran in batch)
-    const modules = ['contact_web'];
-
-    // Submit handler — 200 vs 202 split
+    // Direct synchronous website crawl — bypasses batch runner entirely
     submitBtn.addEventListener('click', async () => {
         // Loading state
         submitBtn.classList.add('loading');
         submitBtn.disabled = true;
+        const textEl = submitBtn.querySelector('.enrich-submit-text');
+        const originalText = textEl ? textEl.textContent : '';
+        if (textEl) textEl.textContent = '⏳ Scan du site en cours...';
 
         try {
-            const result = await enrichCompany(siren, modules);
+            const res = await fetch(`/api/companies/${siren}/crawl-website`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
 
-            if (result && result._status === 202) {
-                showToast(result.message || 'Enrichissement lancé — ~25s...', 'success');
-            } else if (result && result._ok) {
-                showToast(result.message || 'Données récupérées', 'success');
+            if (res.ok && data.extracted && Object.keys(data.extracted).length > 0) {
+                const found = Object.entries(data.extracted).map(([k, v]) => `${k}: ${v}`).join(', ');
+                showToast(`✅ ${data.message} — ${found}`, 'success');
                 await renderCompany(container, siren);
                 return;
+            } else if (res.ok) {
+                showToast(data.message || 'Aucun contact trouvé sur le site', 'info');
             } else {
-                showToast(extractApiError(result), 'error');
+                showToast(data.error || 'Erreur lors du crawl', 'error');
             }
         } catch (err) {
-            showToast('Erreur lors de l\'enrichissement', 'error');
+            showToast('Erreur réseau lors du crawl', 'error');
         } finally {
             submitBtn.classList.remove('loading');
             submitBtn.disabled = false;
+            if (textEl) textEl.textContent = originalText;
         }
     });
 
