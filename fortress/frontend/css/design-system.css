@@ -170,7 +170,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-brand {
-    padding: var(--space-xl) 32px;
+    padding: var(--space-xl) var(--space-lg);
     display: flex;
     align-items: center;
     gap: var(--space-md);
@@ -229,7 +229,7 @@ a:hover { color: var(--accent); }
     align-items: center;
     gap: var(--space-sm);
     margin: 0 var(--space-md);
-    padding: 0 var(--space-md);
+    padding: 0 var(--space-sm);
     height: 40px;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
@@ -240,7 +240,8 @@ a:hover { color: var(--accent); }
     text-decoration: none;
     border: none;
     background: none;
-    width: auto;
+    width: calc(100% - 32px);
+    overflow: hidden;
     text-align: left;
     white-space: nowrap;
 }
@@ -263,7 +264,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-footer {
-    padding: var(--space-lg) 32px;
+    padding: var(--space-lg);
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
