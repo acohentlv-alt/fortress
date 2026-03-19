@@ -84,6 +84,8 @@ class Contact(BaseModel):
     social_linkedin: str | None = None
     social_facebook: str | None = None
     social_twitter: str | None = None
+    social_instagram: str | None = None
+    social_tiktok: str | None = None
     rating: Decimal | None = None
     review_count: int | None = None
     maps_url: str | None = None

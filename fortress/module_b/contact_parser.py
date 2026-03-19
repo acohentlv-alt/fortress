@@ -269,7 +269,17 @@ _SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "twitter": re.compile(
-        r"https?://(?:www\.)?(?:twitter|x)\.com/[a-zA-Z0-9_]+",
+        # Must be a real profile handle, NOT /intent, /share, /hashtag, /i, /search etc.
+        r"https?://(?:www\.)?(?:twitter|x)\.com/(?!intent|share|hashtag|search|i/|home|explore|login|signup|privacy|tos)[a-zA-Z0-9_]{1,15}(?:/?)$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+    "instagram": re.compile(
+        # Instagram company/brand profiles (exclude /p/, /reel/, /explore/, /accounts/)
+        r"https?://(?:www\.)?instagram\.com/(?!p/|reel/|explore/|accounts/|about/|legal/)[a-zA-Z0-9_.]{1,30}/?",
+        re.IGNORECASE,
+    ),
+    "tiktok": re.compile(
+        r"https?://(?:www\.)?tiktok\.com/@[a-zA-Z0-9_.]{1,24}/?",
         re.IGNORECASE,
     ),
 }
@@ -317,7 +327,8 @@ def extract_emails(html: str) -> list[str]:
 def extract_social_links(html: str) -> dict[str, str]:
     """Extract first matched social media URL per platform.
 
-    Returns dict with keys 'linkedin', 'facebook', 'twitter' (only those found).
+    Returns dict with keys 'linkedin', 'facebook', 'twitter', 'instagram',
+    'tiktok' (only those found).
     """
     result: dict[str, str] = {}
     for platform, pattern in _SOCIAL_PATTERNS.items():

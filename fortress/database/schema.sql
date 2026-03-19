@@ -340,3 +340,9 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 CREATE INDEX IF NOT EXISTS idx_activity_log_time ON activity_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Social media columns — Instagram + TikTok expansion
+-- ---------------------------------------------------------------------------
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT;

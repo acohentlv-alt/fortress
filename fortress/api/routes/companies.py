@@ -55,7 +55,7 @@ _SORT_COLUMNS = {
 # ---------------------------------------------------------------------------
 
 _COMPANY_FIELDS = {"denomination", "adresse", "code_postal", "ville"}
-_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter"}
+_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"}
 _EDITABLE_FIELDS = _COMPANY_FIELDS | _CONTACT_FIELDS
 
 
@@ -379,6 +379,8 @@ async def crawl_website_sync(siren: str):
         "social_linkedin": all_social.get("linkedin"),
         "social_facebook": all_social.get("facebook"),
         "social_twitter": all_social.get("twitter"),
+        "social_instagram": all_social.get("instagram"),
+        "social_tiktok": all_social.get("tiktok"),
     }
     # Filter out empty values
     extracted = {k: v for k, v in extracted.items() if v}
@@ -608,6 +610,7 @@ async def get_company(siren: str):
         SELECT
             phone, email, email_type, website, source,
             social_linkedin, social_facebook, social_twitter,
+            social_instagram, social_tiktok,
             rating, review_count, maps_url, address, collected_at
         FROM contacts
         WHERE siren = %s
@@ -673,6 +676,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         "social_linkedin": None, "social_linkedin_source": None,
         "social_facebook": None, "social_facebook_source": None,
         "social_twitter": None, "social_twitter_source": None,
+        "social_instagram": None, "social_instagram_source": None,
+        "social_tiktok": None, "social_tiktok_source": None,
         "rating": None, "rating_source": None,
         "review_count": None,
         "maps_url": None, "maps_url_source": None,
@@ -684,7 +689,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         if src:
             merged["sources"].append(src)
         for key in ("phone", "email", "website", "social_linkedin",
-                     "social_facebook", "social_twitter", "maps_url", "address"):
+                     "social_facebook", "social_twitter", "social_instagram",
+                     "social_tiktok", "maps_url", "address"):
             if merged[key] is None and c.get(key):
                 merged[key] = c[key]
                 merged[f"{key}_source"] = src

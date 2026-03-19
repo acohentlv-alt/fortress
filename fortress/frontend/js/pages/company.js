@@ -199,6 +199,8 @@ export async function renderCompany(container, siren) {
                     ${detailRow('LinkedIn', formatSocial(mc.social_linkedin, 'Profil LinkedIn'), sourceLabel(mc.social_linkedin_source), 'social_linkedin', mc.social_linkedin || '')}
                     ${detailRow('Facebook', formatSocial(mc.social_facebook, 'Page Facebook'), sourceLabel(mc.social_facebook_source), 'social_facebook', mc.social_facebook || '')}
                     ${detailRow('Twitter', formatSocial(mc.social_twitter, 'Profil Twitter'), sourceLabel(mc.social_twitter_source), 'social_twitter', mc.social_twitter || '')}
+                    ${detailRow('Instagram', formatSocial(mc.social_instagram, 'Profil Instagram'), sourceLabel(mc.social_instagram_source), 'social_instagram', mc.social_instagram || '')}
+                    ${detailRow('TikTok', formatSocial(mc.social_tiktok, 'Profil TikTok'), sourceLabel(mc.social_tiktok_source), 'social_tiktok', mc.social_tiktok || '')}
                 </div>
 
                 <!-- Dirigeants Card -->

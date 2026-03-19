@@ -1182,6 +1182,8 @@ async def _enrich_one(
             social_linkedin=social.get("linkedin"),
             social_facebook=social.get("facebook"),
             social_twitter=social.get("twitter"),
+            social_instagram=social.get("instagram"),
+            social_tiktok=social.get("tiktok"),
             collected_at=datetime.now(tz=timezone.utc),
         ),
         source_label,
