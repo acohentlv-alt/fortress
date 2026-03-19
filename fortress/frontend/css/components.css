@@ -1951,6 +1951,13 @@
     letter-spacing: 0.04em;
 }
 
+/* ── Specific Grids ──────────────────────────────────────────────── */
+.crm-bento-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    align-items: stretch; /* allows sticky notes to work */
+}
+
 /* ── Responsive ────────────────────────────────────────────────── */
 @media (max-width: 900px) {
     /* Fold all major grids to single column */
