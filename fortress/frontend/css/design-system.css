@@ -290,7 +290,6 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-footer-logout {
-    display: none;
     color: var(--text-muted);
     font-size: var(--font-xs);
     cursor: pointer;
