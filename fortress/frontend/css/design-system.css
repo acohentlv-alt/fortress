@@ -170,7 +170,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-brand {
-    padding: var(--space-xl) var(--space-lg);
+    padding: var(--space-xl) 32px;
     display: flex;
     align-items: center;
     gap: var(--space-md);
@@ -263,7 +263,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-footer {
-    padding: var(--space-lg);
+    padding: var(--space-lg) 32px;
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
@@ -353,6 +353,7 @@ a:hover { color: var(--accent); }
 .sidebar-brand-badge,
 .nav-item span:not(.nav-item-icon),
 .sidebar-footer-version,
+.sidebar-footer-logout,
 .sidebar-user-display span:not(.user-display-icon) {
     transition: opacity 0.2s ease;
     opacity: 1;
@@ -368,6 +369,7 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed .sidebar-brand-badge,
 .sidebar.collapsed .nav-item span:not(.nav-item-icon),
 .sidebar.collapsed .sidebar-footer-version,
+.sidebar.collapsed .sidebar-footer-logout,
 .sidebar.collapsed .sidebar-user-display span:not(.user-display-icon),
 .sidebar.collapsed .sidebar-section-label {
     opacity: 0;
@@ -387,6 +389,7 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed.hover-expanded .sidebar-brand-badge,
 .sidebar.collapsed.hover-expanded .nav-item span:not(.nav-item-icon),
 .sidebar.collapsed.hover-expanded .sidebar-footer-version,
+.sidebar.collapsed.hover-expanded .sidebar-footer-logout,
 .sidebar.collapsed.hover-expanded .sidebar-user-display span:not(.user-display-icon),
 .sidebar.collapsed.hover-expanded .sidebar-section-label {
     opacity: 1;
