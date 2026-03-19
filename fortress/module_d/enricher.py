@@ -44,7 +44,7 @@ import structlog
 
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
-from fortress.module_b.contact_parser import _is_valid_french_phone, is_junk_email
+from fortress.module_b.contact_parser import _is_valid_french_phone, is_junk_email, is_personal_email
 from fortress.module_b.web_search import (
     _is_individual_operator,
     is_directory_url,
@@ -328,24 +328,36 @@ def _best_email(
     emails: list[str],
     website_url: str | None,
     siren: str,
+    company_name: str | None = None,
 ) -> str | None:
     """Pick the single best business email from a list.
 
     Selection strategy (in order):
-      1. Keep only non-junk emails whose domain matches the company website.
-      2. Prefer emails with a preferred prefix (contact@ > info@ > commercial@…).
-      3. Fall back to the first domain-matching email if no preferred prefix found.
-      4. If nothing matches the domain but we have non-junk emails, accept those.
-      5. Return None if the list is empty.
+      1. Remove junk emails and personal-domain emails (unless they reference
+         the company name, e.g. leparadismedoc@gmail.com).
+      2. Keep only emails whose domain matches the company website.
+      3. Prefer emails with a preferred prefix (contact@ > info@ > commercial@…).
+      4. Fall back to the first domain-matching email if no preferred prefix found.
+      5. If nothing matches the domain, accept business-Gmail if company-name-related.
+      6. Return None if nothing usable.
     """
     if not emails:
         return None
 
+    # Step 0: filter out personal emails that don't reference the company
+    usable = [
+        e for e in emails
+        if not is_personal_email(e, company_name)
+    ]
+    if not usable:
+        # All were personal/junk — nothing usable
+        return None
+
     # Step 1: filter by domain match
     domain_matched: list[str] = [
-        e for e in emails if _email_domain_matches(e, website_url)
+        e for e in usable if _email_domain_matches(e, website_url)
     ]
-    candidates = domain_matched if domain_matched else emails
+    candidates = domain_matched if domain_matched else usable
 
     # Step 2: pick preferred prefix
     local_map: dict[str, str] = {}
@@ -369,10 +381,57 @@ def _best_email(
     return candidates[0]
 
 
-def _best_phone(phones: list[str], siren: str) -> str | None:
-    """Pick the best phone from a list, preferring landlines over mobiles.
+# ---------------------------------------------------------------------------
+# Département → phone prefix geographic mapping
+# ---------------------------------------------------------------------------
 
-    Priority: 01-05 (geographic landlines) > 06-07 (mobile) > 09 (VoIP).
+# French geographic phone prefixes by zone:
+#   01 = Île-de-France (Paris region)
+#   02 = Nord-Ouest (Bretagne, Normandie, Pays de la Loire, Centre-Val de Loire)
+#   03 = Nord-Est (Alsace, Lorraine, Champagne, Bourgogne, Franche-Comté, Picardie)
+#   04 = Sud-Est (PACA, Auvergne-Rhône-Alpes, Corse, Occitanie Est)
+#   05 = Sud-Ouest (Nouvelle-Aquitaine, Occitanie Ouest)
+_DEPT_TO_PHONE_PREFIX: dict[str, str] = {}
+
+# 01 — Île-de-France
+for d in ("75", "77", "78", "91", "92", "93", "94", "95"):
+    _DEPT_TO_PHONE_PREFIX[d] = "01"
+
+# 02 — Nord-Ouest
+for d in ("14", "22", "27", "28", "29", "35", "36", "37", "41", "44", "45",
+          "49", "50", "53", "56", "61", "72", "76", "85"):
+    _DEPT_TO_PHONE_PREFIX[d] = "02"
+
+# 03 — Nord-Est
+for d in ("02", "08", "10", "18", "21", "25", "39", "51", "52", "54", "55",
+          "57", "58", "59", "60", "62", "67", "68", "70", "71", "80", "88",
+          "89", "90"):
+    _DEPT_TO_PHONE_PREFIX[d] = "03"
+
+# 04 — Sud-Est
+for d in ("01", "03", "04", "05", "06", "07", "11", "13", "15", "26", "30",
+          "34", "38", "42", "43", "48", "63", "66", "69", "73", "74", "83",
+          "84", "2A", "2B"):
+    _DEPT_TO_PHONE_PREFIX[d] = "04"
+
+# 05 — Sud-Ouest
+for d in ("09", "12", "16", "17", "19", "23", "24", "31", "32", "33", "40",
+          "46", "47", "64", "65", "79", "81", "82", "86", "87"):
+    _DEPT_TO_PHONE_PREFIX[d] = "05"
+
+
+def _best_phone(
+    phones: list[str],
+    siren: str,
+    departement: str | None = None,
+) -> str | None:
+    """Pick the best phone from a list, preferring geographic match + landlines.
+
+    Priority:
+      1. Landline matching company's département (e.g. 05 for dépt 33)
+      2. Other geographic landlines (01-05)
+      3. Mobile (06-07)
+      4. VoIP (09)
     """
     if not phones:
         return None
@@ -382,20 +441,42 @@ def _best_phone(phones: list[str], siren: str) -> str | None:
         log.debug("enricher.all_phones_invalid", phones=phones, siren=siren)
         return None
 
+    # Determine expected phone prefix from département
+    expected_prefix = _DEPT_TO_PHONE_PREFIX.get(departement or "", None)
+
     def _phone_priority(p: str) -> int:
         digits = _PHONE_DIGITS_RE.sub("", p)
         if digits.startswith("+33") and len(digits) == 12:
             digits = "0" + digits[3:]
         prefix = digits[:2]
-        if prefix in ("01", "02", "03", "04", "05"):
-            return 0  # Geographic landline — best
-        if prefix in ("06", "07"):
-            return 1  # Mobile
-        if prefix == "09":
-            return 2  # VoIP
-        return 3
 
-    return sorted(valid, key=_phone_priority)[0]
+        # Exact geographic match = absolute best
+        if expected_prefix and prefix == expected_prefix:
+            return 0  # Geographic match — best possible
+
+        if prefix in ("01", "02", "03", "04", "05"):
+            return 1  # Landline but wrong region
+        if prefix in ("06", "07"):
+            return 2  # Mobile
+        if prefix == "09":
+            return 3  # VoIP
+        return 4
+
+    chosen = sorted(valid, key=_phone_priority)[0]
+    if expected_prefix:
+        chosen_digits = _PHONE_DIGITS_RE.sub("", chosen)
+        if chosen_digits.startswith("+33"):
+            chosen_digits = "0" + chosen_digits[3:]
+        if chosen_digits[:2] != expected_prefix:
+            log.debug(
+                "enricher.phone_geo_mismatch",
+                siren=siren,
+                departement=departement,
+                expected_prefix=expected_prefix,
+                chosen_prefix=chosen_digits[:2],
+                chosen=chosen,
+            )
+    return chosen
 
 
 async def enrich_companies(
@@ -851,6 +932,7 @@ async def _enrich_one(
         maps_phone = _best_phone(
             [maps_result["phone"]] if maps_result.get("phone") else [],
             siren,
+            departement=getattr(company, "departement", None),
         )
         # ── Intra-batch phone dedup ───────────────────────────────────
         # If this phone was already assigned to another company in this batch,
@@ -1024,13 +1106,13 @@ async def _enrich_one(
 
         raw_emails: list[str] = crawl_result.get("emails", [])
         clean_emails = [e for e in raw_emails if not is_junk_email(e)]
-        best_email = _best_email(clean_emails, maps_website, siren)
+        best_email = _best_email(clean_emails, maps_website, siren, company_name=denomination)
         social = crawl_result.get("social", {})
 
         # Crawl may also find phone numbers — merge with Maps phone
         if not maps_phone:
             crawl_phones = crawl_result.get("phones", [])
-            maps_phone = _best_phone(crawl_phones, siren)
+            maps_phone = _best_phone(crawl_phones, siren, departement=getattr(company, "departement", None))
 
     # ── Layer 3: Website/email cross-validation ─────────────────────────
     # If name matching (Layer 2) said "low" confidence, check if the website

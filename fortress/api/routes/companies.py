@@ -308,10 +308,13 @@ async def crawl_website_sync(siren: str):
     Bypasses the `fortress.runner` batch queue entirely.
     """
     company = await fetch_one(
-        "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
+        "SELECT siren, denomination, departement FROM companies WHERE siren = %s", (siren,)
     )
     if not company:
         return JSONResponse(status_code=404, content={"error": "Company not found", "siren": siren})
+
+    company_name = company.get("denomination") or ""
+    departement = company.get("departement") or ""
 
     contact = await fetch_one(
         "SELECT website FROM contacts WHERE siren = %s AND website IS NOT NULL ORDER BY collected_at DESC LIMIT 1",
@@ -363,12 +366,12 @@ async def crawl_website_sync(siren: str):
                 if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
                     break
     
-    # Select best email and phone
+    # Select best email and phone — now with company context
     from fortress.module_d.enricher import _best_email, _best_phone
-    best_email = _best_email(list(set(all_emails)), root_url, siren)
+    best_email = _best_email(list(set(all_emails)), root_url, siren, company_name=company_name)
     
-    # Keep all valid phones for _best_phone
-    best_phone = _best_phone(list(set(all_phones)), siren)
+    # Geographic phone priority — département-aware
+    best_phone = _best_phone(list(set(all_phones)), siren, departement=departement)
     
     extracted = {
         "email": best_email,

@@ -192,7 +192,8 @@ _JUNK_INFRASTRUCTURE_DOMAINS = frozenset(
 # e.g. a3f8b2c1d4e5@... — auto-generated, not a real contact.
 _UUID_LOCAL_RE = re.compile(r"^[0-9a-f]{8,}$", re.IGNORECASE)
 
-# Free/personal email providers — not useful as business contacts
+# Free/personal email providers — blocked by default, but allowed if the
+# local part references the company name (many French SMBs use Gmail).
 _PERSONAL_DOMAINS = frozenset(
     {
         "gmail.com",
@@ -214,6 +215,43 @@ _PERSONAL_DOMAINS = frozenset(
         "me.com",
         "protonmail.com",
         "pm.me",
+    }
+)
+
+# Known web agency / tech provider domains — emails from these are never
+# business contacts; they're injected in footers/code by site builders.
+_WEB_AGENCY_DOMAINS = frozenset(
+    {
+        "geek-tonic.com",
+        "webedia.fr",
+        "webmaster.com",
+        "wix.com",
+        "squarespace.com",
+        "jimdo.com",
+        "ionos.fr",
+        "1and1.fr",
+        "amen.fr",
+        "gandi.net",
+        "lws.fr",
+        "o2switch.fr",
+        "planethoster.com",
+        "infomaniak.com",
+        "ex2.com",
+        "rezo-actif.fr",
+        "sitew.com",
+        "e-monsite.com",
+        "webnode.fr",
+        "strikingly.com",
+        "weebly.com",
+        "duda.co",
+        "elegantthemes.com",
+        "developer.mozilla.org",
+        "cookiebot.com",
+        "axeptio.eu",
+        "didomi.io",
+        "osano.com",
+        "onetrust.com",
+        "trustcommander.net",
     }
 )
 
@@ -296,9 +334,11 @@ def is_junk_email(email: str) -> bool:
     - Image file extensions (img@domain.png)
     - Common noreply / system sender prefixes (noreply, privacy, dpo, rgpd…)
     - Infrastructure / cloud provider domains (amazon.com, google.com, …)
-    - Personal email providers (gmail, hotmail, etc.)
+    - Web agency / site builder domains (geek-tonic.com, wix.com, …)
     - UUID / hex tokens in the local part (auto-generated addresses)
     - Obviously fake addresses (local == "email", total length > 80)
+    NOTE: Personal domains (gmail.com etc.) are NO LONGER rejected here.
+    They are handled by is_personal_email() with company-name context.
     """
     email = email.lower().strip()
 
@@ -330,17 +370,69 @@ def is_junk_email(email: str) -> bool:
     # Infrastructure / cloud provider domains
     if domain in _JUNK_INFRASTRUCTURE_DOMAINS:
         return True
-    # Also match subdomains of blocked providers (e.g. aws-eu-privacy@amazon.com checked above,
-    # but also sub.amazon.com)
+    # Also match subdomains of blocked providers (e.g. sub.amazon.com)
     for blocked in _JUNK_INFRASTRUCTURE_DOMAINS:
         if domain.endswith("." + blocked):
             return True
 
-    # Personal provider
-    if domain in _PERSONAL_DOMAINS:
+    # Web agency / site builder domains
+    if domain in _WEB_AGENCY_DOMAINS:
         return True
+    for blocked in _WEB_AGENCY_DOMAINS:
+        if domain.endswith("." + blocked):
+            return True
+
+    # Personal provider — NOT rejected here anymore.
+    # Use is_personal_email() for context-aware filtering.
 
     return False
+
+
+def is_personal_email(email: str, company_name: str | None = None) -> bool:
+    """Return True if this is a personal-domain email with no company relation.
+
+    If company_name is provided, allows personal-domain emails whose local part
+    contains words from the company name (e.g. leparadismedoc@gmail.com for
+    'Camping Le Paradis du Médoc').
+
+    If company_name is None, rejects all personal-domain emails (legacy behavior).
+    """
+    email = email.lower().strip()
+    _, _, domain = email.partition("@")
+    if domain not in _PERSONAL_DOMAINS:
+        return False  # Not a personal domain at all
+
+    # It IS a personal domain. Check if the local part references the company.
+    if not company_name:
+        return True  # No context → reject
+
+    local = email.split("@")[0]
+    # Normalize: remove accents, lowercase, strip separators
+    local_clean = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", local))
+    local_clean = "".join(c for c in local_clean if not unicodedata.combining(c))
+
+    name_clean = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", company_name.lower()))
+    name_clean = "".join(c for c in name_clean if not unicodedata.combining(c))
+
+    # Extract meaningful words (>= 4 chars) from the company name
+    name_words = [w for w in re.split(r"[^a-z0-9]+", company_name.lower()) if len(w) >= 4]
+    name_words_clean = []
+    for w in name_words:
+        wc = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", w))
+        wc = "".join(c for c in wc if not unicodedata.combining(c))
+        if len(wc) >= 4:
+            name_words_clean.append(wc)
+
+    # Check if any significant company word appears in the local part
+    for word in name_words_clean:
+        if word in local_clean:
+            return False  # Looks like a business Gmail → allow it
+
+    # Also check if the local part is a substantial substring of the company name
+    if len(local_clean) >= 5 and local_clean in name_clean:
+        return False
+
+    return True  # Generic personal email (e.g. jean.dupont@gmail.com)
 
 
 def parse_schema_org(html: str) -> dict[str, Any]:
