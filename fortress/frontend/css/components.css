@@ -1952,17 +1952,26 @@
 }
 
 /* ── Responsive ────────────────────────────────────────────────── */
-@media (max-width: 768px) {
-    .company-detail {
-        grid-template-columns: 1fr;
-    }
-
-    .detail-top-row {
-        grid-template-columns: 1fr;
-    }
-
+@media (max-width: 900px) {
+    /* Fold all major grids to single column */
+    .dashboard-grid,
+    .dashboard-batch-grid,
+    .crm-bento-grid,
+    .company-header-grid,
+    .company-content-grid,
+    .monitor-grid,
+    .company-detail,
+    .detail-top-row,
     .dept-grid {
         grid-template-columns: 1fr;
+    }
+
+    /* Remove horizontal blowouts */
+    .dashboard-card,
+    .batch-card,
+    .company-detail,
+    .monitor-card {
+        min-width: 0;
     }
 }
 

@@ -238,6 +238,7 @@ a:hover { color: var(--accent); }
     background: none;
     width: 100%;
     text-align: left;
+    white-space: nowrap;
 }
 
 .nav-item:hover {
