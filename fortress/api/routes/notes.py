@@ -37,23 +37,23 @@ async def list_notes(siren: str):
 @router.post("/{siren}", status_code=201)
 async def add_note(siren: str, body: NoteCreate, request: Request):
     """Add a note to a company. User is extracted from session."""
-    user = getattr(request.state, "user", None)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "Non authentifié"})
-
-    user_id = user.get("id")
-    username = user.get("username", "unknown")
-
-    # Verify company exists
-    company = await fetch_one(
-        "SELECT siren FROM companies WHERE siren = %s", (siren,)
-    )
-    if not company:
-        return JSONResponse(
-            status_code=404, content={"error": "Entreprise introuvable"}
-        )
-
     try:
+        user = getattr(request.state, "user", None)
+        if not user:
+            return JSONResponse(status_code=401, content={"error": "Non authentifié"})
+
+        user_id = user.get("id")
+        username = user.get("username", "unknown")
+
+        # Verify company exists
+        company = await fetch_one(
+            "SELECT siren FROM companies WHERE siren = %s", (siren,)
+        )
+        if not company:
+            return JSONResponse(
+                status_code=404, content={"error": "Entreprise introuvable"}
+            )
+
         async with get_conn() as conn:
             result = await conn.execute("""
                 INSERT INTO company_notes (siren, user_id, username, text)
@@ -62,29 +62,29 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
             """, (siren, user_id, username, body.text.strip()))
             row = await result.fetchone()
             await conn.commit()
+
+        await log_activity(
+            user_id=user_id,
+            username=username,
+            action='note_added',
+            target_type='company',
+            target_id=siren,
+            details=f"Note ajoutée sur {siren}",
+        )
+
+        return {
+            "id": row[0],
+            "siren": siren,
+            "user_id": user_id,
+            "username": username,
+            "text": body.text.strip(),
+            "created_at": str(row[1]),
+        }
     except Exception as e:
         import traceback
         return JSONResponse(
-            status_code=500, content={"error": f"Database exception: {str(e)}\n\n{traceback.format_exc()}"}
+            status_code=500, content={"error": f"Fatal Route Crash: {str(e)}\n\n{traceback.format_exc()}"}
         )
-
-    await log_activity(
-        user_id=user_id,
-        username=username,
-        action='note_added',
-        target_type='company',
-        target_id=siren,
-        details=f"Note ajoutée sur {siren}",
-    )
-
-    return {
-        "id": row[0],
-        "siren": siren,
-        "user_id": user_id,
-        "username": username,
-        "text": body.text.strip(),
-        "created_at": str(row[1]),
-    }
 
 
 @router.delete("/{note_id}")
