@@ -162,12 +162,15 @@ export async function renderCompany(container, siren) {
         <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
             <div class="company-detail-name-block">
                 <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">${escapeHtml(co.denomination)}</div>
-                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center;">
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-xs);">
                     ${formatSiren(co.siren)}
-                    <span style="margin: 0 var(--space-sm)">·</span>
+                    <span style="margin: 0 var(--space-2xs)">·</span>
                     ${statutBadge(co.statut)}
-                    <span style="margin: 0 var(--space-sm)">·</span>
-                    ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
+                    ${co.forme_juridique ? `<span style="margin: 0 var(--space-2xs)">·</span>${formeJuridiqueBadge(co.forme_juridique)}` : ''}
+                    ${co.naf_code ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted" title="${escapeHtml(co.naf_libelle || '')}">📋 ${escapeHtml(co.naf_code)}</span>` : ''}
+                    ${effectifLabel(co.tranche_effectif) ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted">👥 ${effectifLabel(co.tranche_effectif)}</span>` : ''}
+                    ${co.departement ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted">📍 ${escapeHtml(co.departement)}</span>` : ''}
+                    ${mc.rating ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-accent">⭐ ${mc.rating}</span>` : ''}
                 </div>
             </div>
             <div class="company-detail-actions">
@@ -251,14 +254,7 @@ export async function renderCompany(container, siren) {
         <div class="company-detail">
             <!-- Left Column: Identity Card -->
             <div class="company-detail-identity">
-                <!-- Quick Stats Chips -->
-                <div style="display:flex; flex-wrap:wrap; gap:var(--space-sm);">
-                    ${co.naf_code ? `<span class="badge badge-muted" title="${escapeHtml(co.naf_libelle || '')}">📋 ${escapeHtml(co.naf_code)}</span>` : ''}
-                    ${effectifLabel(co.tranche_effectif) ? `<span class="badge badge-muted">👥 ${effectifLabel(co.tranche_effectif)}</span>` : ''}
-                    ${co.departement ? `<span class="badge badge-muted">📍 ${escapeHtml(co.departement)}</span>` : ''}
-                    ${mc.rating ? `<span class="badge badge-accent">⭐ ${mc.rating}</span>` : ''}
-                </div>
-
+                <!-- Quick Stats Moved to Header -->
                 <!-- Google Maps Link (prominent) -->
                 ${mc.maps_url ? `
                     <div style="margin-top: var(--space-2xl); text-align:center">
