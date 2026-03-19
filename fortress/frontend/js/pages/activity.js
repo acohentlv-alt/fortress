@@ -11,6 +11,8 @@ import { registerCleanup } from '../app.js';
 
 const ACTION_ICONS = {
     batch_launched: '🚀',
+    batch_completed: '✅',
+    batch_failed: '❌',
     upload: '📤',
     delete_job: '🗑️',
     cancel_job: '⏹️',
@@ -23,6 +25,8 @@ const ACTION_ICONS = {
 
 const ACTION_LABELS = {
     batch_launched: 'Recherche lancée',
+    batch_completed: 'Batch terminé',
+    batch_failed: 'Erreur Batch',
     upload: 'Fichier importé',
     delete_job: 'Batch supprimé',
     cancel_job: 'Batch annulé',
@@ -62,18 +66,26 @@ export async function renderActivity(container) {
     }
 
     let currentPeriod = 'week';
+    let currentActionType = 'all';
     let currentOffset = 0;
     const PAGE_SIZE = 50;
 
     container.innerHTML = `
-        <h1 class="page-title">📋 Suivi d'activité</h1>
-        <p class="page-subtitle">Journal des actions effectuées par les utilisateurs</p>
+        <h1 class="page-title">📋 Journal de l'Équipe</h1>
+        <p class="page-subtitle">Suivi des opérations, batches et notes par utilisateur</p>
 
-        <div style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-xl); flex-wrap:wrap">
-            <button class="view-toggle-btn" id="period-day">Aujourd'hui</button>
-            <button class="view-toggle-btn active" id="period-week">Cette semaine</button>
-            <button class="view-toggle-btn" id="period-month">Ce mois</button>
-            <button class="view-toggle-btn" id="period-all">Tout</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xl); flex-wrap:wrap; gap:var(--space-md)">
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                <button class="view-toggle-btn type-toggle active" data-type="all">Toutes les actions</button>
+                <button class="view-toggle-btn type-toggle" data-type="batches">Batches & Opérations</button>
+                <button class="view-toggle-btn type-toggle" data-type="notes">Commentaires (Notes)</button>
+            </div>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                <button class="view-toggle-btn period-toggle" data-period="day">Aujourd'hui</button>
+                <button class="view-toggle-btn period-toggle active" data-period="week">Cette semaine</button>
+                <button class="view-toggle-btn period-toggle" data-period="month">Ce mois</button>
+                <button class="view-toggle-btn period-toggle" data-period="all">Tout</button>
+            </div>
         </div>
 
         <div id="activity-feed">
@@ -87,7 +99,7 @@ export async function renderActivity(container) {
         currentOffset = offset;
         feedEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-        const data = await getActivityLog({ period: currentPeriod, limit: PAGE_SIZE, offset: currentOffset });
+        const data = await getActivityLog({ period: currentPeriod, action_type: currentActionType, limit: PAGE_SIZE, offset: currentOffset });
 
         if (!data || (data._status && !data._ok)) {
             feedEl.innerHTML = `
@@ -123,7 +135,7 @@ export async function renderActivity(container) {
             </div>
             <div class="activity-list">
                 ${entries.map(e => `
-                    <div class="activity-item card" style="padding:var(--space-md) var(--space-lg); margin-bottom:var(--space-sm); display:flex; gap:var(--space-md); align-items:flex-start">
+                    <div class="activity-item card" style="padding:var(--space-md) var(--space-lg); margin-bottom:var(--space-sm); display:flex; gap:var(--space-md); align-items:flex-start; ${e.action === 'batch_failed' ? 'border-left:4px solid var(--text-error)' : ''}">
                         <span style="font-size:1.5rem; flex-shrink:0">${ACTION_ICONS[e.action] || '📌'}</span>
                         <div style="flex:1; min-width:0">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-xs)">
@@ -134,9 +146,9 @@ export async function renderActivity(container) {
                                     ${_timeAgo(e.created_at)}
                                 </span>
                             </div>
-                            <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:2px">
+                            <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:4px">
                                 <strong>${ACTION_LABELS[e.action] || e.action}</strong>
-                                ${e.details ? ` — ${escapeHtml(e.details)}` : ''}
+                                ${e.details ? `<div style="margin-top:4px; padding:var(--space-xs) var(--space-sm); background:var(--bg-secondary); border-radius:4px; ${e.action === 'batch_failed' ? 'color:var(--text-error); background:rgba(239, 68, 68, 0.1);' : ''}">${escapeHtml(e.details)}</div>` : ''}
                             </div>
                             ${e.target_id ? `
                                 <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px; font-family:var(--font-mono)">
@@ -165,12 +177,20 @@ export async function renderActivity(container) {
         if (nextBtn && hasNext) nextBtn.addEventListener('click', () => loadFeed(currentOffset + PAGE_SIZE));
     }
 
-    // Period toggle
-    ['day', 'week', 'month', 'all'].forEach(p => {
-        document.getElementById(`period-${p}`)?.addEventListener('click', () => {
-            document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById(`period-${p}`).classList.add('active');
-            currentPeriod = p;
+    document.querySelectorAll('.type-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.type-toggle').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            currentActionType = e.target.dataset.type;
+            loadFeed(0);
+        });
+    });
+
+    document.querySelectorAll('.period-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.period-toggle').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            currentPeriod = e.target.dataset.period;
             loadFeed(0);
         });
     });

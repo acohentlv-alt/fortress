@@ -288,74 +288,66 @@ export async function renderCompany(container, siren) {
             </div>
         </div>
 
-        <!-- BOTTOM SECTION: Remaining Data Cards -->
-        <div class="company-detail-remaining" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:var(--space-xl); align-items:start;">
+        <!-- BOTTOM SECTION: Reference Data (2-column symmetric grid) -->
+        <div class="company-ref-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-xl); align-items:start; margin-bottom:var(--space-2xl)">
 
-            <!-- 3. Identité juridique -->
-            <div class="detail-section">
-                <h3 class="detail-section-title">🏛️ Identité juridique</h3>
-                ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
-                ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
-                ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
-                ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
-                ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
-            </div>
+            <!-- Left: Identité + Localisation -->
+            <div style="display:flex; flex-direction:column; gap:var(--space-xl)">
+                <div class="detail-section" style="margin-bottom:0">
+                    <h3 class="detail-section-title">🏛️ Identité juridique</h3>
+                    ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
+                    ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
+                    ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
+                    ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
+                    ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
+                </div>
 
-            <!-- 4. Localisation -->
-            <div class="detail-section">
+                <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">📍 Localisation</h3>
                     ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse', co.adresse || '')}
                     ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal', co.code_postal || '')}
                     ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville', co.ville || '')}
                     ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
+            </div>
 
-                <!-- 5. Activité & Effectif -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">📊 Activité</h3>
-                    ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    ${detailRow('Libellé NAF', co.naf_libelle ? escapeHtml(co.naf_libelle) : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+            <!-- Right: Financial + Activité (merged "Chiffres Clés") -->
+            <div style="display:flex; flex-direction:column; gap:var(--space-xl)">
+                <div class="detail-section" style="margin-bottom:0">
+                    <h3 class="detail-section-title">💰 Chiffres clés</h3>
+                    ${detailRow("Chiffre d'affaires",
+                        co.chiffre_affaires
+                            ? `<span style="font-weight:700; color:var(--success)">${formatCurrency(co.chiffre_affaires)}</span>`
+                            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible</span>')}
+                    ${detailRow('Résultat net',
+                        co.resultat_net
+                            ? `<span style="font-weight:700">${formatCurrency(co.resultat_net)}</span>`
+                            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible</span>')}
+                    ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>${co.naf_libelle ? ` <span style="color:var(--text-secondary); font-size:var(--font-sm)">— ${escapeHtml(co.naf_libelle)}</span>` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                     ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
-                <!-- 6. Données financières -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">💰 Données financières</h3>
-                    ${detailRow("Chiffre d'affaires",
-        co.chiffre_affaires
-            ? formatCurrency(co.chiffre_affaires)
-            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
-                    ${detailRow('Résultat net',
-        co.resultat_net
-            ? formatCurrency(co.resultat_net)
-            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible <span class="badge badge-muted" style="font-size:var(--font-xs)">Prochainement</span></span>')}
-                </div>
-
-                <!-- 7. Données supplémentaires (extra_data JSONB) -->
+                <!-- Données supplémentaires (extra_data JSONB) -->
                 ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
-                <div class="detail-section">
+                <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">📋 Données supplémentaires</h3>
-                    <div style="background:var(--bg-tertiary, var(--bg-secondary)); border-radius:var(--radius-md); padding:var(--space-sm) 0; border:1px solid var(--border-subtle)">
-                        ${Object.entries(co.extra_data).map(([k, v]) => `
-                            <div class="detail-row" style="padding:var(--space-xs) var(--space-md)">
-                                <span class="detail-label" style="color:var(--text-muted)">${escapeHtml(k)}</span>
-                                <span class="detail-value">${escapeHtml(String(v))}</span>
-                            </div>
-                        `).join('')}
-                    </div>
+                    ${Object.entries(co.extra_data).map(([k, v]) => `
+                        <div class="detail-row">
+                            <span class="detail-label" style="color:var(--text-muted); flex-shrink:0; min-width:140px">${escapeHtml(k)}</span>
+                            <span class="detail-value" style="word-break:break-word; overflow-wrap:anywhere">${escapeHtml(String(v))}</span>
+                        </div>
+                    `).join('')}
                 </div>
                 ` : ''}
+            </div>
+        </div>
 
-
-
-                <!-- 9. Enrichment History Timeline -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">📜 Historique d'enrichissement</h3>
-                    <div id="enrich-history-container">
-                        <div class="loading" style="padding:var(--space-lg) 0"><div class="spinner"></div></div>
-                    </div>
-                </div>
+        <!-- Enrichment History (full-width) -->
+        <div class="detail-section">
+            <h3 class="detail-section-title">📜 Historique d'enrichissement</h3>
+            <div id="enrich-history-container">
+                <div class="loading" style="padding:var(--space-lg) 0"><div class="spinner"></div></div>
             </div>
         </div>
     `;

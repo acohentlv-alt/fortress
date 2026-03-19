@@ -247,13 +247,17 @@ async def run(query_id: str) -> None:
 
                 # ── Load job metadata from scrape_jobs ──────────────────────
                 cur = await conn_holder[0].execute(
-                    """SELECT query_name,
-                              COALESCE(batch_number, 1),
-                              COALESCE(batch_offset, 0),
-                              filters_json,
-                              total_companies,
-                              COALESCE(batch_size, total_companies)
-                       FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
+                    """SELECT sj.query_name,
+                              COALESCE(sj.batch_number, 1),
+                              COALESCE(sj.batch_offset, 0),
+                              sj.filters_json,
+                              sj.total_companies,
+                              COALESCE(sj.batch_size, sj.total_companies),
+                              sj.user_id,
+                              u.username
+                       FROM scrape_jobs sj
+                       LEFT JOIN users u ON sj.user_id = u.id
+                       WHERE sj.query_id = %s LIMIT 1""",
                     (query_id,),
                 )
                 row = await cur.fetchone()
@@ -266,6 +270,11 @@ async def run(query_id: str) -> None:
                 batch_offset: int = row[2]
                 filters_raw: str | None = row[3]
                 requested_size: int = row[5] or row[4] or _wave_size  # batch_size preferred
+                
+                # Job user context
+                job_user_id = row[6]
+                job_username = row[7]
+                
                 # Parse filters JSON (None or empty string → no filters)
                 query_filters: dict | None = None
                 if filters_raw:
@@ -457,6 +466,16 @@ async def run(query_id: str) -> None:
                     replaced_count=total_replaced,
                 )
                 log.info(f"runner_{final_status}", query_id=query_id, waves=wave_counter, shutdown=_shutdown)
+                
+                if job_user_id and job_username:
+                    from fortress.api.routes.activity import log_activity
+                    await log_activity(
+                        user_id=job_user_id,
+                        username=job_username,
+                        action=f"batch_{final_status}",
+                        target_id=query_id,
+                        details=f"Batch {final_status} ({wave_counter} waves, {companies_scraped} traitées)"
+                    )
 
             except Exception as exc:
                 log.error(
@@ -467,6 +486,15 @@ async def run(query_id: str) -> None:
                 )
                 try:
                     await _update_job_safe(conn_holder, query_id, status="failed")
+                    if 'job_user_id' in locals() and job_user_id and job_username:
+                        from fortress.api.routes.activity import log_activity
+                        await log_activity(
+                            user_id=job_user_id,
+                            username=job_username,
+                            action="batch_failed",
+                            target_id=query_id,
+                            details=f"Erreur fatale: {str(exc)[:200]}"
+                        )
                 except Exception:
                     pass  # Don't mask the original exception
                 raise

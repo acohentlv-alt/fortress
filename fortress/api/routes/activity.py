@@ -75,12 +75,13 @@ async def log_activity(
 async def get_activity(
     request: Request,
     period: str = Query("week", description="day, week, or month"),
+    action_type: str = Query("all", description="all, notes, batches"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     """Return recent activity log entries. Admin-only."""
     user = getattr(request.state, "user", None)
-    if not user or user.get("role") != "admin":
+    if not user or getattr(user, "role", None) != "admin":
         return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs."})
 
     await _ensure_table()
@@ -94,18 +95,26 @@ async def get_activity(
     }
     interval = interval_map.get(period, "7 days")
 
+    action_filter = ""
+    if action_type == "notes":
+        action_filter = "AND action IN ('note_added', 'note_deleted')"
+    elif action_type == "batches":
+        action_filter = "AND action IN ('batch_launched', 'batch_completed', 'batch_failed', 'upload', 'export', 'cancel_job', 'delete_job')"
+
     try:
-        rows = await fetch_all("""
+        rows = await fetch_all(f"""
             SELECT id, user_id, username, action, target_type, target_id, details, created_at
             FROM activity_log
             WHERE created_at >= NOW() - %s::interval
+            {action_filter}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
         """, (interval, limit, offset))
 
-        count_row = await fetch_one("""
+        count_row = await fetch_one(f"""
             SELECT COUNT(*) AS total FROM activity_log
             WHERE created_at >= NOW() - %s::interval
+            {action_filter}
         """, (interval,))
         total = (count_row or {}).get("total", 0)
 
