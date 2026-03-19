@@ -408,7 +408,7 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.email ? 'var(--success)' : 'var(--text-muted)'}; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.email ? escapeHtml(c.email) : '—'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center">${escapeHtml(c.departement || '—')}</td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.query_name || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.batch_name || '—')}</td>
                             </tr>
                         `}).join('')}
                     </tbody>
@@ -549,18 +549,18 @@ function renderByJob(jobs, rootContainer) {
         return;
     }
 
-    // Group by query_name (case-insensitive)
+    // Group by batch_name (case-insensitive)
     const groups = {};
     for (const j of jobs) {
-        const key = (j.query_name || '').toUpperCase().trim();
-        if (!groups[key]) groups[key] = { display_name: j.query_name, batches: [] };
+        const key = (j.batch_name || '').toUpperCase().trim();
+        if (!groups[key]) groups[key] = { display_name: j.batch_name, batches: [] };
         groups[key].batches.push(j);
     }
 
     // Sort each group's batches by date (newest first)
     for (const g of Object.values(groups)) {
         g.batches.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        g.display_name = g.batches[0].query_name;
+        g.display_name = g.batches[0].batch_name;
     }
 
     // Sort groups by their newest batch date
@@ -591,7 +591,7 @@ function _renderJobEmptyState(view) {
 function _wireJobGroupDeleteButtons(view, rootContainer) {
     view.querySelectorAll('.card-delete-btn[data-delete-type="job-group"]').forEach(btn => {
         btn.addEventListener('click', () => {
-            const queryName = btn.dataset.deleteId;
+            const batchName = btn.dataset.deleteId;
             const label = btn.dataset.deleteLabel;
             showConfirmModal({
                 title: '🗑️ Supprimer le groupe de recherche',
@@ -600,9 +600,9 @@ function _wireJobGroupDeleteButtons(view, rootContainer) {
                 confirmLabel: 'Supprimer',
                 danger: true,
                 onConfirm: async () => {
-                    const result = await deleteJobGroup(queryName);
+                    const result = await deleteJobGroup(batchName);
                     if (result._ok) {
-                        showToast(`Groupe ${queryName} supprimé (${result.jobs_deleted} jobs, ${result.tags_removed} tags)`, 'success');
+                        showToast(`Groupe ${batchName} supprimé (${result.jobs_deleted} jobs, ${result.tags_removed} tags)`, 'success');
                         renderDashboard(rootContainer);
                     } else {
                         showToast(extractApiError(result), 'error');
@@ -625,11 +625,11 @@ function _renderGroupCard(g, idx) {
 
     // Use display_name directly — already uppercase from API
     const displayName = escapeHtml(g.display_name || '');
-    const queryName = g.display_name || g.query_name || '';
+    const batchName = g.display_name || g.batch_name || '';
 
     return `
-        <div class="job-group-card" style="position:relative" data-group-name="${escapeHtml(queryName)}">
-            <button class="card-delete-btn" data-delete-type="job-group" data-delete-id="${escapeHtml(queryName)}" data-delete-label="${displayName} (${batchCount} batch${batchCount > 1 ? 'es' : ''})"
+        <div class="job-group-card" style="position:relative" data-group-name="${escapeHtml(batchName)}">
+            <button class="card-delete-btn" data-delete-type="job-group" data-delete-id="${escapeHtml(batchName)}" data-delete-label="${displayName} (${batchCount} batch${batchCount > 1 ? 'es' : ''})"
                 onclick="event.stopPropagation()" title="Supprimer ce groupe">✕</button>
             <div class="job-group-header" onclick="document.getElementById('${groupId}').classList.toggle('expanded')">
                 <div class="job-group-info">
@@ -661,10 +661,10 @@ function _renderGroupCard(g, idx) {
         const bTotal = b.total_companies || 1;
         const bPct = Math.round((bScraped / bTotal) * 100);
         return `
-                        <div class="job-timeline-item" onclick="event.stopPropagation(); window.location.hash='#/job/${encodeURIComponent(b.query_id)}'">
+                        <div class="job-timeline-item" onclick="event.stopPropagation(); window.location.hash='#/job/${encodeURIComponent(b.batch_id)}'">
                             <div class="timeline-dot ${bIdx === 0 ? 'latest' : ''}"></div>
                             <div class="timeline-content">
-                                <div class="timeline-batch-id">${escapeHtml(b.query_id)}</div>
+                                <div class="timeline-batch-id">${escapeHtml(b.batch_id)}</div>
                                 <div class="timeline-meta">
                                     <span>${formatDateTime(b.created_at)}</span>
                                     <span>${bScraped}/${bTotal} scrapées</span>
@@ -776,10 +776,10 @@ function renderBySector(jobs, rootContainer) {
         return;
     }
 
-    // Group by sector (first word of query_name, uppercased)
+    // Group by sector (first word of batch_name, uppercased)
     const sectors = {};
     for (const j of jobs) {
-        const sector = (j.sector || (j.query_name || '').split(' ')[0]).toUpperCase().trim();
+        const sector = (j.sector || (j.batch_name || '').split(' ')[0]).toUpperCase().trim();
         if (!sector) continue;
         if (!sectors[sector]) sectors[sector] = { name: sector, batches: [], totalScraped: 0 };
         sectors[sector].batches.push(j);
@@ -795,7 +795,7 @@ function renderBySector(jobs, rootContainer) {
                 const batchCount = s.batches.length;
                 const hasRunning = s.batches.some(b => b.status === 'in_progress');
                 const depts = [...new Set(s.batches.map(b => {
-                    const parts = (b.query_name || '').split(' ');
+                    const parts = (b.batch_name || '').split(' ');
                     return parts.length > 1 ? parts.slice(1).join(' ') : '';
                 }).filter(Boolean))];
 
@@ -993,8 +993,8 @@ function renderAnalysis(data, isAdmin) {
                 <h4 class="analysis-sub-title">Derniers batches</h4>
                 <div class="analysis-recent-jobs">
                     ${recentJobs.map(j => `
-                        <div class="analysis-recent-job" onclick="window.location.hash='#/job/${encodeURIComponent(j.query_id)}'">
-                            <span class="analysis-recent-name">${escapeHtml(j.query_name)}</span>
+                        <div class="analysis-recent-job" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
+                            <span class="analysis-recent-name">${escapeHtml(j.batch_name)}</span>
                             ${statusBadge(j.status)}
                             <span class="analysis-recent-count">${j.companies_scraped || 0}/${j.batch_size || 0}</span>
                             <span class="analysis-recent-date">${formatDateTime(j.created_at)}</span>

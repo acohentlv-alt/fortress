@@ -6,7 +6,7 @@
  * 2. Mapping preview: show recognized vs overflow columns
  * 3. Confirm: ingest with progress banner
  *
- * Each upload creates a scrape_jobs entry (mode='upload') visible in Monitor.
+ * Each upload creates a batch_data entry (mode='upload') visible in Monitor.
  */
 
 import { previewUpload, uploadClientFile, getClientStats } from '../api.js';
@@ -308,9 +308,9 @@ async function doUpload(file, resultDiv) {
                     ` : ''}
                 </div>
 
-                ${result.query_id ? `
+                ${result.batch_id ? `
                     <div style="padding:var(--space-sm) var(--space-lg) var(--space-md); border-top:1px solid var(--border-subtle); text-align:center">
-                        <a href="#/job/${encodeURIComponent(result.query_id)}" style="color:var(--accent, #3b82f6); font-weight:600; font-size:var(--font-sm)">
+                        <a href="#/job/${encodeURIComponent(result.batch_id)}" style="color:var(--accent, #3b82f6); font-weight:600; font-size:var(--font-sm)">
                             📊 Voir le détail de l'import →
                         </a>
                     </div>
@@ -356,7 +356,7 @@ function _renderHistory(uploads) {
                                     ${formatDateTime(u.created_at)}
                                 </td>
                                 <td style="padding:var(--space-xs) var(--space-sm); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
-                                    📤 ${escapeHtml((u.query_name || '').replace('Import: ', ''))}
+                                    📤 ${escapeHtml((u.batch_name || '').replace('Import: ', ''))}
                                 </td>
                                 <td style="padding:var(--space-xs) var(--space-sm); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:right">
                                     ${(u.batch_size || 0).toLocaleString('fr-FR')}
@@ -370,7 +370,7 @@ function _renderHistory(uploads) {
                                     }
                                 </td>
                                 <td style="padding:var(--space-xs) var(--space-sm); border-bottom:1px solid var(--border-subtle); text-align:center">
-                                    <a href="#/job/${encodeURIComponent(u.query_id || '')}" style="color:var(--accent, #3b82f6)">→</a>
+                                    <a href="#/job/${encodeURIComponent(u.batch_id || '')}" style="color:var(--accent, #3b82f6)">→</a>
                                 </td>
                             </tr>
                         `).join('')}

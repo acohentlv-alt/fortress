@@ -8,7 +8,7 @@ alias dictionary in column_mapper.py. Supports:
 - Full data ingestion: companies, contacts, officers
 - Overflow columns → extra_data JSONB
 
-Each upload creates a scrape_jobs entry (mode='upload') for tracking.
+Each upload creates a batch_data entry (mode='upload') for tracking.
 """
 
 from __future__ import annotations
@@ -73,16 +73,16 @@ async def upload_client_file(file: UploadFile = File(...)):
 
     # ── Step 3: Create upload job ──
     now = datetime.now(tz=timezone.utc)
-    query_id = f"upload_{re.sub(r'[^a-zA-Z0-9]', '_', filename)[:50]}_{int(now.timestamp())}"
+    batch_id = f"upload_{re.sub(r'[^a-zA-Z0-9]', '_', filename)[:50]}_{int(now.timestamp())}"
 
     try:
         async with get_conn() as conn:
             await conn.execute("""
-                INSERT INTO scrape_jobs
-                    (query_id, query_name, status, batch_size, total_companies,
+                INSERT INTO batch_data
+                    (batch_id, batch_name, status, batch_size, total_companies,
                      strategy, mode, created_at, updated_at)
                 VALUES (%s, %s, 'in_progress', %s, %s, 'upload', 'upload', %s, %s)
-            """, (query_id, f"Import: {filename}", len(rows), len(rows), now, now))
+            """, (batch_id, f"Import: {filename}", len(rows), len(rows), now, now))
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
     except Exception as exc:
@@ -107,7 +107,7 @@ async def upload_client_file(file: UploadFile = File(...)):
                     # Savepoint per row: if one row fails, only that
                     # savepoint rolls back — the outer transaction stays clean.
                     async with conn.transaction():
-                        await _ingest_row(conn, row, headers, mapping, stats, query_id)
+                        await _ingest_row(conn, row, headers, mapping, stats, batch_id)
                 except Exception as exc:
                     stats["rows_skipped"] += 1
                     err_msg = f"Row {row_idx + 2}: {type(exc).__name__}: {exc}"
@@ -120,32 +120,32 @@ async def upload_client_file(file: UploadFile = File(...)):
                     scraped = stats["companies_inserted"] + stats["companies_updated"]
                     async with conn.transaction():
                         await conn.execute("""
-                            UPDATE scrape_jobs
+                            UPDATE batch_data
                             SET companies_scraped = %s, updated_at = %s
-                            WHERE query_id = %s
-                        """, (scraped, datetime.now(tz=timezone.utc), query_id))
+                            WHERE batch_id = %s
+                        """, (scraped, datetime.now(tz=timezone.utc), batch_id))
 
-            # Tag all ingested companies in query_tags
+            # Tag all ingested companies in batch_tags
             async with conn.transaction():
                 await conn.execute("""
-                    INSERT INTO query_tags (siren, query_name, tagged_at)
+                    INSERT INTO batch_tags (siren, batch_name, tagged_at)
                     SELECT DISTINCT sa.siren, %s, NOW()
-                    FROM scrape_audit sa
-                    WHERE sa.query_id = %s
-                    ON CONFLICT (siren, query_name) DO NOTHING
-                """, (query_id, query_id))
+                    FROM batch_log sa
+                    WHERE sa.batch_id = %s
+                    ON CONFLICT (siren, batch_name) DO NOTHING
+                """, (batch_id, batch_id))
 
             # Mark job completed
             scraped = stats["companies_inserted"] + stats["companies_updated"]
             async with conn.transaction():
                 await conn.execute("""
-                    UPDATE scrape_jobs
+                    UPDATE batch_data
                     SET status = 'completed',
                         companies_scraped = %s,
                         companies_qualified = %s,
                         updated_at = %s
-                    WHERE query_id = %s
-                """, (scraped, stats["contacts_upserted"], datetime.now(tz=timezone.utc), query_id))
+                    WHERE batch_id = %s
+                """, (scraped, stats["contacts_upserted"], datetime.now(tz=timezone.utc), batch_id))
 
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
@@ -155,9 +155,9 @@ async def upload_client_file(file: UploadFile = File(...)):
         try:
             async with get_conn() as conn:
                 await conn.execute("""
-                    UPDATE scrape_jobs SET status = 'failed', updated_at = %s
-                    WHERE query_id = %s
-                """, (datetime.now(tz=timezone.utc), query_id))
+                    UPDATE batch_data SET status = 'failed', updated_at = %s
+                    WHERE batch_id = %s
+                """, (datetime.now(tz=timezone.utc), batch_id))
         except Exception:
             pass
         return JSONResponse(status_code=500, content={
@@ -179,14 +179,14 @@ async def upload_client_file(file: UploadFile = File(...)):
         username='system',
         action='upload',
         target_type='upload',
-        target_id=query_id,
+        target_id=batch_id,
         details=f"Import {filename} — {scraped_total} entreprises, {stats['contacts_upserted']} contacts",
     )
 
     return {
         "status": "ok",
         "filename": filename,
-        "query_id": query_id,
+        "batch_id": batch_id,
         "total_rows": len(rows),
         "stats": stats,
         "error_count": error_count,
@@ -255,14 +255,14 @@ async def client_stats():
     """Return upload history and stats."""
     try:
         uploads_raw = await fetch_all("""
-            SELECT sj.query_id, sj.query_name, sj.status, sj.batch_size,
+            SELECT sj.batch_id, sj.batch_name, sj.status, sj.batch_size,
                    sj.companies_scraped, sj.companies_qualified,
                    sj.created_at, sj.updated_at,
                    COUNT(DISTINCT sa.siren) AS siren_count
-            FROM scrape_jobs sj
-            LEFT JOIN scrape_audit sa ON sa.query_id = sj.query_id
+            FROM batch_data sj
+            LEFT JOIN batch_log sa ON sa.batch_id = sj.batch_id
             WHERE sj.mode = 'upload'
-            GROUP BY sj.query_id, sj.query_name, sj.status, sj.batch_size,
+            GROUP BY sj.batch_id, sj.batch_name, sj.status, sj.batch_size,
                      sj.companies_scraped, sj.companies_qualified,
                      sj.created_at, sj.updated_at
             ORDER BY sj.created_at DESC
@@ -272,8 +272,8 @@ async def client_stats():
         # Count total unique SIRENs across all upload jobs
         total_row = await fetch_one("""
             SELECT COUNT(DISTINCT sa.siren) AS total
-            FROM scrape_audit sa
-            JOIN scrape_jobs sj ON sj.query_id = sa.query_id
+            FROM batch_log sa
+            JOIN batch_data sj ON sj.batch_id = sa.batch_id
             WHERE sj.mode = 'upload'
         """)
         total_sirens = (total_row or {}).get("total", 0)
@@ -281,10 +281,10 @@ async def client_stats():
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
 
-    # Reshape for frontend: extract filename from query_name "Import: filename"
+    # Reshape for frontend: extract filename from batch_name "Import: filename"
     uploads = []
     for u in (uploads_raw or []):
-        qn = u.get("query_name", "")
+        qn = u.get("batch_name", "")
         source_file = qn.replace("Import: ", "") if qn.startswith("Import: ") else qn
         uploads.append({
             **u,
@@ -301,26 +301,26 @@ async def client_stats():
 
 @router.delete("/clear")
 async def clear_client_sirens():
-    """Clear all client-uploaded data (upload-mode jobs and their query_tags)."""
+    """Clear all client-uploaded data (upload-mode jobs and their batch_tags)."""
     try:
         async with get_conn() as conn:
-            # Get upload job query_names to clear their tags
+            # Get upload job batch_names to clear their tags
             jobs = await conn.execute(
-                "SELECT query_name FROM scrape_jobs WHERE mode = 'upload'"
+                "SELECT batch_name FROM batch_data WHERE mode = 'upload'"
             )
             job_rows = await jobs.fetchall()
-            query_names = [r[0] for r in job_rows] if job_rows else []
+            batch_names = [r[0] for r in job_rows] if job_rows else []
 
             deleted_tags = 0
-            for qn in query_names:
+            for qn in batch_names:
                 res = await conn.execute(
-                    "DELETE FROM query_tags WHERE query_name = %s", (qn,)
+                    "DELETE FROM batch_tags WHERE batch_name = %s", (qn,)
                 )
                 deleted_tags += res.rowcount
 
             # Delete the upload jobs themselves
             res = await conn.execute(
-                "DELETE FROM scrape_jobs WHERE mode = 'upload'"
+                "DELETE FROM batch_data WHERE mode = 'upload'"
             )
             deleted_jobs = res.rowcount
             await conn.commit()
@@ -340,7 +340,7 @@ async def clear_client_sirens():
 
 async def _ingest_row(
     conn, row: list, headers: list[str],
-    mapping: MappingResult, stats: dict, query_id: str,
+    mapping: MappingResult, stats: dict, batch_id: str,
 ):
     """Ingest a single row into companies, contacts, and officers tables."""
 
@@ -393,9 +393,9 @@ async def _ingest_row(
 
     # ── Audit trail ──
     await conn.execute("""
-        INSERT INTO scrape_audit (query_id, siren, action, result, timestamp)
+        INSERT INTO batch_log (batch_id, siren, action, result, timestamp)
         VALUES (%s, %s, 'upload', 'success', %s)
-    """, (query_id, siren, datetime.now(tz=timezone.utc)))
+    """, (batch_id, siren, datetime.now(tz=timezone.utc)))
 
 
 async def _upsert_company(conn, siren: str, fields: dict, extra: dict, stats: dict):

@@ -115,7 +115,7 @@ function _buildBreadcrumb(co, tags) {
     let parentHref = '#/search';
 
     if (tags && tags.length > 0) {
-        const firstTag = tags[0].query_name || '';
+        const firstTag = tags[0].batch_name || '';
         if (firstTag.startsWith('upload_') || firstTag.startsWith('Import: ')) {
             parentLabel = 'Import / Export';
             parentHref = '#/upload';
@@ -151,7 +151,7 @@ export async function renderCompany(container, siren) {
     const co = data.company;
     const mc = data.merged_contact || {};
     const officers = data.officers || [];
-    const tags = data.query_tags || [];
+    const tags = data.batch_tags || [];
 
 
 
@@ -248,7 +248,7 @@ export async function renderCompany(container, siren) {
                                 Trouvé dans
                             </span>
                             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-xs)">
-                                ${tags.map(t => `<span class="badge badge-accent">${escapeHtml(t.query_name)}</span>`).join('')}
+                                ${tags.map(t => `<span class="badge badge-accent">${escapeHtml(t.batch_name)}</span>`).join('')}
                             </div>
                         </div>
                     ` : ''}

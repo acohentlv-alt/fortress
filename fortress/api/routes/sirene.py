@@ -1,7 +1,7 @@
 """SIRENE search API — queries the full 14.7M companies table.
 
 This endpoint is used by the Base SIRENE page to search ALL French companies,
-not just the ones that have been scraped/enriched. No query_tags join.
+not just the ones that have been scraped/enriched. No batch_tags join.
 
 Performance safeguards:
   - Minimum 3 characters for name search (prevent full table scan)

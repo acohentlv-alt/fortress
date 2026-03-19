@@ -1,9 +1,9 @@
 """Batch execution API — create and launch scrape jobs.
 
 Provides POST /api/batch/run to:
-  1. Insert a scrape_jobs row in the database
+  1. Insert a batch_data row in the database
   2. Spawn the fortress.runner subprocess in the background
-  3. Return the query_id so the frontend can monitor progress
+  3. Return the batch_id so the frontend can monitor progress
 """
 
 import asyncio
@@ -38,8 +38,8 @@ class BatchRunRequest(BaseModel):
 
 
 
-def _build_query_id(sector: str, dept: str) -> str:
-    """Generate a unique query_id like TRANSPORT_66_BATCH_003."""
+def _build_batch_id(sector: str, dept: str) -> str:
+    """Generate a unique batch_id like TRANSPORT_66_BATCH_003."""
     base = f"{sector.upper().replace(' ', '_')}_{dept}"
     return base
 
@@ -48,14 +48,14 @@ def _build_query_id(sector: str, dept: str) -> str:
 async def run_batch(body: BatchRunRequest, request: Request):
     """Create a scrape job and launch the runner subprocess.
 
-    Returns 202 with the query_id for monitoring.
+    Returns 202 with the batch_id for monitoring.
     """
     sector = body.sector.strip().lower()
     dept = body.department.strip()
-    query_name = f"{sector} {dept}"
+    batch_name = f"{sector} {dept}"
 
     # Build base_id for batch numbering
-    base_id = _build_query_id(sector, dept)
+    base_id = _build_batch_id(sector, dept)
 
     # Build filters_json from optional fields
     filters_dict = {}
@@ -76,34 +76,34 @@ async def run_batch(body: BatchRunRequest, request: Request):
         async with get_conn() as conn:
             # Lock existing rows for this base_id to prevent concurrent duplicates
             rows = await conn.execute(
-                "SELECT query_id FROM scrape_jobs WHERE query_id LIKE %s ORDER BY query_id DESC FOR UPDATE",
+                "SELECT batch_id FROM batch_data WHERE batch_id LIKE %s ORDER BY batch_id DESC FOR UPDATE",
                 (f"{base_id}%",),
             )
             existing = await rows.fetchall()
 
             if not existing:
                 batch_number = 1
-                query_id = f"{base_id}_BATCH_001"
+                batch_id = f"{base_id}_BATCH_001"
             else:
                 max_num = 0
                 for row in existing:
-                    qid = row[0] if isinstance(row, tuple) else row["query_id"]
+                    qid = row[0] if isinstance(row, tuple) else row["batch_id"]
                     match = re.search(r"BATCH_(\d+)$", qid)
                     if match:
                         max_num = max(max_num, int(match.group(1)))
                 if max_num == 0:
                     batch_number = 1
-                    query_id = f"{base_id}_BATCH_001"
+                    batch_id = f"{base_id}_BATCH_001"
                 else:
                     batch_number = max_num + 1
-                    query_id = f"{base_id}_BATCH_{batch_number:03d}"
+                    batch_id = f"{base_id}_BATCH_{batch_number:03d}"
 
             # Calculate batch_offset for discovery mode
             batch_offset = 0
             if body.mode == "discovery":
                 count_row = await (await conn.execute(
-                    "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM scrape_jobs WHERE UPPER(query_name) = %s AND status != 'deleted'",
-                    (query_name.upper(),),
+                    "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted'",
+                    (batch_name.upper(),),
                 )).fetchone()
                 if count_row and count_row[0]:
                     batch_offset = count_row[0]
@@ -116,23 +116,23 @@ async def run_batch(body: BatchRunRequest, request: Request):
             worker_id = _settings.effective_worker_id
 
             await conn.execute(
-                """INSERT INTO scrape_jobs
-                   (query_id, query_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries)
+                """INSERT INTO batch_data
+                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries)
                    VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (query_id, query_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json),
+                (batch_id, batch_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json),
             )
             await conn.commit()
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Database insert failed: {exc}", "query_id": query_id},
+            content={"error": f"Database insert failed: {exc}", "batch_id": batch_id},
         )
 
     # Spawn the runner as a detached subprocess with stderr logging
     fortress_root = Path(__file__).resolve().parent.parent.parent  # fortress/
     log_dir = fortress_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{query_id}.log"
+    log_path = log_dir / f"{batch_id}.log"
 
     # Choose the correct runner based on strategy
     if body.strategy == "maps":
@@ -141,14 +141,14 @@ async def run_batch(body: BatchRunRequest, request: Request):
         runner_module = "fortress.runner"
 
     runner_cmd = [
-        sys.executable, "-m", runner_module, query_id,
+        sys.executable, "-m", runner_module, batch_id,
     ]
 
     # Sandbox workaround: if launcher exists, use it to bypass .env stat()
     launcher = Path("/tmp/fortress_launcher.py")
     if launcher.exists():
         runner_cmd = [
-            sys.executable, str(launcher), "runner", query_id,
+            sys.executable, str(launcher), "runner", batch_id,
         ]
 
 
@@ -168,7 +168,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to spawn runner: {exc}", "query_id": query_id},
+            content={"error": f"Failed to spawn runner: {exc}", "batch_id": batch_id},
         )
 
     # Log activity
@@ -178,25 +178,25 @@ async def run_batch(body: BatchRunRequest, request: Request):
         username=getattr(user, 'username', 'system') if user else 'system',
         action='batch_launched',
         target_type='batch',
-        target_id=query_id,
+        target_id=batch_id,
         details=f"Recherche {sector} {dept} — {body.size} entreprises",
     )
 
     return {
-        "query_id": query_id,
-        "query_name": query_name,
+        "batch_id": batch_id,
+        "batch_name": batch_name,
         "batch_number": batch_number,
         "batch_offset": batch_offset,
         "size": body.size,
         "mode": body.mode,
         "pid": process.pid,
         "status": "launched",
-        "message": f"Batch {query_id} launched (PID {process.pid}). Monitor at /api/jobs/{query_id}",
+        "message": f"Batch {batch_id} launched (PID {process.pid}). Monitor at /api/jobs/{batch_id}",
     }
 
 
-@router.post("/{query_id}/resume")
-async def resume_batch(query_id: str, request: Request):
+@router.post("/{batch_id}/resume")
+async def resume_batch(batch_id: str, request: Request):
     """Resume an interrupted or failed batch job. Admin only."""
     user = getattr(request.state, 'user', None)
     if not user or user.role != 'admin':
@@ -204,10 +204,10 @@ async def resume_batch(query_id: str, request: Request):
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     job = await fetch_one(
-        """SELECT query_id, query_name, status, filters_json, strategy,
+        """SELECT batch_id, batch_name, status, filters_json, strategy,
                   EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_stale
-           FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
-        (query_id,),
+           FROM batch_data WHERE batch_id = %s LIMIT 1""",
+        (batch_id,),
     )
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
@@ -227,8 +227,8 @@ async def resume_batch(query_id: str, request: Request):
 
     # Reset status to in_progress
     await fetch_one(
-        "UPDATE scrape_jobs SET status = 'queued', updated_at = NOW() WHERE query_id = %s RETURNING query_id",
-        (query_id,),
+        "UPDATE batch_data SET status = 'queued', updated_at = NOW() WHERE batch_id = %s RETURNING batch_id",
+        (batch_id,),
     )
 
     # Determine runner module from strategy column
@@ -239,7 +239,7 @@ async def resume_batch(query_id: str, request: Request):
     else:
         runner_module = "fortress.runner"
 
-    runner_cmd = [sys.executable, "-m", runner_module, query_id]
+    runner_cmd = [sys.executable, "-m", runner_module, batch_id]
 
     fortress_root = Path(__file__).resolve().parent.parent.parent
     try:
@@ -258,9 +258,9 @@ async def resume_batch(query_id: str, request: Request):
         )
 
     return {
-        "query_id": query_id,
+        "batch_id": batch_id,
         "status": "resumed",
         "pid": process.pid,
-        "message": f"Job {query_id} resumed (PID {process.pid}). Already-processed companies will be skipped.",
+        "message": f"Job {batch_id} resumed (PID {process.pid}). Already-processed companies will be skipped.",
     }
 

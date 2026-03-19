@@ -50,8 +50,8 @@ EnrichFn = Callable[..., Awaitable[list[Contact]]]
 
 async def run_query(
     triage_result: TriageResult,
-    query_name: str,
-    query_id: str,
+    batch_name: str,
+    batch_id: str,
     enrich_fn: EnrichFn,
     pool: Any,  # psycopg_pool.AsyncConnectionPool
     *,
@@ -64,8 +64,8 @@ async def run_query(
 
     Args:
         triage_result: Output of triage_companies() — four company buckets.
-        query_name:    Human-readable label (e.g. "AGRICULTURE 66").
-        query_id:      Filesystem-safe ID (e.g. "AGRICULTURE_66").
+        batch_name:    Human-readable label (e.g. "AGRICULTURE 66").
+        batch_id:      Filesystem-safe ID (e.g. "AGRICULTURE_66").
         enrich_fn:     Async function: list[Company] → list[Contact].
         pool:          Async psycopg3 connection pool.
         wave_size:     Companies per wave (default 50).
@@ -79,11 +79,11 @@ async def run_query(
     if triage_result.green:
         async with pool.connection() as conn:
             green_sirens = [c.siren for c in triage_result.green]
-            await bulk_tag_query(conn, green_sirens, query_name)
+            await bulk_tag_query(conn, green_sirens, batch_name)
             for siren in green_sirens:
                 await log_audit(
                     conn,
-                    query_id=query_id,
+                    batch_id=batch_id,
                     siren=siren,
                     action="sirene",
                     result="success",
@@ -93,7 +93,7 @@ async def run_query(
         log.info(
             "batch.green_tagged",
             count=len(triage_result.green),
-            query=query_name,
+            query=batch_name,
         )
 
     # ------------------------------------------------------------------
@@ -101,13 +101,13 @@ async def run_query(
     # ------------------------------------------------------------------
     scrape_queue: list[Company] = triage_result.yellow + triage_result.red
     if not scrape_queue:
-        log.info("batch.nothing_to_scrape", query=query_name)
+        log.info("batch.nothing_to_scrape", query=batch_name)
         return
 
     total_waves = math.ceil(len(scrape_queue) / wave_size)
     log.info(
         "batch.start",
-        query=query_name,
+        query=batch_name,
         total_companies=len(scrape_queue),
         waves=total_waves,
     )
@@ -118,17 +118,17 @@ async def run_query(
     start_wave = 1
     seen_set = SeenSet()
 
-    if resume and ckpt.checkpoint_exists(query_id):
-        job_state, seen_set = ckpt.load(query_id)
+    if resume and ckpt.checkpoint_exists(batch_id):
+        job_state, seen_set = ckpt.load(batch_id)
         if job_state:
             completed = job_state.get("wave_current", 0)
             if completed >= total_waves:
-                log.info("batch.already_complete", query=query_name)
+                log.info("batch.already_complete", query=batch_name)
                 return
             start_wave = completed + 1
             log.info(
                 "batch.resume",
-                query=query_name,
+                query=batch_name,
                 resume_wave=start_wave,
                 total_waves=total_waves,
             )
@@ -141,18 +141,18 @@ async def run_query(
         try:
             async with pool.connection() as conn:
                 cancel_row = await (await conn.execute(
-                    "SELECT cancel_requested FROM scrape_jobs WHERE query_id = %s",
-                    (query_id,),
+                    "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                    (batch_id,),
                 )).fetchone()
                 if cancel_row and cancel_row[0]:
                     log.info(
                         "batch.cancellation_requested",
                         wave=wave_num,
-                        query=query_name,
+                        query=batch_name,
                     )
                     await conn.execute(
-                        "UPDATE scrape_jobs SET status = 'cancelled', updated_at = NOW() WHERE query_id = %s",
-                        (query_id,),
+                        "UPDATE batch_data SET status = 'cancelled', updated_at = NOW() WHERE batch_id = %s",
+                        (batch_id,),
                     )
                     await conn.commit()
                     return  # Exit cleanly — data already checkpointed
@@ -168,7 +168,7 @@ async def run_query(
             wave=wave_num,
             total=total_waves,
             companies=len(wave_companies),
-            query=query_name,
+            query=batch_name,
         )
 
         # --- Per-company save callback ---
@@ -182,11 +182,11 @@ async def run_query(
             """Persist one company+contact immediately after qualification."""
             async with pool.connection() as save_conn:
                 await upsert_company(save_conn, company)
-                await bulk_tag_query(save_conn, [company.siren], query_name)
+                await bulk_tag_query(save_conn, [company.siren], batch_name)
                 await upsert_contact(save_conn, contact)
                 await log_audit(
                     save_conn,
-                    query_id=query_id,
+                    batch_id=batch_id,
                     siren=contact.siren,
                     action=_source_to_action(contact.source.value),
                     result="success",
@@ -195,7 +195,7 @@ async def run_query(
                 )
                 # Tag replacement companies (SIREN differs from wave list)
                 if company.siren not in {co.siren for co in wave_companies}:
-                    await bulk_tag_query(save_conn, [company.siren], query_name)
+                    await bulk_tag_query(save_conn, [company.siren], batch_name)
             saved_contacts.append(contact)
             saved_companies.add(company.siren)
             seen_set.mark_seen(company.model_dump())
@@ -204,7 +204,7 @@ async def run_query(
                 siren=company.siren,
                 wave=wave_num,
                 saved_so_far=len(saved_contacts),
-                query=query_name,
+                query=batch_name,
             )
 
         # --- Enrich (with 5-minute safety cap per wave) ---
@@ -221,7 +221,7 @@ async def run_query(
             log.error(
                 "batch.wave_timeout",
                 wave=wave_num,
-                query=query_name,
+                query=batch_name,
                 companies=len(wave_companies),
                 timeout_seconds=wave_timeout,
                 saved_before_timeout=len(saved_contacts),
@@ -240,7 +240,7 @@ async def run_query(
             for company in wave_companies:
                 if company.siren not in saved_companies:
                     await upsert_company(conn, company)
-                    await bulk_tag_query(conn, [company.siren], query_name)
+                    await bulk_tag_query(conn, [company.siren], batch_name)
                     seen_set.mark_seen(company.model_dump())
 
             # Build wave result records for checkpoint
@@ -256,18 +256,18 @@ async def run_query(
                 company,
                 contact,
                 officers=[],                            # filled in by card_formatter default
-                query_name=query_name,
+                batch_name=batch_name,
                 card_index=wave_start + i + 1,          # 1-based global index
             )
             wave_cards.append(card)
         try:
-            qf.append_wave(query_id, wave_cards)
+            qf.append_wave(batch_id, wave_cards)
 
             log.debug(
                 "batch.jsonl_written",
                 wave=wave_num,
                 cards=len(wave_cards),
-                query=query_name,
+                query=batch_name,
             )
         except Exception as exc:
             # JSONL write failure is non-fatal — pipeline continues
@@ -275,8 +275,8 @@ async def run_query(
 
         # --- Checkpoint ---
         job_state = {
-            "query": query_name,
-            "query_id": query_id,
+            "query": batch_name,
+            "batch_id": batch_id,
             "wave_current": wave_num,
             "wave_total": total_waves,
             "companies_total": len(scrape_queue),
@@ -287,7 +287,7 @@ async def run_query(
             "updated_at": datetime.now(tz=timezone.utc).isoformat(),
         }
         ckpt.save(
-            query_id,
+            batch_id,
             wave_num,
             wave_results,
             seen_set,
@@ -300,16 +300,16 @@ async def run_query(
             total=total_waves,
             contacts_found=len(contacts),
             elapsed_ms=elapsed_ms,
-            query=query_name,
+            query=batch_name,
         )
 
         # --- Cooldown between waves (skip after last wave) ---
         if wave_num < total_waves:
             delay = random.uniform(delay_min, delay_max)
-            log.debug("batch.cooldown", seconds=round(delay, 1), query=query_name)
+            log.debug("batch.cooldown", seconds=round(delay, 1), query=batch_name)
             await asyncio.sleep(delay)
 
-    log.info("batch.complete", query=query_name, total_waves=total_waves)
+    log.info("batch.complete", query=batch_name, total_waves=total_waves)
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ async def run_query(
 
 
 def _source_to_action(source: str) -> str:
-    """Map ContactSource value to scrape_audit action label."""
+    """Map ContactSource value to batch_log action label."""
     mapping = {
         "inpi": "inpi_lookup",
         "google_search": "web_search",

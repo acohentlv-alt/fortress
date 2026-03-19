@@ -2,15 +2,15 @@
 then match to SIRENE database for legal enrichment.
 
 Usage:
-    python -m fortress.maps_discovery_runner <query_id>
+    python -m fortress.maps_discovery_runner <batch_id>
 
-Reads the scrape_jobs row for query_id, runs the Maps-first pipeline:
+Reads the batch_data row for batch_id, runs the Maps-first pipeline:
   1. search_all(query) for each search term → discover businesses
   2. SIRENE matching → find existing company by name/enseigne
   3. Website crawl → extract emails for companies with websites
-  4. Persist companies + contacts + query_tags + scrape_audit
+  4. Persist companies + contacts + batch_tags + batch_log
 
-scrape_jobs status lifecycle:
+batch_data status lifecycle:
     queued → in_progress → completed
                        └→ failed
 """
@@ -241,26 +241,26 @@ async def _match_to_sirene(
 # ---------------------------------------------------------------------------
 
 async def _update_job(
-    conn: psycopg.AsyncConnection, query_id: str, /, **fields: object
+    conn: psycopg.AsyncConnection, batch_id: str, /, **fields: object
 ) -> None:
     if not fields:
         return
     set_clause = ", ".join(f"{col} = %s" for col in fields)
-    params = [*fields.values(), query_id]
+    params = [*fields.values(), batch_id]
     await conn.execute(
-        f"UPDATE scrape_jobs SET {set_clause}, updated_at = NOW() "  # noqa: S608
-        f"WHERE query_id = %s",
+        f"UPDATE batch_data SET {set_clause}, updated_at = NOW() "  # noqa: S608
+        f"WHERE batch_id = %s",
         params,
     )
     await conn.commit()
 
 
 async def _update_job_safe(
-    conn_holder: list[psycopg.AsyncConnection], query_id: str, /, **fields: object
+    conn_holder: list[psycopg.AsyncConnection], batch_id: str, /, **fields: object
 ) -> None:
     conn = conn_holder[0]
     try:
-        await _update_job(conn, query_id, **fields)
+        await _update_job(conn, batch_id, **fields)
     except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as exc:
         log.warning("maps_runner.status_conn_lost", error=str(exc))
         try:
@@ -271,18 +271,18 @@ async def _update_job_safe(
             settings.db_url, autocommit=False, **_KEEPALIVE_PARAMS,
         )
         conn_holder[0] = new_conn
-        await _update_job(new_conn, query_id, **fields)
+        await _update_job(new_conn, batch_id, **fields)
 
 
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def run(query_id: str) -> None:
-    """Run the Maps-first discovery pipeline for a given query_id."""
+async def run(batch_id: str) -> None:
+    """Run the Maps-first discovery pipeline for a given batch_id."""
     import traceback as _traceback
 
-    log.info("maps_discovery_runner.start", query_id=query_id)
+    log.info("maps_discovery_runner.start", batch_id=batch_id)
 
     # ── Start Google Maps scraper ─────────────────────────────────────
     maps_scraper = None
@@ -298,7 +298,7 @@ async def run(query_id: str) -> None:
             status_conn = await psycopg.AsyncConnection.connect(
                 settings.db_url, autocommit=False, **_KEEPALIVE_PARAMS,
             )
-            await _update_job(status_conn, query_id, status="failed")
+            await _update_job(status_conn, batch_id, status="failed")
             await status_conn.close()
         except Exception:
             pass
@@ -312,19 +312,19 @@ async def run(query_id: str) -> None:
         conn_holder: list[psycopg.AsyncConnection] = [status_conn]
 
         try:
-            await _update_job_safe(conn_holder, query_id, status="in_progress")
+            await _update_job_safe(conn_holder, batch_id, status="in_progress")
 
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
-                """SELECT query_name, search_queries, filters_json, batch_size
-                   FROM scrape_jobs WHERE query_id = %s LIMIT 1""",
-                (query_id,),
+                """SELECT batch_name, search_queries, filters_json, batch_size
+                   FROM batch_data WHERE batch_id = %s LIMIT 1""",
+                (batch_id,),
             )
             row = await cur.fetchone()
             if not row:
-                raise RuntimeError(f"No scrape_jobs row for query_id={query_id!r}")
+                raise RuntimeError(f"No batch_data row for batch_id={batch_id!r}")
 
-            query_name: str = row[0]
+            batch_name: str = row[0]
             raw_queries = row[1]
             filters_raw = row[2]
             batch_size: int = row[3] or 0  # 0 = collect all results
@@ -338,13 +338,13 @@ async def run(query_id: str) -> None:
                     search_queries = list(raw_queries)
 
             if not search_queries:
-                # Fallback: use query_name as the search query
-                search_queries = [query_name]
+                # Fallback: use batch_name as the search query
+                search_queries = [batch_name]
 
             log.info(
                 "maps_discovery_runner.loaded_job",
-                query_id=query_id,
-                query_name=query_name,
+                batch_id=batch_id,
+                batch_name=batch_name,
                 search_queries=search_queries,
             )
 
@@ -372,10 +372,10 @@ async def run(query_id: str) -> None:
                 async with pool.connection() as conn:
                     cur = await conn.execute(
                         """SELECT sa.siren, co.denomination, co.adresse
-                           FROM scrape_audit sa
+                           FROM batch_log sa
                            LEFT JOIN companies co ON co.siren = sa.siren
-                           WHERE sa.query_id = %s""",
-                        (query_id,),
+                           WHERE sa.batch_id = %s""",
+                        (batch_id,),
                     )
                     existing_rows = await cur.fetchall()
 
@@ -390,16 +390,16 @@ async def run(query_id: str) -> None:
                     async with pool.connection() as conn:
                         qr = await conn.execute(
                             """SELECT COUNT(DISTINCT c.siren) FROM contacts c
-                               WHERE c.siren IN (SELECT siren FROM scrape_audit WHERE query_id = %s)
+                               WHERE c.siren IN (SELECT siren FROM batch_log WHERE batch_id = %s)
                                AND (c.phone IS NOT NULL OR c.website IS NOT NULL)""",
-                            (query_id,),
+                            (batch_id,),
                         )
                         qrow = await qr.fetchone()
                         qualified = qrow[0] if qrow else 0
 
                     log.info(
                         "maps_discovery_runner.resume_skip",
-                        query_id=query_id,
+                        batch_id=batch_id,
                         already_processed=companies_discovered,
                         already_qualified=qualified,
                     )
@@ -474,11 +474,11 @@ async def run(query_id: str) -> None:
                     # Persist to DB immediately
                     async with pool.connection() as conn:
                         await upsert_company(conn, company)
-                        await bulk_tag_query(conn, [siren], query_name)
+                        await bulk_tag_query(conn, [siren], batch_name)
                         await upsert_contact(conn, contact)
                         await log_audit(
                             conn,
-                            query_id=query_id,
+                            batch_id=batch_id,
                             siren=siren,
                             action="maps_lookup",
                             result="success" if has_data else "no_data",
@@ -489,7 +489,7 @@ async def run(query_id: str) -> None:
 
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
-                        conn_holder, query_id,
+                        conn_holder, batch_id,
                         companies_scraped=companies_discovered,
                         companies_qualified=qualified,
                         total_companies=companies_discovered,
@@ -533,7 +533,7 @@ async def run(query_id: str) -> None:
                     )
 
                     await _update_job_safe(
-                        conn_holder, query_id,
+                        conn_holder, batch_id,
                         wave_current=q_idx,
                         wave_total=total_queries,
                     )
@@ -563,14 +563,14 @@ async def run(query_id: str) -> None:
                 # ── Mark completed or interrupted ─────────────────────
                 final_status = "interrupted" if _shutdown else "completed"
                 await _update_job_safe(
-                    conn_holder, query_id,
+                    conn_holder, batch_id,
                     status=final_status,
                     companies_scraped=companies_discovered,
                     companies_qualified=qualified,
                 )
                 log.info(
                     f"maps_discovery_runner.{final_status}",
-                    query_id=query_id,
+                    batch_id=batch_id,
                     discovered=companies_discovered,
                     qualified=qualified,
                     shutdown=_shutdown,
@@ -579,12 +579,12 @@ async def run(query_id: str) -> None:
         except Exception as exc:
             log.error(
                 "maps_discovery_runner.failed",
-                query_id=query_id,
+                batch_id=batch_id,
                 error=str(exc),
                 traceback=_traceback.format_exc(),
             )
             try:
-                await _update_job_safe(conn_holder, query_id, status="failed")
+                await _update_job_safe(conn_holder, batch_id, status="failed")
             except Exception:
                 pass
             raise
@@ -605,15 +605,15 @@ async def run(query_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Entry point — called by `python -m fortress.maps_discovery_runner <query_id>`."""
+    """Entry point — called by `python -m fortress.maps_discovery_runner <batch_id>`."""
     if len(sys.argv) < 2:
         print(
-            "Usage: python -m fortress.maps_discovery_runner <query_id>",
+            "Usage: python -m fortress.maps_discovery_runner <batch_id>",
             file=sys.stderr,
         )
         sys.exit(1)
-    query_id = sys.argv[1]
-    asyncio.run(run(query_id))
+    batch_id = sys.argv[1]
+    asyncio.run(run(batch_id))
 
 
 if __name__ == "__main__":

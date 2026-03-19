@@ -1,6 +1,6 @@
 """Department API routes — location-based views.
 
-Scoped to companies linked via query_tags (actual scraped data),
+Scoped to companies linked via batch_tags (actual scraped data),
 NOT the full 16M+ sirene import table.
 """
 
@@ -54,7 +54,7 @@ async def list_departments():
             COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN co.siren END) AS with_phone,
             COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN co.siren END) AS with_email,
             COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN co.siren END) AS with_website
-        FROM query_tags qt
+        FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN contacts ct ON co.siren = ct.siren
         WHERE co.departement IS NOT NULL
@@ -80,15 +80,15 @@ async def get_department_jobs(dept: str):
     """All jobs that have companies in this department."""
     rows = await fetch_all("""
         SELECT
-            sj.query_id, sj.query_name, sj.status,
+            sj.batch_id, sj.batch_name, sj.status,
             sj.total_companies, sj.companies_scraped,
             sj.triage_black, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,
             sj.created_at, sj.updated_at,
             COUNT(DISTINCT co.siren) AS companies_in_dept
-        FROM scrape_jobs sj
-        JOIN query_tags qt ON qt.query_name = sj.query_name
-                           OR qt.query_name = sj.query_id
+        FROM batch_data sj
+        JOIN batch_tags qt ON qt.batch_name = sj.batch_name
+                           OR qt.batch_name = sj.batch_id
         JOIN companies co ON co.siren = qt.siren AND co.departement = %s
         WHERE sj.status != 'deleted'
         GROUP BY sj.id

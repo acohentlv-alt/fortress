@@ -1,7 +1,7 @@
 """Per-query JSONL output file management.
 
 Each query gets its own JSONL file at:
-    data/outputs/queries/{query_id}.jsonl
+    data/outputs/queries/{batch_id}.jsonl
 
 One JSON object per line. The file grows as waves complete.
 
@@ -31,31 +31,31 @@ def _query_dir(base_dir: Path | None) -> Path:
     return base_dir
 
 
-def _query_path(query_id: str, base_dir: Path | None = None) -> Path:
-    """Return the JSONL path for a given query_id."""
-    return _query_dir(base_dir) / f"{query_id}.jsonl"
+def _query_path(batch_id: str, base_dir: Path | None = None) -> Path:
+    """Return the JSONL path for a given batch_id."""
+    return _query_dir(base_dir) / f"{batch_id}.jsonl"
 
 
-def append_wave(query_id: str, cards: list[dict], base_dir: Path | None = None) -> None:
+def append_wave(batch_id: str, cards: list[dict], base_dir: Path | None = None) -> None:
     """Append cards to the query's JSONL file (one JSON per line, atomic append).
 
     Called after each wave completes. The file grows incrementally — it is never
     rewritten from scratch, so partial results survive a crash mid-query.
     """
-    path = _query_path(query_id, base_dir)
+    path = _query_path(batch_id, base_dir)
     with path.open("a", encoding="utf-8") as f:
         for card in cards:
             f.write(json.dumps(card, ensure_ascii=False, default=str))
             f.write("\n")
 
 
-def load_query_cards(query_id: str, base_dir: Path | None = None) -> list[dict]:
+def load_query_cards(batch_id: str, base_dir: Path | None = None) -> list[dict]:
     """Load all cards from a query's JSONL file.
 
     Returns an empty list if the file does not exist yet.
     Malformed lines (rare, e.g. truncated by crash) are silently skipped.
     """
-    path = _query_path(query_id, base_dir)
+    path = _query_path(batch_id, base_dir)
     if not path.exists():
         return []
     cards: list[dict] = []
@@ -70,15 +70,15 @@ def load_query_cards(query_id: str, base_dir: Path | None = None) -> list[dict]:
     return cards
 
 
-def export_query_csv(query_id: str, base_dir: Path | None = None) -> Path:
+def export_query_csv(batch_id: str, base_dir: Path | None = None) -> Path:
     """Export all query cards to a CSV file alongside the JSONL file.
 
     Returns the path to the written CSV file.
     Produces an empty file if no cards exist yet (not an error — query may still
     be running).
     """
-    cards = load_query_cards(query_id, base_dir)
-    out_path = _query_path(query_id, base_dir).with_suffix(".csv")
+    cards = load_query_cards(batch_id, base_dir)
+    out_path = _query_path(batch_id, base_dir).with_suffix(".csv")
     if not cards:
         out_path.write_text("", encoding="utf-8")
         return out_path
@@ -91,14 +91,14 @@ def export_query_csv(query_id: str, base_dir: Path | None = None) -> Path:
     return out_path
 
 
-def export_query_txt(query_id: str, base_dir: Path | None = None) -> Path:
+def export_query_txt(batch_id: str, base_dir: Path | None = None) -> Path:
     """Export all query cards as formatted human-readable text cards.
 
     Each card is rendered by format_card_text(), separated by a blank line.
     Returns the path to the written .txt file.
     """
-    cards = load_query_cards(query_id, base_dir)
-    out_path = _query_path(query_id, base_dir).with_suffix(".txt")
+    cards = load_query_cards(batch_id, base_dir)
+    out_path = _query_path(batch_id, base_dir).with_suffix(".txt")
     with out_path.open("w", encoding="utf-8") as f:
         for card in cards:
             f.write(format_card_text(card))

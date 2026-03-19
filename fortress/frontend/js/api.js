@@ -140,42 +140,42 @@ export async function getJobs() {
     return await request('/jobs');
 }
 
-export async function getJob(queryId) {
-    return await request(`/jobs/${encodeURIComponent(queryId)}`);
+export async function getJob(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}`);
 }
 
-export async function deleteJob(queryId) {
-    return await request(`/jobs/${encodeURIComponent(queryId)}`, { method: 'DELETE' });
+export async function deleteJob(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}`, { method: 'DELETE' });
 }
 
-export async function cancelJob(queryId) {
-    return await request(`/jobs/${encodeURIComponent(queryId)}/cancel`, { method: 'POST' });
+export async function cancelJob(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/cancel`, { method: 'POST' });
 }
 
-export async function retryJob(queryId) {
-    return await request(`/jobs/${encodeURIComponent(queryId)}/retry`, { method: 'POST' });
+export async function retryJob(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/retry`, { method: 'POST' });
 }
 
-export async function resumeBatch(queryId) {
-    return await request(`/batch/${encodeURIComponent(queryId)}/resume`, { method: 'POST' });
+export async function resumeBatch(batchId) {
+    return await request(`/batch/${encodeURIComponent(batchId)}/resume`, { method: 'POST' });
 }
 
-export async function untagCompany(siren, queryName) {
-    return await request(`/companies/${siren}/tags/${encodeURIComponent(queryName)}`, { method: 'DELETE' });
+export async function untagCompany(siren, batchName) {
+    return await request(`/companies/${siren}/tags/${encodeURIComponent(batchName)}`, { method: 'DELETE' });
 }
 
-export async function getJobCompanies(queryId, { page = 1, pageSize = 20, search = '', sort = 'completude' } = {}) {
+export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search = '', sort = 'completude' } = {}) {
     const params = new URLSearchParams({
         page: page.toString(),
         page_size: pageSize.toString(),
         search,
         sort,
     });
-    return await request(`/jobs/${encodeURIComponent(queryId)}/companies?${params}`);
+    return await request(`/jobs/${encodeURIComponent(batchId)}/companies?${params}`);
 }
 
-export async function getJobQuality(queryId) {
-    return await request(`/jobs/${encodeURIComponent(queryId)}/quality`);
+export async function getJobQuality(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/quality`);
 }
 
 // ── Companies ────────────────────────────────────────────────────
@@ -261,8 +261,8 @@ export async function runBatch({ sector, department, size, mode, city, naf_code,
 }
 
 // ── Export ────────────────────────────────────────────────────────
-export function getExportUrl(queryId, format = 'csv') {
-    return `${API_BASE}/export/${encodeURIComponent(queryId)}/${format}`;
+export function getExportUrl(batchId, format = 'csv') {
+    return `${API_BASE}/export/${encodeURIComponent(batchId)}/${format}`;
 }
 
 export function getMasterExportUrl(format = 'csv') {
@@ -378,8 +378,8 @@ export async function deleteDeptTags(dept) {
     return await request(`/dashboard/department/${encodeURIComponent(dept)}/tags`, { method: 'DELETE' });
 }
 
-export async function deleteJobGroup(queryName) {
-    return await request(`/dashboard/job-group/${encodeURIComponent(queryName)}`, { method: 'DELETE' });
+export async function deleteJobGroup(batchName) {
+    return await request(`/dashboard/job-group/${encodeURIComponent(batchName)}`, { method: 'DELETE' });
 }
 
 export async function deleteCompanyTag(siren) {

@@ -40,7 +40,7 @@ export async function renderDepartment(container, dept) {
                  onclick="document.getElementById('job-section-${idx}').classList.toggle('hidden-section')">
                 <div>
                     <div style="font-size: var(--font-md); font-weight: 600; color: var(--text-primary); margin-bottom: var(--space-xs)">
-                        ${escapeHtml(j.query_name)}
+                        ${escapeHtml(j.batch_name)}
                     </div>
                     <div style="font-size: var(--font-sm); color: var(--text-secondary)">
                         ${formatDateTime(j.created_at)} · ${j.companies_in_dept || 0} entreprises dans le ${dept}
@@ -69,7 +69,7 @@ export async function renderDepartment(container, dept) {
     if (jobs.length > 0) {
         const firstSection = document.getElementById('job-section-0');
         firstSection.classList.remove('hidden-section');
-        await loadJobCompanies(jobs[0].query_id, firstSection);
+        await loadJobCompanies(jobs[0].batch_id, firstSection);
     }
 
     // Lazy-load on expand
@@ -77,15 +77,15 @@ export async function renderDepartment(container, dept) {
         const section = document.getElementById(`job-section-${idx}`);
         const observer = new MutationObserver(() => {
             if (!section.classList.contains('hidden-section') && section.querySelector('.spinner')) {
-                loadJobCompanies(j.query_id, section);
+                loadJobCompanies(j.batch_id, section);
             }
         });
         observer.observe(section, { attributes: true, attributeFilter: ['class'] });
     });
 }
 
-async function loadJobCompanies(queryId, section, page = 1) {
-    const data = await getJobCompanies(queryId, { page, pageSize: 12 });
+async function loadJobCompanies(batchId, section, page = 1) {
+    const data = await getJobCompanies(batchId, { page, pageSize: 12 });
     if (!data || !data.companies || data.companies.length === 0) {
         section.innerHTML = `
             <div class="empty-state">
@@ -101,6 +101,6 @@ async function loadJobCompanies(queryId, section, page = 1) {
         <div class="company-grid">
             ${data.companies.map(c => companyCard(c)).join('')}
         </div>
-        ${renderPagination(data.page, totalPages, (p) => loadJobCompanies(queryId, section, p))}
+        ${renderPagination(data.page, totalPages, (p) => loadJobCompanies(batchId, section, p))}
     `;
 }

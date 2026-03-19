@@ -86,6 +86,51 @@ async def lifespan(app: FastAPI):
                 # Social media columns — ensure Instagram + TikTok exist
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT")
+
+                # ── Table + column rename migration ─────────────────────────
+                # scrape_jobs → batch_data, scrape_audit → batch_log, query_tags → batch_tags
+                # Columns: query_id → batch_id, query_name → batch_name
+                # Idempotent: only runs if old table names still exist.
+                tables_exist = await (await conn.execute("""
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_name IN ('scrape_jobs', 'scrape_audit', 'query_tags')
+                """)).fetchall()
+                old_tables = {r[0] for r in tables_exist} if tables_exist else set()
+
+                if 'scrape_jobs' in old_tables:
+                    await conn.execute("ALTER TABLE scrape_jobs RENAME TO batch_data")
+                    await conn.execute("ALTER TABLE batch_data RENAME COLUMN query_id TO batch_id")
+                    await conn.execute("ALTER TABLE batch_data RENAME COLUMN query_name TO batch_name")
+                    # Rename indexes
+                    await conn.execute("ALTER INDEX IF EXISTS idx_scrape_jobs_query_id RENAME TO idx_batch_data_batch_id")
+                    await conn.execute("ALTER INDEX IF EXISTS idx_scrape_jobs_status RENAME TO idx_batch_data_status")
+                    logger.info("✅ Renamed scrape_jobs → batch_data (+ columns)")
+
+                if 'scrape_audit' in old_tables:
+                    await conn.execute("ALTER TABLE scrape_audit RENAME TO batch_log")
+                    await conn.execute("ALTER TABLE batch_log RENAME COLUMN query_id TO batch_id")
+                    # Rename indexes
+                    await conn.execute("ALTER INDEX IF EXISTS idx_audit_query RENAME TO idx_batch_log_batch_id")
+                    await conn.execute("ALTER INDEX IF EXISTS idx_audit_siren RENAME TO idx_batch_log_siren")
+                    await conn.execute("ALTER INDEX IF EXISTS idx_audit_action RENAME TO idx_batch_log_action")
+                    logger.info("✅ Renamed scrape_audit → batch_log (+ columns)")
+
+                if 'query_tags' in old_tables:
+                    await conn.execute("ALTER TABLE query_tags RENAME TO batch_tags")
+                    await conn.execute("ALTER TABLE batch_tags RENAME COLUMN query_name TO batch_name")
+                    await conn.execute("ALTER INDEX IF EXISTS idx_query_tags_query RENAME TO idx_batch_tags_batch_name")
+                    logger.info("✅ Renamed query_tags → batch_tags (+ columns)")
+
+                # Also rename enrichment_log.query_id → batch_id if needed
+                if old_tables:  # only run if we just renamed something
+                    try:
+                        await conn.execute("ALTER TABLE enrichment_log RENAME COLUMN query_id TO batch_id")
+                        await conn.execute("ALTER INDEX IF EXISTS idx_enrichment_log_query RENAME TO idx_enrichment_log_batch_id")
+                        logger.info("✅ Renamed enrichment_log.query_id → batch_id")
+                    except Exception:
+                        pass  # column already renamed
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:

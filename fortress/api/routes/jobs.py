@@ -15,7 +15,7 @@ async def list_jobs():
 
     base_query = """
         SELECT
-            sj.query_id, sj.query_name, 
+            sj.batch_id, sj.batch_name, 
             CASE 
                 WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
                      AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
@@ -32,11 +32,11 @@ async def list_jobs():
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.filters_json,
-            UPPER(SPLIT_PART(sj.query_name, ' ', 1)) AS sector,
+            UPPER(SPLIT_PART(sj.batch_name, ' ', 1)) AS sector,
             sj.user_id,
             sj.worker_id,
             sj.mode
-        FROM scrape_jobs sj
+        FROM batch_data sj
         WHERE sj.status != 'deleted'
     """
 
@@ -48,20 +48,20 @@ async def list_jobs():
     return rows
 
 
-@router.delete("/{query_id}")
-async def delete_job(query_id: str, request: Request):
-    """Soft-delete a batch. Removes query_tags but preserves company/contact data. Admin only."""
+@router.delete("/{batch_id}")
+async def delete_job(batch_id: str, request: Request):
+    """Soft-delete a batch. Removes batch_tags but preserves company/contact data. Admin only."""
     user = getattr(request.state, 'user', None)
     if not user or user.role != 'admin':
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            """SELECT status, query_name, companies_scraped, batch_size, updated_at,
+            """SELECT status, batch_name, companies_scraped, batch_size, updated_at,
                       EXTRACT(EPOCH FROM (NOW() - updated_at)) AS idle_seconds,
                       COALESCE(companies_qualified, 0) AS companies_qualified
-               FROM scrape_jobs WHERE query_id = %s""",
-            (query_id,),
+               FROM batch_data WHERE batch_id = %s""",
+            (batch_id,),
         )).fetchone()
 
         if not row:
@@ -73,13 +73,13 @@ async def delete_job(query_id: str, request: Request):
         if raw_status == "in_progress" and not is_stale:
             return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
 
-        query_name = row[1]
+        batch_name = row[1]
 
         # ── Hard delete: contacts, audit, tags, job ──────────────────
-        # 1. Get all SIRENs that belong to THIS batch (via scrape_audit)
+        # 1. Get all SIRENs that belong to THIS batch (via batch_log)
         batch_sirens = await (await conn.execute(
-            "SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s",
-            (query_id,),
+            "SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s",
+            (batch_id,),
         )).fetchall()
         siren_list = [r[0] for r in batch_sirens] if batch_sirens else []
 
@@ -93,30 +93,30 @@ async def delete_job(query_id: str, request: Request):
             )
             deleted_contacts = result.rowcount
 
-        # 3. Delete scrape_audit rows for this batch
+        # 3. Delete batch_log rows for this batch
         result = await conn.execute(
-            "DELETE FROM scrape_audit WHERE query_id = %s",
-            (query_id,),
+            "DELETE FROM batch_log WHERE batch_id = %s",
+            (batch_id,),
         )
         deleted_audit = result.rowcount
 
         # 4. Delete enrichment_log rows for this batch
         await conn.execute(
-            "DELETE FROM enrichment_log WHERE query_id = %s",
-            (query_id,),
+            "DELETE FROM enrichment_log WHERE batch_id = %s",
+            (batch_id,),
         )
 
-        # 5. Delete query_tags for these SIRENs + this query_name
+        # 5. Delete batch_tags for these SIRENs + this batch_name
         if siren_list:
             await conn.execute(
-                "DELETE FROM query_tags WHERE query_name = %s AND siren = ANY(%s)",
-                (query_name, siren_list),
+                "DELETE FROM batch_tags WHERE batch_name = %s AND siren = ANY(%s)",
+                (batch_name, siren_list),
             )
 
         # 6. Hard delete the job row itself
         await conn.execute(
-            "DELETE FROM scrape_jobs WHERE query_id = %s",
-            (query_id,),
+            "DELETE FROM batch_data WHERE batch_id = %s",
+            (batch_id,),
         )
         await conn.commit()
 
@@ -125,29 +125,29 @@ async def delete_job(query_id: str, request: Request):
         username=getattr(user, 'username', 'admin'),
         action='delete_job',
         target_type='job',
-        target_id=query_id,
-        details=f"Suppression complète du batch {query_name or query_id}: {deleted_contacts} contacts, {deleted_audit} audit, {len(siren_list)} entreprises",
+        target_id=batch_id,
+        details=f"Suppression complète du batch {batch_name or batch_id}: {deleted_contacts} contacts, {deleted_audit} audit, {len(siren_list)} entreprises",
     )
 
     return {
         "deleted": True,
-        "query_id": query_id,
+        "batch_id": batch_id,
         "deleted_contacts": deleted_contacts,
         "deleted_audit": deleted_audit,
         "sirens_affected": len(siren_list),
     }
 
 
-@router.post("/{query_id}/cancel")
-async def cancel_job(query_id: str, request: Request):
+@router.post("/{batch_id}/cancel")
+async def cancel_job(batch_id: str, request: Request):
     """Request graceful cancellation of a running batch. Admin only."""
     user = getattr(request.state, 'user', None)
     if not user or user.role != 'admin':
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     async with get_conn() as conn:
         row = await (await conn.execute(
-            "SELECT status FROM scrape_jobs WHERE query_id = %s",
-            (query_id,),
+            "SELECT status FROM batch_data WHERE batch_id = %s",
+            (batch_id,),
         )).fetchone()
 
         if not row:
@@ -159,8 +159,8 @@ async def cancel_job(query_id: str, request: Request):
             })
 
         await conn.execute(
-            "UPDATE scrape_jobs SET cancel_requested = TRUE, updated_at = NOW() WHERE query_id = %s",
-            (query_id,),
+            "UPDATE batch_data SET cancel_requested = TRUE, updated_at = NOW() WHERE batch_id = %s",
+            (batch_id,),
         )
         await conn.commit()
 
@@ -169,15 +169,15 @@ async def cancel_job(query_id: str, request: Request):
         username=getattr(user, 'username', 'admin'),
         action='cancel_job',
         target_type='job',
-        target_id=query_id,
-        details=f"Annulation du batch {query_id}",
+        target_id=batch_id,
+        details=f"Annulation du batch {batch_id}",
     )
 
-    return {"cancelled": True, "query_id": query_id}
+    return {"cancelled": True, "batch_id": batch_id}
 
 
-@router.post("/{query_id}/retry")
-async def retry_job(query_id: str, request: Request):
+@router.post("/{batch_id}/retry")
+async def retry_job(batch_id: str, request: Request):
     """Retry a failed or completed batch. Admin only."""
     user = getattr(request.state, 'user', None)
     if not user or user.role != 'admin':
@@ -189,8 +189,8 @@ async def retry_job(query_id: str, request: Request):
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            "SELECT status, query_name, strategy FROM scrape_jobs WHERE query_id = %s",
-            (query_id,),
+            "SELECT status, batch_name, strategy FROM batch_data WHERE batch_id = %s",
+            (batch_id,),
         )).fetchone()
 
         if not row:
@@ -205,7 +205,7 @@ async def retry_job(query_id: str, request: Request):
 
         # Reset the job for re-execution
         await conn.execute(
-            """UPDATE scrape_jobs SET
+            """UPDATE batch_data SET
                 status = 'queued',
                 companies_scraped = 0,
                 companies_qualified = 0,
@@ -214,8 +214,8 @@ async def retry_job(query_id: str, request: Request):
                 wave_current = 0,
                 cancel_requested = FALSE,
                 updated_at = NOW()
-            WHERE query_id = %s""",
-            (query_id,),
+            WHERE batch_id = %s""",
+            (batch_id,),
         )
         await conn.commit()
 
@@ -223,16 +223,16 @@ async def retry_job(query_id: str, request: Request):
     fortress_root = Path(__file__).resolve().parent.parent.parent  # fortress/
     log_dir = fortress_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{query_id}.log"
+    log_path = log_dir / f"{batch_id}.log"
 
     strategy = row[2] or "sirene"
     runner_module = "fortress.maps_discovery_runner" if strategy == "maps" else "fortress.runner"
-    runner_cmd = [sys.executable, "-m", runner_module, query_id]
+    runner_cmd = [sys.executable, "-m", runner_module, batch_id]
 
     # Sandbox workaround
     launcher = Path("/tmp/fortress_launcher.py")
     if launcher.exists():
-        runner_cmd = [sys.executable, str(launcher), "runner", query_id]
+        runner_cmd = [sys.executable, str(launcher), "runner", batch_id]
 
     try:
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
@@ -248,24 +248,24 @@ async def retry_job(query_id: str, request: Request):
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to spawn runner: {exc}", "query_id": query_id},
+            content={"error": f"Failed to spawn runner: {exc}", "batch_id": batch_id},
         )
 
     return {
         "retried": True,
-        "query_id": query_id,
+        "batch_id": batch_id,
         "pid": process.pid,
         "status": "queued",
-        "message": f"Batch {query_id} relancé (PID {process.pid})",
+        "message": f"Batch {batch_id} relancé (PID {process.pid})",
     }
 
 
-@router.get("/{query_id}")
-async def get_job(query_id: str):
+@router.get("/{batch_id}")
+async def get_job(batch_id: str):
     """Single job detail with progress info."""
     job = await fetch_one("""
         SELECT
-            sj.query_id, sj.query_name, 
+            sj.batch_id, sj.batch_name, 
             CASE 
                 WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
                      AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
@@ -283,43 +283,43 @@ async def get_job(query_id: str):
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.mode
-        FROM scrape_jobs sj
-        WHERE sj.query_id = %s
-    """, (query_id,))
+        FROM batch_data sj
+        WHERE sj.batch_id = %s
+    """, (batch_id,))
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
     # Also get departments this job touches
     depts = await fetch_all("""
         SELECT DISTINCT co.departement, COUNT(DISTINCT co.siren) AS company_count
-        FROM query_tags qt
+        FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
-        WHERE qt.query_name = %s AND co.departement IS NOT NULL
+        WHERE qt.batch_name = %s AND co.departement IS NOT NULL
         GROUP BY co.departement
         ORDER BY co.departement
-    """, (job["query_name"],))
+    """, (job["batch_name"],))
 
     return {**job, "departments": depts}
 
 
-@router.get("/{query_id}/companies")
+@router.get("/{batch_id}/companies")
 async def get_job_companies(
-    query_id: str,
+    batch_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str = Query("", description="Filter by name, city, or SIREN"),
     sort: str = Query("completude", description="Sort by: completude | name | date"),
 ):
     """Paginated companies for a job with merged contact data."""
-    # Get the query_name from the job
+    # Get the batch_name from the job
     job = await fetch_one(
-        "SELECT query_name FROM scrape_jobs WHERE query_id = %s", (query_id,)
+        "SELECT batch_name FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return {"companies": [], "total": 0, "page": page}
 
-    query_name = job["query_name"]
-    qid = query_id  # Use query_id for batch-scoped data
+    batch_name = job["batch_name"]
+    qid = batch_id  # Use batch_id for batch-scoped data
     offset = (page - 1) * page_size
 
     # Build WHERE clause for search filter
@@ -340,12 +340,12 @@ async def get_job_companies(
         "date": "co.date_creation DESC NULLS LAST",
     }.get(sort, "completude DESC")
 
-    # Count total — scoped to this specific batch via scrape_audit
+    # Count total — scoped to this specific batch via batch_log
     count_row = await fetch_one(f"""
         SELECT COUNT(DISTINCT co.siren) AS total
-        FROM scrape_audit sa
+        FROM batch_log sa
         JOIN companies co ON co.siren = sa.siren
-        WHERE sa.query_id = %s {where_extra}
+        WHERE sa.batch_id = %s {where_extra}
     """, tuple([qid] + search_params))
     total = (count_row or {}).get("total", 0)
 
@@ -356,8 +356,8 @@ async def get_job_companies(
     rows = await fetch_all(f"""
         WITH audit_query AS (
             SELECT DISTINCT ON (siren) siren, search_query
-            FROM scrape_audit
-            WHERE query_id = %s
+            FROM batch_log
+            WHERE batch_id = %s
             ORDER BY siren, timestamp ASC
         ),
         best_contact AS (
@@ -396,15 +396,15 @@ async def get_job_companies(
     return {"companies": rows, "total": total, "page": page, "page_size": page_size}
 
 
-@router.get("/{query_id}/quality")
-async def get_job_quality(query_id: str):
+@router.get("/{batch_id}/quality")
+async def get_job_quality(batch_id: str):
     """Data quality breakdown scoped to THIS specific batch only.
 
-    Uses scrape_audit (which has query_id per company) instead of query_tags
-    (which shares query_name across batches) so each batch shows its own stats.
+    Uses batch_log (which has batch_id per company) instead of batch_tags
+    (which shares batch_name across batches) so each batch shows its own stats.
     """
     job = await fetch_one(
-        "SELECT query_id FROM scrape_jobs WHERE query_id = %s", (query_id,)
+        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
@@ -416,25 +416,25 @@ async def get_job_quality(query_id: str):
             COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN co.siren END) AS with_email,
             COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN co.siren END) AS with_website,
             COUNT(DISTINCT CASE WHEN (ct.social_linkedin IS NOT NULL OR ct.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
-        FROM (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s) sa
+        FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         LEFT JOIN contacts ct ON co.siren = ct.siren
-    """, (query_id,))
+    """, (batch_id,))
 
     if not stats or not stats["total"]:
         return {"total": 0, "phone_pct": 0, "email_pct": 0, "website_pct": 0, "siret_pct": 0}
 
     total = stats["total"]
-    # Source breakdown from scrape_audit
+    # Source breakdown from batch_log
     sources_raw = await fetch_all("""
         SELECT action,
                COUNT(*) FILTER (WHERE result = 'success') AS success,
                COUNT(*) FILTER (WHERE result != 'success') AS other,
                COUNT(*) AS total
-        FROM scrape_audit
-        WHERE query_id = %s
+        FROM batch_log
+        WHERE batch_id = %s
         GROUP BY action
-    """, (query_id,))
+    """, (batch_id,))
     sources = {}
     for s in (sources_raw or []):
         sources[s["action"]] = {

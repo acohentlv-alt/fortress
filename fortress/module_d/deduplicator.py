@@ -178,26 +178,26 @@ async def upsert_officer(conn: Any, officer: Officer) -> None:
     )
 
 
-async def tag_query(conn: Any, siren: str, query_name: str) -> None:
-    """Associate a company with a query in query_tags.
+async def tag_query(conn: Any, siren: str, batch_name: str) -> None:
+    """Associate a company with a query in batch_tags.
 
     Uses DO NOTHING so re-tagging the same company for the same query
     is idempotent.
     """
     await conn.execute(
         """
-        INSERT INTO query_tags (siren, query_name, tagged_at)
+        INSERT INTO batch_tags (siren, batch_name, tagged_at)
         VALUES (%s, %s, NOW())
-        ON CONFLICT (siren, query_name) DO NOTHING
+        ON CONFLICT (siren, batch_name) DO NOTHING
         """,
-        (siren, query_name),
+        (siren, batch_name),
     )
 
 
 async def bulk_tag_query(
     conn: Any,
     sirens: list[str],
-    query_name: str,
+    batch_name: str,
 ) -> None:
     """Tag multiple companies for a query in a single batch.
 
@@ -211,18 +211,18 @@ async def bulk_tag_query(
     async with conn.cursor() as cur:
         await cur.executemany(
             """
-            INSERT INTO query_tags (siren, query_name, tagged_at)
+            INSERT INTO batch_tags (siren, batch_name, tagged_at)
             VALUES (%s, %s, %s)
-            ON CONFLICT (siren, query_name) DO NOTHING
+            ON CONFLICT (siren, batch_name) DO NOTHING
             """,
-            [(siren, query_name, now) for siren in sirens],
+            [(siren, batch_name, now) for siren in sirens],
         )
 
 
 async def log_audit(
     conn: Any,
     *,
-    query_id: str,
+    batch_id: str,
     siren: str,
     action: str,
     result: str,
@@ -230,7 +230,7 @@ async def log_audit(
     duration_ms: int | None = None,
     search_query: str | None = None,
 ) -> None:
-    """Write one row to the scrape_audit table.
+    """Write one row to the batch_log table.
 
     action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
     result: 'success' | 'fail' | 'blocked' | 'skipped'
@@ -238,9 +238,9 @@ async def log_audit(
     """
     await conn.execute(
         """
-        INSERT INTO scrape_audit
-            (query_id, siren, action, result, source_url, duration_ms, search_query)
+        INSERT INTO batch_log
+            (batch_id, siren, action, result, source_url, duration_ms, search_query)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
-        (query_id, siren, action, result, source_url, duration_ms, search_query),
+        (batch_id, siren, action, result, source_url, duration_ms, search_query),
     )

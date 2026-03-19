@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     lambda_monthly_budget: int = 800_000
     lambda_rotation_every: int = 5
 
-    # Multi-worker — identifies this machine in scrape_jobs.worker_id
+    # Multi-worker — identifies this machine in batch_data.worker_id
     worker_id: str = ""
 
     # SMTP (Gmail) — for contact form email forwarding

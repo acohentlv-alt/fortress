@@ -23,16 +23,16 @@ import { getCachedUser } from '../api.js';
 
 let pollInterval = null;
 
-export async function renderMonitor(container, queryId) {
+export async function renderMonitor(container, batchId) {
     // Clear any previous polling (safety net — cleanup system handles this too)
     if (pollInterval) {
         clearInterval(pollInterval);
         pollInterval = null;
     }
 
-    if (queryId) {
-        queryId = decodeURIComponent(queryId);
-        await renderJobMonitor(container, queryId);
+    if (batchId) {
+        batchId = decodeURIComponent(batchId);
+        await renderJobMonitor(container, batchId);
     } else {
         await renderMonitorList(container);
     }
@@ -64,9 +64,9 @@ async function renderMonitorList(container) {
         const scraped = j.companies_scraped || 0;
         const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
         return `
-                        <div class="job-card" onclick="window.location.hash='#/monitor/${encodeURIComponent(j.query_id)}'">
+                        <div class="job-card" onclick="window.location.hash='#/monitor/${encodeURIComponent(j.batch_id)}'">
                             <div class="job-card-info">
-                                <div class="job-card-name">${escapeHtml(j.query_name)}</div>
+                                <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                                 <div class="job-card-meta">
                                     <span>${formatDateTime(j.created_at)}</span>
                                     <span>${scraped}/${batchSize} entreprises</span>
@@ -93,9 +93,9 @@ async function renderMonitorList(container) {
             </h2>
             <div class="job-list">
                 ${jobsList.filter(j => j.status === 'completed').slice(0, 5).map(j => `
-                    <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.query_id)}'">
+                    <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
                         <div class="job-card-info">
-                            <div class="job-card-name">${escapeHtml(j.query_name)}</div>
+                            <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                             <div class="job-card-meta">
                                 <span>${formatDateTime(j.updated_at)}</span>
                                 <span>${j.companies_scraped || 0} entreprises</span>
@@ -109,7 +109,7 @@ async function renderMonitorList(container) {
     `;
 }
 
-async function renderJobMonitor(container, queryId) {
+async function renderJobMonitor(container, batchId) {
     // Role detection for conditional rendering
     const user = getCachedUser();
     const isAdmin = user?.role === 'admin';
@@ -125,7 +125,7 @@ async function renderJobMonitor(container, queryId) {
             </div>
             <div style="display:flex; align-items:center; gap:var(--space-sm)">
                 <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="Arrêter ce batch">⏹ Arrêter</button>
-                <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-secondary">📋 Détail complet</a>
+                <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-secondary">📋 Détail complet</a>
             </div>
         </div>
 
@@ -258,7 +258,7 @@ async function renderJobMonitor(container, queryId) {
                 confirmLabel: 'Arr\u00eater le batch',
                 danger: true,
                 onConfirm: async () => {
-                    const result = await cancelJob(queryId);
+                    const result = await cancelJob(batchId);
                     if (result._ok !== false) {
                         showToast('Batch arr\u00eat\u00e9', 'success');
                     } else {
@@ -283,7 +283,7 @@ async function renderJobMonitor(container, queryId) {
 
         let job;
         try {
-            job = await getJob(queryId);
+            job = await getJob(batchId);
             // Successful poll — clear failure state
             if (failedPolls > 0) {
                 failedPolls = 0;
@@ -315,9 +315,9 @@ async function renderJobMonitor(container, queryId) {
         // ── Breadcrumb + Title ──────────────────────────────────
         $.breadcrumb.innerHTML = breadcrumb([
             { label: 'Pipeline Live', href: '#/monitor' },
-            { label: job.query_name },
+            { label: job.batch_name },
         ]);
-        $.title.textContent = job.query_name || 'Batch en cours';
+        $.title.textContent = job.batch_name || 'Batch en cours';
         $.statusRow.innerHTML = `
             ${statusBadge(job.status || 'queued')}
             ${isRunning ? '<span class="live-badge"><span class="live-badge-dot"></span> EN DIRECT</span>' : ''}
@@ -401,7 +401,7 @@ async function renderJobMonitor(container, queryId) {
 
         // ── Quality Gauges ──────────────────────────────────────
         try {
-            const q = await getJobQuality(queryId) || {};
+            const q = await getJobQuality(batchId) || {};
             $.gauges.innerHTML = `
                 ${renderGauge(q.phone_pct || 0, '📞 Tél.')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
@@ -418,7 +418,7 @@ async function renderJobMonitor(container, queryId) {
                     <div class="completion-icon">${qualified > 0 ? '🎉' : '⚠️'}</div>
                     <div class="completion-title">${qualified > 0 ? 'Batch terminé !' : 'Batch terminé — aucun résultat qualifié'}</div>
                     <div class="completion-subtitle">${qualified} entreprises qualifiées sur ${scraped} tentées</div>
-                    <a href="#/job/${encodeURIComponent(queryId)}" class="btn btn-primary">📋 Voir les résultats</a>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-primary">📋 Voir les résultats</a>
                 </div>
             `;
         } else if (!isRunning && job.status === 'failed') {
@@ -428,7 +428,7 @@ async function renderJobMonitor(container, queryId) {
                      <div class="completion-icon" style="background:var(--danger-bg); color:var(--danger)">⚠️</div>
                      <div class="completion-title" style="color:var(--danger)">Batch interrompu</div>
                      <div class="completion-subtitle">Le processus s'est arrêté de manière inattendue. Les ${qualified} entreprises qualifiées ont été conservées.</div>
-                     <a href="#/job/${encodeURIComponent(queryId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">📋 Voir les résultats partiels</a>
+                     <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">📋 Voir les résultats partiels</a>
                  </div>
              `;
         }
@@ -448,7 +448,7 @@ async function renderJobMonitor(container, queryId) {
         if (qualified > 0 && qualified !== lastScrapedCount) {
             lastScrapedCount = qualified;
             try {
-                const cardData = await getJobCompanies(queryId, { page: 1, pageSize: 50, sort: 'completude' });
+                const cardData = await getJobCompanies(batchId, { page: 1, pageSize: 50, sort: 'completude' });
                 if (cardData && cardData.companies && cardData.companies.length > 0) {
                     // Find genuinely new companies
                     const newCompanies = cardData.companies.filter(c => !renderedSirens.has(c.siren));

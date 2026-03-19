@@ -61,7 +61,7 @@ def format_card(
     company: "Company",
     contact: "Contact | None",
     officers: "list[Officer]",
-    query_name: str,
+    batch_name: str,
     card_index: int,
 ) -> dict:
     """Return a card dict suitable for JSONL output.
@@ -103,7 +103,7 @@ def format_card(
     return {
         "card_index": card_index,
         "fortress_id": fortress_id,
-        "query_name": query_name,
+        "batch_name": batch_name,
         # Company identity
         "siren": company.siren,
         "siret": getattr(company, "siret_siege", None),
@@ -145,7 +145,7 @@ def format_card_text(card: dict) -> str:
 
     fortress_id = card.get("fortress_id") or "—"
     card_num = f"#{card.get('card_index', 0):03d}"
-    query = card.get("query_name", "—")
+    query = card.get("batch_name", "—")
 
     naf_label = card.get("naf_code") or "—"
     if card.get("naf_libelle"):

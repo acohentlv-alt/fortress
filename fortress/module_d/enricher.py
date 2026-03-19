@@ -24,7 +24,7 @@ Usage (from runner / __main__):
     async with CurlClient() as client:
         async def enrich_fn(companies):
             return await enrich_companies(companies, pool=pool, curl_client=client)
-        await run_query(triage, query_name, query_id, enrich_fn, pool)
+        await run_query(triage, batch_name, batch_id, enrich_fn, pool)
 
 The `enrich_fn` signature must match:
     Callable[[list[Company]], Awaitable[list[Contact]]]
@@ -487,7 +487,7 @@ async def enrich_companies(
     maps_scraper: Any | None = None,
     on_progress: Any | None = None,
     on_save: Any | None = None,
-    query_id: str = "",
+    batch_id: str = "",
     query_domain: str = "",
 ) -> tuple[list[Contact], int]:
     """Qualify-or-replace enrichment pipeline.
@@ -615,7 +615,7 @@ async def enrich_companies(
                 candidates.append(repl)
             # Log for admin
             await _log_enrichment(
-                pool, query_id, company, "failed", None, None, None, None, 0, None,
+                pool, batch_id, company, "failed", None, None, None, None, 0, None,
                 int((time.monotonic() - _t0) * 1000),
             )
             continue
@@ -685,7 +685,7 @@ async def enrich_companies(
         # Log for admin
         outcome = "qualified" if has_enrichment else "sirene_only"
         await _log_enrichment(
-            pool, query_id, company, outcome, match_confidence,
+            pool, batch_id, company, outcome, match_confidence,
             contact.phone, contact.website, maps_name,
             1 if contact.email else 0, None,
             int((time.monotonic() - _t0) * 1000),
@@ -1198,7 +1198,7 @@ async def _enrich_one(
 
 async def _log_enrichment(
     pool: Any,
-    query_id: str,
+    batch_id: str,
     company: Any,
     outcome: str,
     maps_method: str | None,
@@ -1214,11 +1214,11 @@ async def _log_enrichment(
         async with pool.connection() as conn:
             await conn.execute(
                 """INSERT INTO enrichment_log
-                   (query_id, siren, denomination, outcome, maps_method,
+                   (batch_id, siren, denomination, outcome, maps_method,
                     maps_phone, maps_website, maps_name, crawl_method,
                     emails_found, replace_reason, time_ms)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (query_id, company.siren, company.denomination, outcome,
+                (batch_id, company.siren, company.denomination, outcome,
                  maps_method, maps_phone, maps_website, maps_name, None,
                  emails_found, replace_reason, time_ms),
             )

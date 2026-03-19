@@ -2,7 +2,7 @@
 
 Returns a paginated, searchable list of all contacts across all enriched
 companies. Joins contacts + officers via LATERAL to pick the "best" record
-per company. Only queries companies linked via query_tags (enriched data),
+per company. Only queries companies linked via batch_tags (enriched data),
 never the full 14.7M SIRENE table.
 
 Performance notes (for 3K contacts/month growth):
@@ -83,7 +83,7 @@ async def list_contacts(
 
     # Shared FROM + JOIN clause (used by both count and page queries)
     from_clause = """
-        FROM query_tags qt
+        FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN LATERAL (
             SELECT * FROM contacts c WHERE c.siren = co.siren

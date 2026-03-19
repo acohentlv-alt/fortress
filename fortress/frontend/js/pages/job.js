@@ -8,16 +8,16 @@ import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, fo
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;
 const selectedSirens = new Set();
-let _currentQueryId = null;
+let _currentBatchId = null;
 let _currentPage = 1;
 let _currentSort = 'completude';
 
-export async function renderJob(container, queryId) {
-    queryId = decodeURIComponent(queryId);
+export async function renderJob(container, batchId) {
+    batchId = decodeURIComponent(batchId);
 
     const [job, quality] = await Promise.all([
-        getJob(queryId),
-        getJobQuality(queryId),
+        getJob(batchId),
+        getJobQuality(batchId),
     ]);
 
     if (!job || job._ok === false || job.error) {
@@ -42,12 +42,12 @@ export async function renderJob(container, queryId) {
     container.innerHTML = `
         ${breadcrumb([
         { label: 'Dashboard', href: '#/' },
-        { label: job.query_name },
+        { label: job.batch_name },
     ])}
 
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-xl); flex-wrap:wrap; margin-bottom:var(--space-2xl)">
             <div>
-                <h1 class="page-title">${escapeHtml(job.query_name)}</h1>
+                <h1 class="page-title">${escapeHtml(job.batch_name)}</h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)">
                     ${statusBadge(job.status)}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
@@ -58,15 +58,15 @@ export async function renderJob(container, queryId) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-sm)">
-                <a href="${getExportUrl(queryId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
-                <a href="${getExportUrl(queryId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
-                <a href="${getExportUrl(queryId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
+                <a href="${getExportUrl(batchId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
+                <a href="${getExportUrl(batchId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
+                <a href="${getExportUrl(batchId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
                 ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
                 ${job.status === 'failed' ? `<button id="btn-retry" class="btn btn-primary" title="Réessayer ce batch">🔁 Réessayer</button>` : ''}
                 ${['interrupted', 'failed'].includes(job.status) ? `<button id="btn-resume" class="btn btn-primary" title="Reprendre là où le batch s'est arrêté">▶️ Reprendre</button>` : ''}
                 <button id="btn-delete-job" class="btn btn-secondary" title="Supprimer ce batch" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
-            `<a href="#/monitor/${encodeURIComponent(queryId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
+            `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
             </div>
         </div>
 
@@ -147,12 +147,12 @@ export async function renderJob(container, queryId) {
     // Reset selection state for this job
     selectionMode = false;
     selectedSirens.clear();
-    _currentQueryId = queryId;
+    _currentBatchId = batchId;
     _currentPage = 1;
     _currentSort = 'completude';
 
     // Load companies
-    await loadCompanies(queryId, 1, 'completude');
+    await loadCompanies(batchId, 1, 'completude');
 
     // Provenance panel toggle
     const toggleBtn = document.getElementById('toggle-provenance');
@@ -194,11 +194,11 @@ export async function renderJob(container, queryId) {
 
     // Sort change handler
     document.getElementById('job-sort').addEventListener('change', (e) => {
-        loadCompanies(queryId, 1, e.target.value);
+        loadCompanies(batchId, 1, e.target.value);
     });
 
     // Selection mode toggle
-    _setupSelectionMode(queryId);
+    _setupSelectionMode(batchId);
 
     // Delete button
     const deleteBtn = document.getElementById('btn-delete-job');
@@ -207,7 +207,7 @@ export async function renderJob(container, queryId) {
             showConfirmModal({
                 title: '🗑️ Supprimer ce batch ?',
                 body: `
-                    <p><strong>Batch :</strong> ${escapeHtml(job.query_name)}</p>
+                    <p><strong>Batch :</strong> ${escapeHtml(job.batch_name)}</p>
                     <p><strong>Créé le :</strong> ${formatDateTime(job.created_at)}</p>
                     <p><strong>${scraped}</strong> entreprises collectées</p>
                     <p style="color:var(--danger)">⚠️ <strong>Suppression complète :</strong> contacts enrichis, historique d'audit et tags seront effacés.</p>
@@ -216,7 +216,7 @@ export async function renderJob(container, queryId) {
                 confirmLabel: 'Supprimer définitivement',
                 danger: true,
                 onConfirm: async () => {
-                    const result = await deleteJob(queryId);
+                    const result = await deleteJob(batchId);
                     if (result._ok !== false) {
                         const msg = `Batch supprimé : ${result.deleted_contacts || 0} contacts, ${result.sirens_affected || 0} entreprises nettoyées`;
                         showToast(msg, 'success');
@@ -254,16 +254,16 @@ export async function renderJob(container, queryId) {
         retryBtn.addEventListener('click', () => {
             showConfirmModal({
                 title: '🔁 Réessayer ce batch ?',
-                body: `<p>Le batch <strong>${escapeHtml(job.query_name)}</strong> sera relancé avec les mêmes paramètres.</p>
+                body: `<p>Le batch <strong>${escapeHtml(job.batch_name)}</strong> sera relancé avec les mêmes paramètres.</p>
                        <p>⚠️ La progression sera réinitialisée à 0.</p>
                        <p>✅ Les données déjà collectées restent dans la base.</p>`,
                 confirmLabel: 'Réessayer',
                 danger: false,
                 onConfirm: async () => {
-                    const result = await retryJob(queryId);
+                    const result = await retryJob(batchId);
                     if (result && result.retried) {
                         showToast('Batch relancé avec succès', 'success');
-                        window.location.hash = `#/monitor/${encodeURIComponent(queryId)}`;
+                        window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
                     } else {
                         showToast(result?.error || 'Erreur lors du retry', 'error');
                     }
@@ -277,16 +277,16 @@ export async function renderJob(container, queryId) {
         resumeBtn.addEventListener('click', () => {
             showConfirmModal({
                 title: '▶️ Reprendre ce batch ?',
-                body: `<p>Le batch <strong>${escapeHtml(job.query_name)}</strong> reprendra là où il s'est arrêté.</p>
+                body: `<p>Le batch <strong>${escapeHtml(job.batch_name)}</strong> reprendra là où il s'est arrêté.</p>
                        <p>✅ Les ${scraped} entreprises déjà traitées seront ignorées.</p>
                        <p>✅ Seules les entreprises restantes seront collectées.</p>`,
                 confirmLabel: 'Reprendre',
                 danger: false,
                 onConfirm: async () => {
-                    const result = await resumeBatch(queryId);
+                    const result = await resumeBatch(batchId);
                     if (result && result.status === 'resumed') {
                         showToast('Batch repris avec succès', 'success');
-                        window.location.hash = `#/monitor/${encodeURIComponent(queryId)}`;
+                        window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
                     } else {
                         showToast(result?.error || 'Erreur lors de la reprise', 'error');
                     }
@@ -296,13 +296,13 @@ export async function renderJob(container, queryId) {
     }
 }
 
-async function loadCompanies(queryId, page, sort) {
+async function loadCompanies(batchId, page, sort) {
     _currentPage = page;
     _currentSort = sort;
     const companiesContainer = document.getElementById('job-companies-container');
     companiesContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-    const data = await getJobCompanies(queryId, { page, pageSize: 20, sort });
+    const data = await getJobCompanies(batchId, { page, pageSize: 20, sort });
     if (!data || !data.companies || data.companies.length === 0) {
         companiesContainer.innerHTML = `
             <div class="empty-state">
@@ -358,7 +358,7 @@ async function loadCompanies(queryId, page, sort) {
         <div id="job-company-grid">
             ${gridContent}
         </div>
-        ${renderPagination(data.page, totalPages, (p) => loadCompanies(queryId, p, sort))}
+        ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort))}
     `;
 
     // Event delegation for × remove buttons
@@ -384,7 +384,7 @@ async function loadCompanies(queryId, page, sort) {
                     confirmLabel: 'Retirer',
                     danger: true,
                     onConfirm: async () => {
-                        const result = await untagCompany(siren, queryId);
+                        const result = await untagCompany(siren, batchId);
                         if (result._ok !== false) {
                             showToast(`${name} retirée`, 'success');
                             if (card) {
@@ -419,7 +419,7 @@ async function loadCompanies(queryId, page, sort) {
 }
 
 // ── Selection mode toggle ────────────────────────────────────────
-function _setupSelectionMode(queryId) {
+function _setupSelectionMode(batchId) {
     const btn = document.getElementById('btn-select-mode');
     if (!btn) return;
     btn.addEventListener('click', () => {
@@ -431,7 +431,7 @@ function _setupSelectionMode(queryId) {
             _removeBulkBar();
         }
         // Re-render cards with/without checkboxes
-        loadCompanies(queryId, _currentPage, _currentSort);
+        loadCompanies(batchId, _currentPage, _currentSort);
     });
 }
 
@@ -512,7 +512,7 @@ async function _bulkEnrich(modules) {
     _removeBulkBar();
     const btn = document.getElementById('btn-select-mode');
     if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
-    await loadCompanies(_currentQueryId, _currentPage, _currentSort);
+    await loadCompanies(_currentBatchId, _currentPage, _currentSort);
 }
 
 async function _bulkDelete() {
@@ -526,7 +526,7 @@ async function _bulkDelete() {
             let ok = 0;
             for (const siren of sirens) {
                 try {
-                    const res = await untagCompany(siren, _currentQueryId);
+                    const res = await untagCompany(siren, _currentBatchId);
                     if (res._ok !== false) ok++;
                 } catch { /* skip */ }
             }
@@ -536,7 +536,7 @@ async function _bulkDelete() {
             _removeBulkBar();
             const btn = document.getElementById('btn-select-mode');
             if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
-            await loadCompanies(_currentQueryId, _currentPage, _currentSort);
+            await loadCompanies(_currentBatchId, _currentPage, _currentSort);
         },
     });
 }

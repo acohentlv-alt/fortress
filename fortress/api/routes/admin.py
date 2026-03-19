@@ -154,8 +154,8 @@ async def deploy_status(request: Request):
         return JSONResponse(status_code=403, content={"error": "Admin requis."})
 
     active_jobs = await fetch_all(
-        """SELECT query_id, query_name, status, companies_scraped, batch_size, updated_at
-           FROM scrape_jobs
+        """SELECT batch_id, batch_name, status, companies_scraped, batch_size, updated_at
+           FROM batch_data
            WHERE status IN ('in_progress', 'queued')
            ORDER BY updated_at DESC"""
     )

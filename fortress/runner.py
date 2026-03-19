@@ -6,13 +6,13 @@ import os as _os
 _os.environ.setdefault("TMPDIR", "/tmp")
 
 Usage:
-    python -m fortress.runner <query_id>
+    python -m fortress.runner <batch_id>
 
-Reads the scrape_jobs row for query_id, runs the full pipeline
+Reads the batch_data row for batch_id, runs the full pipeline
 (interpret_query → triage → enrich → batch_processor.run_query),
-and writes progress back to scrape_jobs after every wave.
+and writes progress back to batch_data after every wave.
 
-scrape_jobs status lifecycle:
+batch_data status lifecycle:
     queued → in_progress → completed
                        └→ failed  (on exception)
 
@@ -67,11 +67,11 @@ _MAX_WAVE_SIZE = 200
 
 async def _update_job(
     conn: psycopg.AsyncConnection,
-    query_id: str,
+    batch_id: str,
     /,
     **fields: object,
 ) -> None:
-    """UPDATE one or more scrape_jobs columns + updated_at for a given query_id.
+    """UPDATE one or more batch_data columns + updated_at for a given batch_id.
 
     Column names come exclusively from internal call sites (never user input),
     so direct interpolation into the SET clause is safe.
@@ -80,10 +80,10 @@ async def _update_job(
         return
     # Build: "col1 = %s, col2 = %s, ..."
     set_clause = ", ".join(f"{col} = %s" for col in fields)
-    params = [*fields.values(), query_id]
+    params = [*fields.values(), batch_id]
     await conn.execute(
-        f"UPDATE scrape_jobs SET {set_clause}, updated_at = NOW() "  # noqa: S608
-        f"WHERE query_id = %s",
+        f"UPDATE batch_data SET {set_clause}, updated_at = NOW() "  # noqa: S608
+        f"WHERE batch_id = %s",
         params,
     )
     await conn.commit()
@@ -91,7 +91,7 @@ async def _update_job(
 
 async def _update_job_safe(
     conn_holder: list[psycopg.AsyncConnection],
-    query_id: str,
+    batch_id: str,
     /,
     **fields: object,
 ) -> None:
@@ -107,11 +107,11 @@ async def _update_job_safe(
     """
     conn = conn_holder[0]
     try:
-        await _update_job(conn, query_id, **fields)
+        await _update_job(conn, batch_id, **fields)
     except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as exc:
         log.warning(
             "runner.status_conn_lost",
-            query_id=query_id,
+            batch_id=batch_id,
             error=str(exc),
             action="reconnecting",
         )
@@ -128,8 +128,8 @@ async def _update_job_safe(
         )
         conn_holder[0] = new_conn
         # Retry the update on the new connection
-        await _update_job(new_conn, query_id, **fields)
-        log.info("runner.status_conn_reconnected", query_id=query_id)
+        await _update_job(new_conn, batch_id, **fields)
+        log.info("runner.status_conn_reconnected", batch_id=batch_id)
 
 
 # PostgreSQL TCP keepalive parameters — prevents silent connection death
@@ -145,10 +145,10 @@ _KEEPALIVE_PARAMS: dict[str, int] = {
 
 async def _run_heartbeat(
     conn_holder: list[psycopg.AsyncConnection],
-    query_id: str,
+    batch_id: str,
     interval: float = 60.0,
 ) -> None:
-    """Background task: touch scrape_jobs.updated_at every `interval` seconds.
+    """Background task: touch batch_data.updated_at every `interval` seconds.
 
     This serves two purposes:
       1. Keeps the status connection alive (prevents idle timeout disconnects).
@@ -158,12 +158,12 @@ async def _run_heartbeat(
     while True:
         await asyncio.sleep(interval)
         try:
-            await _update_job_safe(conn_holder, query_id)
-            log.debug("runner.heartbeat", query_id=query_id)
+            await _update_job_safe(conn_holder, batch_id)
+            log.debug("runner.heartbeat", batch_id=batch_id)
         except Exception as exc:
             log.warning(
                 "runner.heartbeat_failed",
-                query_id=query_id,
+                batch_id=batch_id,
                 error=str(exc),
             )
             # Don't crash the heartbeat — keep trying
@@ -175,11 +175,11 @@ async def _run_heartbeat(
 # ---------------------------------------------------------------------------
 
 
-async def run(query_id: str) -> None:
-    """Run the scraping pipeline for a given query_id.
+async def run(batch_id: str) -> None:
+    """Run the scraping pipeline for a given batch_id.
 
     Uses two separate psycopg3 connections:
-      - status_conn  — long-lived; used only for scrape_jobs status updates.
+      - status_conn  — long-lived; used only for batch_data status updates.
       - pool         — short-lived async pool; shared by interpret/triage/batch.
 
     This keeps the status writes isolated from the pipeline's connection usage.
@@ -195,15 +195,15 @@ async def run(query_id: str) -> None:
     # Dynamic wave size: use settings.wave_size (default 50), capped at 200
     _wave_size = min(settings.wave_size, _MAX_WAVE_SIZE)
 
-    log.info("runner_start", query_id=query_id, wave_size=_wave_size)
+    log.info("runner_start", batch_id=batch_id, wave_size=_wave_size)
 
     # ── Clear stale checkpoint from previous runs ────────────────────────
     # Every runner invocation is a NEW job launch. Old checkpoint dirs
-    # with the same query_id would cause batch.already_complete skip.
+    # with the same batch_id would cause batch.already_complete skip.
     from fortress.module_d import checkpoint as _ckpt
-    if _ckpt.checkpoint_exists(query_id):
-        _ckpt.clear(query_id)
-        log.info("runner.stale_checkpoint_cleared", query_id=query_id)
+    if _ckpt.checkpoint_exists(batch_id):
+        _ckpt.clear(batch_id)
+        log.info("runner.stale_checkpoint_cleared", batch_id=batch_id)
 
     # ── Phase 4: start Google Maps scraper (Playwright Chromium) ─────────────
     # Browser must be started before the DB connection pool and heavy SIRENE
@@ -235,19 +235,19 @@ async def run(query_id: str) -> None:
 
         # ── Start heartbeat background task ──────────────────────────────
         heartbeat_task = asyncio.create_task(
-            _run_heartbeat(conn_holder, query_id),
-            name=f"heartbeat-{query_id}",
+            _run_heartbeat(conn_holder, batch_id),
+            name=f"heartbeat-{batch_id}",
         )
 
         try:
             # ── Mark job as in_progress ─────────────────────────────────────
-            await _update_job_safe(conn_holder, query_id, status="in_progress")
+            await _update_job_safe(conn_holder, batch_id, status="in_progress")
 
             try:
 
-                # ── Load job metadata from scrape_jobs ──────────────────────
+                # ── Load job metadata from batch_data ──────────────────────
                 cur = await conn_holder[0].execute(
-                    """SELECT sj.query_name,
+                    """SELECT sj.batch_name,
                               COALESCE(sj.batch_number, 1),
                               COALESCE(sj.batch_offset, 0),
                               sj.filters_json,
@@ -255,17 +255,17 @@ async def run(query_id: str) -> None:
                               COALESCE(sj.batch_size, sj.total_companies),
                               sj.user_id,
                               u.username
-                       FROM scrape_jobs sj
+                       FROM batch_data sj
                        LEFT JOIN users u ON sj.user_id = u.id
-                       WHERE sj.query_id = %s LIMIT 1""",
-                    (query_id,),
+                       WHERE sj.batch_id = %s LIMIT 1""",
+                    (batch_id,),
                 )
                 row = await cur.fetchone()
                 if not row:
                     raise RuntimeError(
-                        f"No scrape_jobs row found for query_id={query_id!r}"
+                        f"No batch_data row found for batch_id={batch_id!r}"
                     )
-                query_name: str = row[0]
+                batch_name: str = row[0]
                 batch_number: int = row[1]
                 batch_offset: int = row[2]
                 filters_raw: str | None = row[3]
@@ -284,8 +284,8 @@ async def run(query_id: str) -> None:
                         log.warning("runner_filters_parse_error", filters_raw=filters_raw)
                 log.info(
                     "runner_loaded_job",
-                    query_id=query_id,
-                    query_name=query_name,
+                    batch_id=batch_id,
+                    batch_name=batch_name,
                     batch_number=batch_number,
                     batch_offset=batch_offset,
                     requested_size=requested_size,
@@ -308,14 +308,14 @@ async def run(query_id: str) -> None:
                     # batch_offset determines which slice of SIRENE results to fetch.
                     log.info(
                         "runner_interpret",
-                        query_name=query_name,
+                        batch_name=batch_name,
                         batch_offset=batch_offset,
                     )
                     try:
                         # Fetch 2× requested size so the qualify-or-replace
                         # loop has enough candidates without extra DB queries.
                         qr = await interpret_query(
-                            query_name, pool,
+                            batch_name, pool,
                             filters=query_filters,
                             limit=requested_size * 2,
                             offset=batch_offset,
@@ -324,11 +324,11 @@ async def run(query_id: str) -> None:
                         if "statement timeout" in str(exc).lower():
                             log.error(
                                 "runner_query_timeout",
-                                query_name=query_name,
+                                batch_name=batch_name,
                                 error="SQL query exceeded 60s timeout on 16.7M-row table",
                             )
                             await _update_job_safe(
-                                conn_holder, query_id,
+                                conn_holder, batch_id,
                                 status="failed",
                                 companies_failed=0,
                             )
@@ -338,15 +338,15 @@ async def run(query_id: str) -> None:
                     if qr.company_count == 0:
                         log.warning(
                             "runner_no_companies",
-                            query_name=query_name,
+                            batch_name=batch_name,
                         )
-                        await _update_job_safe(conn_holder, query_id, status="completed")
+                        await _update_job_safe(conn_holder, batch_id, status="completed")
                         return
 
                     # ── Step 2: triage → TriageResult ───────────────────────
                     log.info(
                         "runner_triage",
-                        query_name=query_name,
+                        batch_name=batch_name,
                         companies=qr.company_count,
                     )
                     triage = await triage_companies(qr.sample, qr.raw_query, pool)
@@ -372,10 +372,10 @@ async def run(query_id: str) -> None:
                         math.ceil(scrape_count / _wave_size) if scrape_count else 0
                     )
 
-                    # Update triage stats + wave_total in scrape_jobs
+                    # Update triage stats + wave_total in batch_data
                     await _update_job_safe(
                         conn_holder,
-                        query_id,
+                        batch_id,
                         triage_black=triage.black_count,
                         triage_blue=triage.blue_count,
                         triage_green=triage.green_count,
@@ -388,8 +388,8 @@ async def run(query_id: str) -> None:
 
                     if scrape_count == 0:
                         # All GREEN — nothing to scrape
-                        log.info("runner_all_green", query_name=query_name)
-                        await _update_job_safe(conn_holder, query_id, status="completed")
+                        log.info("runner_all_green", batch_name=batch_name)
+                        await _update_job_safe(conn_holder, batch_id, status="completed")
                         return
 
                     # ── Step 3: enrich + batch process ──────────────────────
@@ -401,10 +401,10 @@ async def run(query_id: str) -> None:
 
                     async with CurlClient() as curl_client:
 
-                        # Extract domain/sector keywords from query_name
+                        # Extract domain/sector keywords from batch_name
                         # e.g. "camping 66" → "camping", "LOGISTIQUE 75" → "LOGISTIQUE"
                         _domain_words = [
-                            w for w in query_name.split()
+                            w for w in batch_name.split()
                             if not w.isdigit() and len(w) > 1
                         ]
                         _query_domain = " ".join(_domain_words)
@@ -419,7 +419,7 @@ async def run(query_id: str) -> None:
                                 companies_scraped = tried
                                 total_replaced = replaced
                                 await _update_job_safe(
-                                    conn_holder, query_id,
+                                    conn_holder, batch_id,
                                     companies_scraped=companies_scraped,
                                     replaced_count=total_replaced,
                                     companies_qualified=qualified,
@@ -432,7 +432,7 @@ async def run(query_id: str) -> None:
                                 maps_scraper=maps_scraper,
                                 on_progress=_on_progress,
                                 on_save=on_save,
-                                query_id=query_id,
+                                batch_id=batch_id,
                                 query_domain=_query_domain,
                             )
                             wave_counter += 1
@@ -440,7 +440,7 @@ async def run(query_id: str) -> None:
                             # Final wave-level update
                             await _update_job_safe(
                                 conn_holder,
-                                query_id,
+                                batch_id,
                                 wave_current=wave_counter,
                                 companies_scraped=companies_scraped,
                                 replaced_count=total_replaced,
@@ -449,8 +449,8 @@ async def run(query_id: str) -> None:
 
                         await bp_run_query(
                             triage,
-                            query_name,
-                            query_id,
+                            batch_name,
+                            batch_id,
                             enrich_fn,
                             pool,
                             wave_size=_wave_size,
@@ -460,12 +460,12 @@ async def run(query_id: str) -> None:
                 final_status = "interrupted" if _shutdown else "completed"
                 await _update_job_safe(
                     conn_holder,
-                    query_id,
+                    batch_id,
                     status=final_status,
                     wave_current=wave_counter,
                     replaced_count=total_replaced,
                 )
-                log.info(f"runner_{final_status}", query_id=query_id, waves=wave_counter, shutdown=_shutdown)
+                log.info(f"runner_{final_status}", batch_id=batch_id, waves=wave_counter, shutdown=_shutdown)
                 
                 if job_user_id and job_username:
                     from fortress.api.routes.activity import log_activity
@@ -473,26 +473,26 @@ async def run(query_id: str) -> None:
                         user_id=job_user_id,
                         username=job_username,
                         action=f"batch_{final_status}",
-                        target_id=query_id,
+                        target_id=batch_id,
                         details=f"Batch {final_status} ({wave_counter} waves, {companies_scraped} traitées)"
                     )
 
             except Exception as exc:
                 log.error(
                     "runner_failed",
-                    query_id=query_id,
+                    batch_id=batch_id,
                     error=str(exc),
                     traceback=_traceback.format_exc(),
                 )
                 try:
-                    await _update_job_safe(conn_holder, query_id, status="failed")
+                    await _update_job_safe(conn_holder, batch_id, status="failed")
                     if 'job_user_id' in locals() and job_user_id and job_username:
                         from fortress.api.routes.activity import log_activity
                         await log_activity(
                             user_id=job_user_id,
                             username=job_username,
                             action="batch_failed",
-                            target_id=query_id,
+                            target_id=batch_id,
                             details=f"Erreur fatale: {str(exc)[:200]}"
                         )
                 except Exception:
@@ -524,12 +524,12 @@ async def run(query_id: str) -> None:
 
 
 def main() -> None:
-    """Entry point — called by `python -m fortress.runner <query_id>`."""
+    """Entry point — called by `python -m fortress.runner <batch_id>`."""
     if len(sys.argv) < 2:
-        print("Usage: python -m fortress.runner <query_id>", file=sys.stderr)
+        print("Usage: python -m fortress.runner <batch_id>", file=sys.stderr)
         sys.exit(1)
-    query_id = sys.argv[1]
-    asyncio.run(run(query_id))
+    batch_id = sys.argv[1]
+    asyncio.run(run(batch_id))
 
 
 if __name__ == "__main__":

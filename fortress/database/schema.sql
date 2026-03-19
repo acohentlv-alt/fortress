@@ -96,23 +96,23 @@ CREATE INDEX IF NOT EXISTS idx_officers_siren ON officers (siren);
 -- Query tags — N:N mapping between companies and named queries
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS query_tags (
+CREATE TABLE IF NOT EXISTS batch_tags (
     siren           VARCHAR(9)      NOT NULL REFERENCES companies (siren) ON DELETE CASCADE,
-    query_name      TEXT            NOT NULL,
+    batch_name      TEXT            NOT NULL,
     tagged_at       TIMESTAMP       NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (siren, query_name)
+    PRIMARY KEY (siren, batch_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_query_tags_query ON query_tags (query_name);
+CREATE INDEX IF NOT EXISTS idx_batch_tags_query ON batch_tags (batch_name);
 
 -- ---------------------------------------------------------------------------
 -- Scrape jobs — one row per user query (tracks waves, triage stats, status)
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS scrape_jobs (
+CREATE TABLE IF NOT EXISTS batch_data (
     id                      SERIAL          PRIMARY KEY,
-    query_id                TEXT            NOT NULL,   -- e.g. 'AGRICULTURE_66'
-    query_name              TEXT            NOT NULL,   -- e.g. 'AGRICULTURE 66'
+    batch_id                TEXT            NOT NULL,   -- e.g. 'AGRICULTURE_66'
+    batch_name              TEXT            NOT NULL,   -- e.g. 'AGRICULTURE 66'
     status                  VARCHAR(20)     NOT NULL DEFAULT 'new',
         -- 'new' | 'triage' | 'queued' | 'in_progress' | 'paused' | 'completed' | 'failed'
     total_companies         INTEGER         DEFAULT 0,
@@ -137,8 +137,8 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
     updated_at              TIMESTAMP       NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_query_id ON scrape_jobs (query_id);
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status   ON scrape_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_batch_data_batch_id ON batch_data (batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_data_status   ON batch_data (status);
 
 -- ---------------------------------------------------------------------------
 -- Blacklisted SIRENs — companies that must never be scraped
@@ -170,9 +170,9 @@ CREATE INDEX IF NOT EXISTS idx_notes_siren ON company_notes (siren);
 -- Scrape audit — complete action log for all scraping operations
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS scrape_audit (
+CREATE TABLE IF NOT EXISTS batch_log (
     id              SERIAL          PRIMARY KEY,
-    query_id        TEXT            NOT NULL,
+    batch_id        TEXT            NOT NULL,
     siren           VARCHAR(9)      NOT NULL,
     action          VARCHAR(50)     NOT NULL,   -- 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
     result          VARCHAR(20)     NOT NULL,   -- 'success' | 'fail' | 'blocked' | 'skipped'
@@ -182,9 +182,9 @@ CREATE TABLE IF NOT EXISTS scrape_audit (
     timestamp       TIMESTAMP       NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_query  ON scrape_audit (query_id);
-CREATE INDEX IF NOT EXISTS idx_audit_siren  ON scrape_audit (siren);
-CREATE INDEX IF NOT EXISTS idx_audit_action ON scrape_audit (action);
+CREATE INDEX IF NOT EXISTS idx_batch_log_batch_id  ON batch_log (batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_log_siren  ON batch_log (siren);
+CREATE INDEX IF NOT EXISTS idx_batch_log_action ON batch_log (action);
 
 -- ---------------------------------------------------------------------------
 -- INPI usage tracker — daily request counter (10K/day limit)
@@ -228,8 +228,8 @@ CREATE TABLE IF NOT EXISTS client_sirens (
 
 CREATE INDEX IF NOT EXISTS idx_client_sirens_client ON client_sirens (client_id);
 
--- Add triage_blue column to scrape_jobs if not present
-ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS triage_blue INTEGER DEFAULT 0;
+-- Add triage_blue column to batch_data if not present
+ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS triage_blue INTEGER DEFAULT 0;
 
 -- ---------------------------------------------------------------------------
 -- Enrichment log — per-company outcome tracking (admin diagnostic tool)
@@ -238,7 +238,7 @@ ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS triage_blue INTEGER DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS enrichment_log (
     id              SERIAL          PRIMARY KEY,
-    query_id        VARCHAR(100)    NOT NULL,
+    batch_id        VARCHAR(100)    NOT NULL,
     siren           VARCHAR(9)      NOT NULL,
     denomination    TEXT,
     outcome         VARCHAR(20)     NOT NULL,       -- qualified, replaced, failed
@@ -253,10 +253,10 @@ CREATE TABLE IF NOT EXISTS enrichment_log (
     created_at      TIMESTAMPTZ     DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_enrichment_log_query ON enrichment_log(query_id);
+CREATE INDEX IF NOT EXISTS idx_enrichment_log_query ON enrichment_log(batch_id);
 
 -- Add cancel_requested flag for graceful pipeline cancellation
-ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE;
+ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE;
 
 -- ---------------------------------------------------------------------------
 -- Users — authentication and role-based access
@@ -273,11 +273,11 @@ CREATE TABLE IF NOT EXISTS users (
     last_login      TIMESTAMP
 );
 
--- Add user_id to scrape_jobs so we can filter "my batches" per user
-ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
+-- Add user_id to batch_data so we can filter "my batches" per user
+ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);
 
 -- Worker tracking: which machine ran this batch
-ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS worker_id VARCHAR(50);
+ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS worker_id VARCHAR(50);
 
 -- Enseigne: commercial/trade name from SIRENE StockEtablissement
 -- This is the name on the business sign (e.g. "Camping La Marende")
@@ -306,7 +306,7 @@ ALTER TABLE officers ADD COLUMN IF NOT EXISTS code_fonction  TEXT;
 ALTER TABLE officers ADD COLUMN IF NOT EXISTS type_fonction  TEXT;
 
 -- Scrape jobs: upload mode tracking
-ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'discovery';
+ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'discovery';
 
 -- ---------------------------------------------------------------------------
 -- Company notes — per-company text annotations (CRM step 1)

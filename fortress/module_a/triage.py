@@ -28,25 +28,25 @@ _MVP_FIELDS = ("phone", "website", "email")
 
 async def triage_companies(
     companies: list[Company],
-    query_name: str,
+    batch_name: str,
     pool: Any,  # psycopg_pool.AsyncConnectionPool
 ) -> TriageResult:
     """Classify companies into BLACK / GREEN / YELLOW / RED.
 
     Args:
         companies:  Full list of Company objects from SIRENE query.
-        query_name: Human-readable query label, e.g. "AGRICULTURE 66".
+        batch_name: Human-readable query label, e.g. "AGRICULTURE 66".
         pool:       Async psycopg3 connection pool.
 
     Returns:
         TriageResult with four buckets. GREEN companies are immediately tagged
-        in query_tags. YELLOW companies have a ``missing_fields`` attribute
+        in batch_tags. YELLOW companies have a ``missing_fields`` attribute
         set on the Company object (as extra field).
     """
     result = TriageResult()
 
     if not companies:
-        _print_preview(query_name, result)
+        _print_preview(batch_name, result)
         return result
 
     sirens = [c.siren for c in companies]
@@ -96,14 +96,14 @@ async def triage_companies(
                 company_copy = company.model_copy(update={"missing_fields": missing})
                 result.yellow.append(company_copy)
 
-        # --- 4. Tag GREEN companies in query_tags ------------------------
+        # --- 4. Tag GREEN companies in batch_tags ------------------------
         if result.green:
-            await _tag_green_companies(conn, result.green, query_name)
+            await _tag_green_companies(conn, result.green, batch_name)
 
-    _print_preview(query_name, result)
+    _print_preview(batch_name, result)
     log.info(
         "triage_complete",
-        query=query_name,
+        query=batch_name,
         black=result.black_count,
         blue=result.blue_count,
         green=result.green_count,
@@ -180,9 +180,9 @@ async def _fetch_contacts(
 async def _tag_green_companies(
     conn: Any,
     companies: list[Company],
-    query_name: str,
+    batch_name: str,
 ) -> None:
-    """Upsert query_tags rows for all GREEN companies (already complete)."""
+    """Upsert batch_tags rows for all GREEN companies (already complete)."""
     if not companies:
         return
     from datetime import datetime, timezone
@@ -192,15 +192,15 @@ async def _tag_green_companies(
     async with conn.cursor() as cur:
         await cur.executemany(
             """
-            INSERT INTO query_tags (siren, query_name, tagged_at)
+            INSERT INTO batch_tags (siren, batch_name, tagged_at)
             VALUES (%s, %s, %s)
-            ON CONFLICT (siren, query_name) DO NOTHING
+            ON CONFLICT (siren, batch_name) DO NOTHING
             """,
-            [(c.siren, query_name, now) for c in companies],
+            [(c.siren, batch_name, now) for c in companies],
         )
 
 
-def _print_preview(query_name: str, result: TriageResult) -> None:
+def _print_preview(batch_name: str, result: TriageResult) -> None:
     """Print the dry-run triage preview to stdout."""
     total = (
         result.black_count
@@ -212,7 +212,7 @@ def _print_preview(query_name: str, result: TriageResult) -> None:
     scrape_needed = result.yellow_count + result.red_count
     pct = f"{100 * scrape_needed // total}%" if total else "0%"
 
-    print(f"\nTRIAGE PREVIEW for {query_name}:")
+    print(f"\nTRIAGE PREVIEW for {batch_name}:")
     print(f"├── BLACK  (blacklisted):   {result.black_count:>6}  → Skipped entirely")
     print(f"├── BLUE   (client owns):   {result.blue_count:>6}  → Skipped (already in CRM)")
     print(f"├── GREEN  (complete):      {result.green_count:>6}  → Instant cards")

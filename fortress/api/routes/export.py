@@ -40,14 +40,14 @@ _CSV_COLUMNS = [
 ]
 
 
-async def _fetch_export_data(query_id: str) -> list[dict]:
+async def _fetch_export_data(batch_id: str) -> list[dict]:
     """Fetch all companies + contacts for a specific batch.
 
-    Scoped via scrape_audit (per-batch query_id), not query_tags (shared
-    query_name), so each batch export contains only its own companies.
+    Scoped via batch_log (per-batch batch_id), not batch_tags (shared
+    batch_name), so each batch export contains only its own companies.
     """
     job = await fetch_one(
-        "SELECT query_id FROM scrape_jobs WHERE query_id = %s", (query_id,)
+        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return []
@@ -61,7 +61,7 @@ async def _fetch_export_data(query_id: str) -> list[dict]:
                 c2.social_linkedin, c2.social_facebook, c2.social_twitter,
                 c2.rating, c2.review_count, c2.source AS contact_source
             FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s)
             ORDER BY c2.siren,
                 (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
@@ -77,11 +77,11 @@ async def _fetch_export_data(query_id: str) -> list[dict]:
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
             bc.rating, bc.review_count, bc.contact_source
-        FROM (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s) sa
+        FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
         ORDER BY co.denomination
-    """, (query_id, query_id))
+    """, (batch_id, batch_id))
 
 
 # ── MASTER EXPORT (must be declared BEFORE parameterised routes) ──
@@ -91,7 +91,7 @@ async def _fetch_export_data(query_id: str) -> list[dict]:
 async def export_master_csv(request: Request):
     """Download all SCRAPED companies across all queries as CSV.
 
-    Admin only. Scoped to query_tags (only companies we've actually processed),
+    Admin only. Scoped to batch_tags (only companies we've actually processed),
     not the full 14.7M SIRENE table.
     """
     user = getattr(request.state, 'user', None)
@@ -107,7 +107,7 @@ async def export_master_csv(request: Request):
                 c2.social_linkedin, c2.social_facebook, c2.social_twitter,
                 c2.rating, c2.review_count, c2.source AS contact_source
             FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM query_tags)
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_tags)
             ORDER BY c2.siren,
                 (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
@@ -123,7 +123,7 @@ async def export_master_csv(request: Request):
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
             bc.rating, bc.review_count, bc.contact_source
-        FROM (SELECT DISTINCT siren FROM query_tags) qt
+        FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
         ORDER BY co.denomination
@@ -167,7 +167,7 @@ async def export_master_xlsx(request: Request):
                 c2.social_linkedin, c2.social_facebook, c2.social_twitter,
                 c2.rating, c2.review_count, c2.source AS contact_source
             FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM query_tags)
+            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_tags)
             ORDER BY c2.siren,
                 (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
                  CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
@@ -183,7 +183,7 @@ async def export_master_xlsx(request: Request):
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
             bc.rating, bc.review_count, bc.contact_source
-        FROM (SELECT DISTINCT siren FROM query_tags) qt
+        FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
         ORDER BY co.denomination
@@ -194,15 +194,15 @@ async def export_master_xlsx(request: Request):
 # ── PER-QUERY EXPORTS ────────────────────────────────────────────
 
 
-@router.get("/{query_id}/csv")
-async def export_csv(query_id: str):
+@router.get("/{batch_id}/csv")
+async def export_csv(batch_id: str):
     """Download all companies for a query as CSV."""
-    rows = await _fetch_export_data(query_id)
+    rows = await _fetch_export_data(batch_id)
     if not rows:
         return StreamingResponse(
             io.BytesIO(b"No data"),
             media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={query_id}.csv"},
+            headers={"Content-Disposition": f"attachment; filename={batch_id}.csv"},
         )
 
     buf = io.StringIO()
@@ -217,14 +217,14 @@ async def export_csv(query_id: str):
     return StreamingResponse(
         io.BytesIO(content),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={query_id}.csv"},
+        headers={"Content-Disposition": f"attachment; filename={batch_id}.csv"},
     )
 
 
-@router.get("/{query_id}/jsonl")
-async def export_jsonl(query_id: str):
+@router.get("/{batch_id}/jsonl")
+async def export_jsonl(batch_id: str):
     """Download all companies for a query as JSONL."""
-    rows = await _fetch_export_data(query_id)
+    rows = await _fetch_export_data(batch_id)
     lines = []
     for row in rows:
         # Convert date objects to strings
@@ -240,15 +240,15 @@ async def export_jsonl(query_id: str):
     return StreamingResponse(
         io.BytesIO(content),
         media_type="application/jsonl",
-        headers={"Content-Disposition": f"attachment; filename={query_id}.jsonl"},
+        headers={"Content-Disposition": f"attachment; filename={batch_id}.jsonl"},
     )
 
 
-@router.get("/{query_id}/xlsx")
-async def export_xlsx(query_id: str):
+@router.get("/{batch_id}/xlsx")
+async def export_xlsx(batch_id: str):
     """Download all companies for a query as XLSX."""
-    rows = await _fetch_export_data(query_id)
-    return _to_xlsx(rows, f"{query_id}.xlsx")
+    rows = await _fetch_export_data(batch_id)
+    return _to_xlsx(rows, f"{batch_id}.xlsx")
 
 
 # ── BULK EXPORT ──────────────────────────────────────────────────

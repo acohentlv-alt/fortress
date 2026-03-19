@@ -1,6 +1,6 @@
 """Company API routes — search, detail, and on-demand enrichment.
 
-Search is scoped to scraped companies (via query_tags) for performance.
+Search is scoped to scraped companies (via batch_tags) for performance.
 Detail view retrieves full data including enriched fields:
   Forme Juridique, Code NAF, Headcount, Dirigeants, Revenue (nullable).
 """
@@ -65,7 +65,7 @@ async def update_company_fields(siren: str, body: dict):
 
     Accepts JSON with field→value pairs, e.g. {"phone": "+33 4 68 00 00 00"}.
     Company fields update `companies` table, contact fields upsert into `contacts`.
-    All edits are logged to `scrape_audit` with action='manual_edit'.
+    All edits are logged to `batch_log` with action='manual_edit'.
     """
     # Validate company exists
     company = await fetch_one(
@@ -117,7 +117,7 @@ async def update_company_fields(siren: str, body: dict):
         # Audit trail
         for field, value in updates.items():
             await conn.execute("""
-                INSERT INTO scrape_audit (query_id, siren, action, result, source_url, timestamp)
+                INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
                 VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', %s, NOW())
             """, (siren, f"{field}={value}"))
 
@@ -172,7 +172,7 @@ async def enrich_company(siren: str, body: EnrichRequest):
 
     # ── TTL-based recency check: skip if scraped in last 24h ─────
     recent_scrape = await fetch_one("""
-        SELECT action, timestamp FROM scrape_audit
+        SELECT action, timestamp FROM batch_log
         WHERE siren = %s AND result = 'success'
           AND timestamp > NOW() - INTERVAL '%s hours'
         ORDER BY timestamp DESC LIMIT 1
@@ -222,39 +222,39 @@ async def enrich_company(siren: str, body: EnrichRequest):
         }
 
     # ── Background dispatch: create micro scrape_job + spawn runner ─
-    query_id = f"ENRICH_{siren}"
+    batch_id = f"ENRICH_{siren}"
 
-    # Create or reset the micro job (query_id is indexed but not UNIQUE)
+    # Create or reset the micro job (batch_id is indexed but not UNIQUE)
     try:
         async with get_conn() as conn:
             existing_job = await conn.execute(
-                "SELECT id FROM scrape_jobs WHERE query_id = %s LIMIT 1",
-                (query_id,),
+                "SELECT id FROM batch_data WHERE batch_id = %s LIMIT 1",
+                (batch_id,),
             )
             row = await existing_job.fetchone()
 
             if row:
                 # Reset existing job to 'queued'
                 await conn.execute(
-                    "UPDATE scrape_jobs SET status = 'queued', updated_at = NOW() WHERE query_id = %s",
-                    (query_id,),
+                    "UPDATE batch_data SET status = 'queued', updated_at = NOW() WHERE batch_id = %s",
+                    (batch_id,),
                 )
             else:
                 # Create new micro job
                 await conn.execute("""
-                    INSERT INTO scrape_jobs
-                        (query_id, query_name, status, batch_number, batch_offset, total_companies)
+                    INSERT INTO batch_data
+                        (batch_id, batch_name, status, batch_number, batch_offset, total_companies)
                     VALUES (%s, %s, 'queued', 1, 0, 1)
-                """, (query_id, f"enrich {siren}"))
+                """, (batch_id, f"enrich {siren}"))
 
             # Ensure the company is tagged for this micro-job
             tag_exists = await conn.execute(
-                "SELECT 1 FROM query_tags WHERE siren = %s AND query_name = %s LIMIT 1",
+                "SELECT 1 FROM batch_tags WHERE siren = %s AND batch_name = %s LIMIT 1",
                 (siren, f"enrich {siren}"),
             )
             if not await tag_exists.fetchone():
                 await conn.execute(
-                    "INSERT INTO query_tags (siren, query_name, tagged_at) VALUES (%s, %s, NOW())",
+                    "INSERT INTO batch_tags (siren, batch_name, tagged_at) VALUES (%s, %s, NOW())",
                     (siren, f"enrich {siren}"),
                 )
 
@@ -269,11 +269,11 @@ async def enrich_company(siren: str, body: EnrichRequest):
     fortress_root = Path(__file__).resolve().parent.parent.parent
     log_dir = fortress_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{query_id}.log"
+    log_path = log_dir / f"{batch_id}.log"
     try:
         log_fh = open(log_path, "a")
         proc = subprocess.Popen(
-            [sys.executable, "-m", "fortress.runner", query_id],
+            [sys.executable, "-m", "fortress.runner", batch_id],
             cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
             stdout=log_fh,
             stderr=log_fh,
@@ -292,7 +292,7 @@ async def enrich_company(siren: str, body: EnrichRequest):
         "skipped": skipped,
         "siren": siren,
         "denomination": company["denomination"],
-        "query_id": query_id,
+        "batch_id": batch_id,
         "pid": pid,
     }
 
@@ -401,11 +401,11 @@ async def crawl_website_sync(siren: str):
             ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
         """, tuple(values))
 
-        # Log to scrape_audit
+        # Log to batch_log
         duration = int((time.monotonic() - t0) * 1000)
         found_data = ", ".join(f"{k}={v}" for k, v in extracted.items())
         await conn.execute("""
-            INSERT INTO scrape_audit (query_id, siren, action, result, source_url, duration_ms, timestamp)
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, duration_ms, timestamp)
             VALUES ('SYNC_CRAWL', %s, 'website_crawl', 'success', %s, %s, NOW())
         """, (siren, found_data, duration))
 
@@ -430,7 +430,7 @@ async def search_companies(
     sort_by: str = Query("denomination", description="Sort by: denomination, naf, siren, ville, departement"),
     order: str = Query("asc", description="Sort order: asc or desc"),
     department: str = Query(None, description="Filter by department code (e.g. 66, 31)"),
-    sector: str = Query(None, description="Filter by sector/query_name (e.g. logistique, agriculture)"),
+    sector: str = Query(None, description="Filter by sector/batch_name (e.g. logistique, agriculture)"),
     min_rating: float = Query(None, ge=0, le=5, description="Minimum Google Maps rating (e.g. 4.0)"),
     min_reviews: int = Query(None, ge=0, description="Minimum number of Google Maps reviews"),
 ):
@@ -455,7 +455,7 @@ async def search_companies(
                 co.forme_juridique, co.tranche_effectif,
                 co.ville, co.departement, co.statut,
                 ct.phone, ct.email, ct.website
-            FROM query_tags qt
+            FROM batch_tags qt
             JOIN companies co ON co.siren = qt.siren
             LEFT JOIN LATERAL (
                 SELECT * FROM contacts c2
@@ -473,7 +473,7 @@ async def search_companies(
             ORDER BY {sort_clause}
         """, (clean_q,))
     else:
-        # Name / NAF code search — indexed via query_tags.siren
+        # Name / NAF code search — indexed via batch_tags.siren
         like_param = f"%{q.strip()}%"
 
         # Build dynamic WHERE filters
@@ -487,7 +487,7 @@ async def search_companies(
             params.append(department.strip())
 
         if sector:
-            where_parts.append("UPPER(qt.query_name) LIKE UPPER(%s)")
+            where_parts.append("UPPER(qt.batch_name) LIKE UPPER(%s)")
             params.append(f"%{sector.strip()}%")
 
         if min_rating is not None:
@@ -508,7 +508,7 @@ async def search_companies(
                 co.forme_juridique, co.tranche_effectif,
                 co.ville, co.departement, co.statut,
                 ct.phone, ct.email, ct.website
-            FROM query_tags qt
+            FROM batch_tags qt
             JOIN companies co ON co.siren = qt.siren
             LEFT JOIN LATERAL (
                 SELECT * FROM contacts c2
@@ -539,32 +539,32 @@ async def search_companies(
 async def get_enrich_history(siren: str):
     """Return enrichment audit trail for a single company.
 
-    Queries scrape_audit table (indexed on siren).
+    Queries batch_log table (indexed on siren).
     Used by the frontend's Smart Enrichment Panel timeline.
     """
     rows = await fetch_all("""
         SELECT
             action, result, source_url, duration_ms, timestamp
-        FROM scrape_audit
+        FROM batch_log
         WHERE siren = %s
         ORDER BY timestamp DESC
     """, (siren,))
     return {"siren": siren, "history": rows, "count": len(rows)}
 
 
-@router.delete("/{siren}/tags/{query_name}")
-async def untag_company(siren: str, query_name: str):
+@router.delete("/{siren}/tags/{batch_name}")
+async def untag_company(siren: str, batch_name: str):
     """Remove a company from a batch's results (untag only — never deletes data)."""
     async with get_conn() as conn:
         result = await conn.execute(
-            "DELETE FROM query_tags WHERE siren = %s AND query_name = %s RETURNING siren",
-            (siren, query_name),
+            "DELETE FROM batch_tags WHERE siren = %s AND batch_name = %s RETURNING siren",
+            (siren, batch_name),
         )
         row = await result.fetchone()
         if not row:
             return JSONResponse(status_code=404, content={"error": "Tag introuvable"})
         await conn.commit()
-    return {"untagged": True, "siren": siren, "query_name": query_name}
+    return {"untagged": True, "siren": siren, "batch_name": batch_name}
 
 
 @router.delete("/{siren}/tags/")
@@ -572,7 +572,7 @@ async def untag_company_all(siren: str):
     """Remove a company from ALL query results (all tags). Never deletes data."""
     async with get_conn() as conn:
         result = await conn.execute(
-            "DELETE FROM query_tags WHERE siren = %s RETURNING siren",
+            "DELETE FROM batch_tags WHERE siren = %s RETURNING siren",
             (siren,),
         )
         rows = await result.fetchall()
@@ -632,8 +632,8 @@ async def get_company(siren: str):
 
     # Query tags (which jobs found this company)
     tags = await fetch_all("""
-        SELECT query_name, tagged_at
-        FROM query_tags
+        SELECT batch_name, tagged_at
+        FROM batch_tags
         WHERE siren = %s
         ORDER BY tagged_at DESC
     """, (siren,))
@@ -642,7 +642,7 @@ async def get_company(siren: str):
     enrichment_history = await fetch_all("""
         SELECT
             action, result, source_url, duration_ms, timestamp
-        FROM scrape_audit
+        FROM batch_log
         WHERE siren = %s
         ORDER BY timestamp DESC
     """, (siren,))
@@ -660,7 +660,7 @@ async def get_company(siren: str):
         "contacts": contacts,
         "merged_contact": merged,
         "officers": officers,
-        "query_tags": tags,
+        "batch_tags": tags,
         "enrichment_history": enrichment_history,
         "notes": notes or [],
     }

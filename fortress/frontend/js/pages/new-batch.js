@@ -303,7 +303,7 @@ export async function renderNewBatch(container) {
                         ✅ Recherche lancée avec succès !
                     </div>
                     <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.8">
-                        <strong>ID :</strong> ${escapeHtml(result.query_id || '—')}<br>
+                        <strong>ID :</strong> ${escapeHtml(result.batch_id || '—')}<br>
                         <strong>Statut :</strong> En cours d'exécution
                     </div>
                     <div style="margin-top:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
