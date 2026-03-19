@@ -360,7 +360,7 @@ a:hover { color: var(--accent); }
 
 /* 1) The Collapsed State (72px rail) */
 .sidebar.collapsed {
-    width: var(--sidebar-collapsed-width);
+    width: var(--sidebar-collapsed);
 }
 
 /* 2) Fade out text when collapsed */
