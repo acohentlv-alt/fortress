@@ -168,7 +168,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-brand {
-    padding: var(--space-xl);
+    padding: var(--space-xl) var(--space-lg);
     display: flex;
     align-items: center;
     gap: var(--space-md);
@@ -206,7 +206,7 @@ a:hover { color: var(--accent); }
 
 .sidebar-nav {
     flex: 1;
-    padding: var(--space-lg) var(--space-md);
+    padding: var(--space-lg);
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
@@ -218,7 +218,7 @@ a:hover { color: var(--accent); }
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    padding: var(--space-lg) var(--space-md) var(--space-sm);
+    padding: var(--space-md) var(--space-sm) var(--space-sm);
 }
 
 .nav-item {
@@ -428,7 +428,7 @@ a:hover { color: var(--accent); }
     gap: 0;
 }
 .sidebar.collapsed:hover .sidebar-brand {
-    padding: var(--space-xl);
+    padding: var(--space-xl) var(--space-lg);
     justify-content: flex-start;
     gap: var(--space-md);
 }
@@ -458,12 +458,14 @@ a:hover { color: var(--accent); }
     height: 40px;
     border-radius: var(--radius);
     margin: 0 auto;
+    gap: 0 !important;
 }
 .sidebar.collapsed:hover .nav-item {
     justify-content: flex-start;
     padding: var(--space-sm) var(--space-md);
     width: 100% !important;
     max-width: 100% !important;
+    gap: var(--space-md) !important;
 }
 
 .sidebar.collapsed .nav-item:hover {
