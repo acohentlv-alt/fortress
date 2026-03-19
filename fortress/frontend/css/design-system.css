@@ -330,17 +330,28 @@ a:hover { color: var(--accent); }
 
 /* ── Sidebar Collapsed State — Premium Icon Rail ─────────────── */
 .sidebar.collapsed {
+    transition: width var(--transition) ease, box-shadow var(--transition) ease;
+}
+
+.sidebar.collapsed:not(:hover) {
     width: var(--sidebar-collapsed);
     overflow: hidden;
 }
 
-/* Hide text elements smoothly */
-.sidebar.collapsed .sidebar-brand-text,
-.sidebar.collapsed .sidebar-brand-badge,
-.sidebar.collapsed .nav-item span:not(.nav-item-icon),
-.sidebar.collapsed .sidebar-footer-version,
-.sidebar.collapsed .sidebar-footer-logout,
-.sidebar.collapsed .sidebar-toggle-label {
+/* When collapsed and hovered, it expands and overflows main content (floating) */
+.sidebar.collapsed:hover {
+    width: var(--sidebar-width);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+    z-index: 200;
+}
+
+/* Hide text elements smoothly only when NOT hovered */
+.sidebar.collapsed:not(:hover) .sidebar-brand-text,
+.sidebar.collapsed:not(:hover) .sidebar-brand-badge,
+.sidebar.collapsed:not(:hover) .nav-item span:not(.nav-item-icon),
+.sidebar.collapsed:not(:hover) .sidebar-footer-version,
+.sidebar.collapsed:not(:hover) .sidebar-footer-logout,
+.sidebar.collapsed:not(:hover) .sidebar-toggle-label {
     opacity: 0;
     width: 0;
     overflow: hidden;
@@ -350,7 +361,7 @@ a:hover { color: var(--accent); }
 }
 
 /* Section labels → thin centered divider lines */
-.sidebar.collapsed .sidebar-section-label {
+.sidebar.collapsed:not(:hover) .sidebar-section-label {
     opacity: 1 !important;
     width: 32px !important;
     height: 1px;
@@ -366,7 +377,7 @@ a:hover { color: var(--accent); }
 }
 
 /* Brand area: centered icon, same height as header */
-.sidebar.collapsed .sidebar-brand {
+.sidebar.collapsed:not(:hover) .sidebar-brand {
     padding: 0;
     justify-content: center;
     align-items: center;
@@ -374,19 +385,19 @@ a:hover { color: var(--accent); }
     gap: 0;
 }
 
-.sidebar.collapsed .sidebar-brand-icon {
+.sidebar.collapsed:not(:hover) .sidebar-brand-icon {
     font-size: 1.5rem;
 }
 
 /* Nav: centered column */
-.sidebar.collapsed .sidebar-nav {
+.sidebar.collapsed:not(:hover) .sidebar-nav {
     padding: var(--space-md) 0;
     align-items: center;
     gap: 2px;
 }
 
 /* Nav items: uniform 40×40 centered rounded squares */
-.sidebar.collapsed .nav-item {
+.sidebar.collapsed:not(:hover) .nav-item {
     justify-content: center;
     padding: 0;
     width: 40px !important;
@@ -397,24 +408,24 @@ a:hover { color: var(--accent); }
     transition: all var(--transition-fast);
 }
 
-.sidebar.collapsed .nav-item:hover {
+.sidebar.collapsed:not(:hover) .nav-item:hover {
     background: var(--bg-hover);
     transform: scale(1.08);
 }
 
-.sidebar.collapsed .nav-item.active {
+.sidebar.collapsed:not(:hover) .nav-item.active {
     background: var(--accent-subtle);
     box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
-.sidebar.collapsed .nav-item-icon {
+.sidebar.collapsed:not(:hover) .nav-item-icon {
     margin: 0;
     width: auto;
     font-size: 1.25rem;
 }
 
 /* Footer: clean minimal stack */
-.sidebar.collapsed .sidebar-footer {
+.sidebar.collapsed:not(:hover) .sidebar-footer {
     padding: var(--space-sm) 0 var(--space-md);
     display: flex;
     flex-direction: column;
@@ -424,7 +435,7 @@ a:hover { color: var(--accent); }
 }
 
 /* User display → small initials circle */
-.sidebar.collapsed .sidebar-user-display {
+.sidebar.collapsed:not(:hover) .sidebar-user-display {
     font-size: var(--font-xs) !important;
     width: 32px !important;
     height: 32px !important;
@@ -438,39 +449,19 @@ a:hover { color: var(--accent); }
     border: 1px solid var(--border-default);
 }
 
-.sidebar.collapsed .user-display-text {
+.sidebar.collapsed:not(:hover) .user-display-text {
     display: none !important;
 }
 
-.sidebar.collapsed .user-display-icon {
+.sidebar.collapsed:not(:hover) .user-display-icon {
     font-size: 0 !important;
 }
 
-.sidebar.collapsed .user-display-icon::after {
+.sidebar.collapsed:not(:hover) .user-display-icon::after {
     content: attr(data-initials);
     font-size: var(--font-sm);
     font-weight: 700;
     color: var(--accent-hover);
-}
-
-/* Toggle: bordered pill, always visible */
-.sidebar.collapsed .sidebar-toggle {
-    width: 36px;
-    height: 36px;
-    justify-content: center;
-    padding: 0;
-    margin: 0 auto;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius);
-    align-self: center;
-    background: transparent;
-}
-
-.sidebar.collapsed .sidebar-toggle:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    color: var(--accent-hover);
-    transform: scale(1.08);
 }
 
 .sidebar.collapsed ~ .main-content {

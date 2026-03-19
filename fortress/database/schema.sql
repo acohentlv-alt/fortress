@@ -152,6 +152,21 @@ CREATE TABLE IF NOT EXISTS blacklisted_sirens (
 );
 
 -- ---------------------------------------------------------------------------
+-- Company notes — CRM comments tied to a specific SIREN (Issue 6)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS company_notes (
+    id          SERIAL          PRIMARY KEY,
+    siren       VARCHAR(9)      NOT NULL,
+    user_id     INTEGER,
+    username    VARCHAR(100),
+    text        TEXT            NOT NULL,
+    created_at  TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_siren ON company_notes (siren);
+
+-- ---------------------------------------------------------------------------
 -- Scrape audit — complete action log for all scraping operations
 -- ---------------------------------------------------------------------------
 

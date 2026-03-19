@@ -49,24 +49,34 @@ function unenrichedField(module) {
 // ── Enrichment Panel — Crawl only (Maps already ran in batch) ────
 function enrichmentPanelHTML() {
     return `
-        <div class="enrich-panel" id="enrich-panel">
-            <div class="enrich-panel-title">⚡ Enrichissement</div>
-            <div class="enrich-pipeline-preview">
-                <div class="enrich-step">
-                    <span class="enrich-step-icon">🌐</span>
-                    <div>
-                        <div class="enrich-step-label">Site Web</div>
-                        <div class="enrich-step-desc">Email, LinkedIn, Facebook, réseaux sociaux</div>
-                        <div class="enrich-step-time">~20 secondes</div>
-                    </div>
-                </div>
-            </div>
-            <button class="enrich-submit" id="enrich-submit-btn">
-                <span class="enrich-spinner"></span>
-                <span class="enrich-submit-text">🚀 Lancer l'enrichissement</span>
-            </button>
-        </div>
+        <button class="btn btn-primary enrich-submit" id="enrich-submit-btn" style="display:inline-flex; align-items:center; gap:var(--space-sm); font-weight:600; padding:var(--space-sm) var(--space-xl); border-radius:var(--radius-lg)">
+            <span class="enrich-spinner" style="display:none; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite"></span>
+            <span class="enrich-submit-text">🚀 Enrichir SIREN</span>
+        </button>
     `;
+}
+
+function renderNotesDirect(notes) {
+    if (!notes || notes.length === 0) {
+        return `<div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">Aucune note.</div>`;
+    }
+    const currentUser = getCachedUser();
+    
+    return notes.map(n => {
+        const canDelete = currentUser && (currentUser.id === n.user_id || currentUser.role === 'admin');
+        const d = new Date(n.created_at);
+        const timeStr = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        
+        return `
+        <div class="note-item" style="padding:var(--space-sm); background:var(--bg-tertiary, var(--bg-secondary)); border-radius:var(--radius-sm); margin-bottom:var(--space-xs); border:1px solid var(--border-subtle)">
+            <div style="font-size:var(--font-xs); color:var(--text-secondary); margin-bottom:var(--space-xs); display:flex; justify-content:space-between">
+                <span><strong>${escapeHtml(n.username || 'Utilisateur')}</strong> · ${timeStr}</span>
+                ${canDelete ? `<button class="btn-delete-note" data-note-id="${n.id}" style="background:none; border:none; color:var(--text-disabled); cursor:pointer" title="Supprimer">🗑️</button>` : ''}
+            </div>
+            <div style="font-size:var(--font-sm); white-space:pre-wrap; color:var(--text-primary)">${escapeHtml(n.text)}</div>
+        </div>
+        `;
+    }).join('');
 }
 
 // ── Context-aware breadcrumb ─────────────────────────────────────
@@ -121,19 +131,111 @@ export async function renderCompany(container, siren) {
     container.innerHTML = `
         ${_buildBreadcrumb(co, tags)}
 
-        <div class="company-detail">
-            <!-- Left Column: Identity Card -->
-            <div class="company-detail-identity">
-                <div class="company-detail-name">${escapeHtml(co.denomination)}</div>
-                <div class="company-detail-siren">
+        <!-- Top Header Panel -->
+        <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
+            <div class="company-detail-name-block">
+                <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">${escapeHtml(co.denomination)}</div>
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center;">
                     ${formatSiren(co.siren)}
                     <span style="margin: 0 var(--space-sm)">·</span>
                     ${statutBadge(co.statut)}
+                    <span style="margin: 0 var(--space-sm)">·</span>
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
                 </div>
+            </div>
+            <div class="company-detail-actions">
+                ${enrichmentPanelHTML()}
+            </div>
+        </div>
 
+        <!-- HERO SECTION: Notes, Contact, Dirigeants -->
+        <div class="company-crm-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:var(--space-xl); margin-bottom:var(--space-2xl)">
+            
+            <!-- Notes Card -->
+            <div class="detail-section" style="display:flex; flex-direction:column; max-height:400px">
+                <h3 class="detail-section-title">📝 Notes CRM</h3>
+                <div id="notes-list" style="flex:1; overflow-y:auto; margin-bottom:var(--space-md); padding-right:var(--space-xs)">
+                    ${renderNotesDirect(data.notes || [])}
+                </div>
+                <div style="display:flex; gap:var(--space-sm); margin-top:auto">
+                    <textarea id="note-input" placeholder="Ajouter une note…"
+                        style="flex:1; min-height:44px; padding:var(--space-sm) var(--space-md);
+                        background:var(--bg-input); border:1px solid var(--border-default);
+                        border-radius:var(--radius-sm); color:var(--text-primary);
+                        font-family:var(--font-family); font-size:var(--font-sm);
+                        resize:none; outline:none"></textarea>
+                    <button id="note-submit-btn" class="btn btn-primary" style="align-self:flex-end; white-space:nowrap; padding:var(--space-sm) var(--space-md)">
+                        Ajouter
+                    </button>
+                </div>
+            </div>
+
+            <!-- Contact Card -->
+            <div class="detail-section">
+                <h3 class="detail-section-title">📞 Contact</h3>
+                ${detailRow('Téléphone', mc.phone
+? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
+: unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
+                ${detailRow('Email', mc.email
+        ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
+        : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
+                ${detailRow('Site web', mc.website
+            ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
+            : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
+                ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
+                ${detailRow('LinkedIn', mc.social_linkedin
+                    ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
+                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
+                ${detailRow('Facebook', mc.social_facebook
+                    ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
+                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
+                ${detailRow('Twitter', mc.social_twitter
+                    ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
+                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
+                ${mc.rating ? `
+                    <div class="detail-row" style="margin-top:var(--space-md)">
+                        <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
+                        <span class="detail-value">
+                            <span style="font-weight:700">${mc.rating}</span>
+                            <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
+                            <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
+                        </span>
+                    </div>
+                ` : ''}
+            </div>
+
+            <!-- Dirigeants Card -->
+            <div class="detail-section">
+                <h3 class="detail-section-title">👤 Dirigeants</h3>
+                ${officers.length > 0 ? officers.map(o => `
+                    <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
+                        <div style="display:flex; justify-content:space-between; align-items:center">
+                            <span style="font-weight:600">
+                                ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
+                            </span>
+                            <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
+                        </div>
+                        ${o.email_direct || o.ligne_directe ? `
+                            <div style="display:flex; gap:var(--space-md); font-size:var(--font-sm); color:var(--text-secondary)">
+                                ${o.ligne_directe ? `<span style="color:var(--success); font-weight:600">📞 ${escapeHtml(o.ligne_directe)}</span>` : ''}
+                                ${o.email_direct ? `<span>📧 ${escapeHtml(o.email_direct)}</span>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('') : `
+                    <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
+                        Aucun dirigeant référencé
+                    </div>
+                `}
+            </div>
+        </div>
+
+        <!-- BOTTOM SECTION: Legacy Identity & Meta Data -->
+        <div class="company-detail">
+            <!-- Left Column: Identity Card -->
+            <div class="company-detail-identity">
                 <!-- Quick Stats Chips -->
-                <div style="display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-top:var(--space-xl)">
+                <div style="display:flex; flex-wrap:wrap; gap:var(--space-sm);">
                     ${co.naf_code ? `<span class="badge badge-muted" title="${escapeHtml(co.naf_libelle || '')}">📋 ${escapeHtml(co.naf_code)}</span>` : ''}
                     ${effectifLabel(co.tranche_effectif) ? `<span class="badge badge-muted">👥 ${effectifLabel(co.tranche_effectif)}</span>` : ''}
                     ${co.departement ? `<span class="badge badge-muted">📍 ${escapeHtml(co.departement)}</span>` : ''}
@@ -153,9 +255,6 @@ export async function renderCompany(container, siren) {
                         </a>
                     </div>
                 ` : ''}
-
-                <!-- Smart Enrichment Panel — MOVED TO TOP of identity -->
-                ${enrichmentPanelHTML()}
 
                 <!-- Tags -->
                 ${tags.length > 0 ? `
@@ -183,69 +282,7 @@ export async function renderCompany(container, siren) {
             </div>
 
             <!-- Right Column: Data Sections -->
-            <div class="company-detail-data">
 
-                <!-- TOP ROW: Contact + Dirigeants side by side -->
-                <div class="detail-top-row">
-                    <!-- Contact Card -->
-                    <div class="detail-section">
-                        <h3 class="detail-section-title">📞 Contact</h3>
-                        ${detailRow('Téléphone', mc.phone
-        ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-        : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
-                        ${detailRow('Email', mc.email
-                ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-                : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
-                        ${detailRow('Site web', mc.website
-                    ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-                    : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
-                        ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
-                        ${detailRow('LinkedIn', mc.social_linkedin
-                            ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
-                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
-                        ${detailRow('Facebook', mc.social_facebook
-                            ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
-                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
-                        ${detailRow('Twitter', mc.social_twitter
-                            ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
-                            : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
-                        ${mc.rating ? `
-                            <div class="detail-row" style="margin-top:var(--space-md)">
-                                <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
-                                <span class="detail-value">
-                                    <span style="font-weight:700">${mc.rating}</span>
-                                    <span style="color:var(--warning)">${'★'.repeat(Math.round(mc.rating))}${'☆'.repeat(5 - Math.round(mc.rating))}</span>
-                                    <span style="color:var(--text-secondary); font-size:var(--font-sm)">(${mc.review_count || 0} avis)</span>
-                                </span>
-                            </div>
-                        ` : ''}
-                    </div>
-
-                    <!-- Dirigeants Card -->
-                    <div class="detail-section">
-                        <h3 class="detail-section-title">👤 Dirigeants</h3>
-                        ${officers.length > 0 ? officers.map(o => `
-                            <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
-                                <div style="display:flex; justify-content:space-between; align-items:center">
-                                    <span style="font-weight:600">
-                                        ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
-                                    </span>
-                                    <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
-                                </div>
-                                ${o.email_direct || o.ligne_directe ? `
-                                    <div style="display:flex; gap:var(--space-md); font-size:var(--font-sm); color:var(--text-secondary)">
-                                        ${o.ligne_directe ? `<span style="color:var(--success); font-weight:600">📞 ${escapeHtml(o.ligne_directe)}</span>` : ''}
-                                        ${o.email_direct ? `<span>📧 ${escapeHtml(o.email_direct)}</span>` : ''}
-                                    </div>
-                                ` : ''}
-                            </div>
-                        `).join('') : `
-                            <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
-                                Aucun dirigeant référencé
-                            </div>
-                        `}
-                    </div>
-                </div>
 
                 <!-- 3. Identité juridique -->
                 <div class="detail-section">
@@ -303,29 +340,7 @@ export async function renderCompany(container, siren) {
                 </div>
                 ` : ''}
 
-                <!-- 8. Notes (Comments) — CRM step 1 -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer" id="notes-toggle">
-                        <span>📝 Notes</span>
-                        <span class="notes-toggle-chevron" id="notes-chevron" style="font-size:var(--font-xs); transition:transform 0.2s">▼</span>
-                    </h3>
-                    <div id="notes-section" style="display:none">
-                        <div id="notes-list">
-                            <div class="loading" style="padding:var(--space-lg) 0"><div class="spinner"></div></div>
-                        </div>
-                        <div style="margin-top:var(--space-md); display:flex; gap:var(--space-sm)">
-                            <textarea id="note-input" placeholder="Ajouter une note…"
-                                style="flex:1; min-height:60px; padding:var(--space-sm) var(--space-md);
-                                background:var(--bg-input); border:1px solid var(--border-default);
-                                border-radius:var(--radius-sm); color:var(--text-primary);
-                                font-family:var(--font-family); font-size:var(--font-sm);
-                                resize:vertical; outline:none"></textarea>
-                            <button id="note-submit-btn" class="btn btn-primary" style="align-self:flex-end; white-space:nowrap">
-                                Ajouter
-                            </button>
-                        </div>
-                    </div>
-                </div>
+
 
                 <!-- 9. Enrichment History Timeline -->
                 <div class="detail-section">
@@ -353,26 +368,36 @@ export async function renderCompany(container, siren) {
 
 // ── Notes System ─────────────────────────────────────────────────
 function _initNotes(siren) {
-    const toggle = document.getElementById('notes-toggle');
-    const section = document.getElementById('notes-section');
-    const chevron = document.getElementById('notes-chevron');
-    if (!toggle || !section) return;
-
-    let loaded = false;
-
-    toggle.addEventListener('click', () => {
-        const visible = section.style.display !== 'none';
-        section.style.display = visible ? 'none' : 'block';
-        chevron.style.transform = visible ? '' : 'rotate(180deg)';
-        if (!loaded) {
-            loaded = true;
-            _loadNotes(siren);
-        }
-    });
-
-    // Submit button
+    const container = document.getElementById('notes-list');
     const submitBtn = document.getElementById('note-submit-btn');
     const input = document.getElementById('note-input');
+
+    // Event delegation for delete buttons
+    if (container) {
+        container.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.btn-delete-note');
+            if (!btn) return;
+            
+            e.stopPropagation();
+            const noteId = btn.dataset.noteId;
+            btn.disabled = true;
+            try {
+                const res = await deleteCompanyNote(noteId);
+                if (res._ok !== false) {
+                    showToast('Note supprimée', 'success');
+                    _loadNotes(siren);
+                } else {
+                    showToast(extractApiError(res), 'error');
+                    btn.disabled = false;
+                }
+            } catch {
+                showToast('Erreur de suppression', 'error');
+                btn.disabled = false;
+            }
+        });
+    }
+
+    // Submit button
     if (submitBtn && input) {
         submitBtn.addEventListener('click', async () => {
             const text = input.value.trim();
@@ -402,54 +427,7 @@ async function _loadNotes(siren) {
 
     const data = await getCompanyNotes(siren);
     const notes = (data && data.notes) || [];
-    const currentUser = getCachedUser();
-
-    if (notes.length === 0) {
-        container.innerHTML = `
-            <div style="color:var(--text-muted); font-style:italic; padding:var(--space-sm) 0; font-size:var(--font-sm)">
-                Aucune note — ajoutez la première ci-dessous
-            </div>
-        `;
-        return;
-    }
-
-    container.innerHTML = notes.map(n => {
-        const canDelete = currentUser && (currentUser.id === n.user_id || currentUser.role === 'admin');
-        return `
-            <div class="note-item" style="padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xs)">
-                    <span style="font-size:var(--font-xs); font-weight:600; color:var(--text-secondary)">
-                        ${n.username === currentUser?.username ? '👑' : '👤'} ${escapeHtml(n.username)}
-                        <span style="color:var(--text-muted); font-weight:400; margin-left:var(--space-sm)">
-                            ${_formatNoteDate(n.created_at)}
-                        </span>
-                    </span>
-                    ${canDelete ? `<button class="btn-ghost btn-icon note-delete-btn" data-note-id="${n.id}" title="Supprimer" style="font-size:var(--font-xs); color:var(--text-muted)">🗑️</button>` : ''}
-                </div>
-                <div style="font-size:var(--font-sm); color:var(--text-primary); white-space:pre-wrap; line-height:1.5">${escapeHtml(n.text)}</div>
-            </div>
-        `;
-    }).join('');
-
-    // Wire delete buttons
-    container.querySelectorAll('.note-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const noteId = btn.dataset.noteId;
-            btn.disabled = true;
-            try {
-                const res = await deleteCompanyNote(noteId);
-                if (res._ok !== false) {
-                    showToast('Note supprimée', 'success');
-                    _loadNotes(siren);
-                } else {
-                    showToast(extractApiError(res), 'error');
-                }
-            } catch {
-                showToast('Erreur de suppression', 'error');
-            }
-        });
-    });
+    container.innerHTML = renderNotesDirect(notes);
 }
 
 function _formatNoteDate(dateStr) {

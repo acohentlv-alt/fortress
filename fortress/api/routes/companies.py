@@ -525,6 +525,14 @@ async def get_company(siren: str):
         ORDER BY timestamp DESC
     """, (siren,))
 
+    # CRM Notes
+    notes = await fetch_all("""
+        SELECT id, user_id, username, text, created_at
+        FROM company_notes
+        WHERE siren = %s
+        ORDER BY created_at DESC
+    """, (siren,))
+
     return {
         "company": company,
         "contacts": contacts,
@@ -532,6 +540,7 @@ async def get_company(siren: str):
         "officers": officers,
         "query_tags": tags,
         "enrichment_history": enrichment_history,
+        "notes": notes or [],
     }
 
 

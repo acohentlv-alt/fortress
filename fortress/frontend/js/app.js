@@ -292,37 +292,37 @@ async function initApp() {
 
 function _setupSidebarToggle() {
     const sidebar = document.getElementById('sidebar');
-    const toggleBtn = document.getElementById('sidebar-toggle');
-    if (!sidebar || !toggleBtn) return;
-
-    const iconEl = toggleBtn.querySelector('.sidebar-toggle-icon');
-    const labelEl = toggleBtn.querySelector('.sidebar-toggle-label');
+    const brandBtn = document.querySelector('.sidebar-brand');
+    const mainContent = document.querySelector('.main-content');
+    if (!sidebar || !brandBtn) return;
 
     function _applyState(collapsed) {
         if (collapsed) {
             sidebar.classList.add('collapsed');
-            toggleBtn.setAttribute('aria-expanded', 'false');
-            toggleBtn.title = 'Ouvrir le menu';
-            toggleBtn.setAttribute('aria-label', 'Ouvrir le menu');
-            if (iconEl) iconEl.textContent = '\u00bb'; /* » */
-            if (labelEl) labelEl.textContent = 'Ouvrir';
+            if (mainContent) mainContent.classList.add('sidebar-collapsed');
         } else {
             sidebar.classList.remove('collapsed');
-            toggleBtn.setAttribute('aria-expanded', 'true');
-            toggleBtn.title = 'R\u00e9duire le menu';
-            toggleBtn.setAttribute('aria-label', 'R\u00e9duire le menu');
-            if (iconEl) iconEl.textContent = '\u00ab'; /* « */
-            if (labelEl) labelEl.textContent = 'R\u00e9duire';
+            if (mainContent) mainContent.classList.remove('sidebar-collapsed');
         }
     }
 
-    // Restore saved state, OR default to collapsed if screen is small
+    // Default strategy for "Hover to expand":
+    // The sidebar is pinned collapsed by default, expanding via CSS hover.
+    // Clicking the logo toggles the "pinned open" state (removing 'collapsed').
     const storedState = localStorage.getItem('fortress_sidebar_collapsed');
-    if (storedState === '1' || (storedState === null && window.innerWidth <= 1100)) {
-        _applyState(true);
+    
+    // If explicitly pinned open previously (0) and screen is large enough
+    if (storedState === '0' && window.innerWidth > 1100) {
+        _applyState(false);
+    } else {
+        _applyState(true); // Default to collapsed
     }
 
-    toggleBtn.addEventListener('click', (e) => {
+    // Make the brand look clickable
+    brandBtn.style.cursor = 'pointer';
+    brandBtn.title = 'Fixer/réduire le menu';
+
+    brandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const willCollapse = !sidebar.classList.contains('collapsed');
         _applyState(willCollapse);
