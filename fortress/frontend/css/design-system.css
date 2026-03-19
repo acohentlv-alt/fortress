@@ -206,7 +206,7 @@ a:hover { color: var(--accent); }
 
 .sidebar-nav {
     flex: 1;
-    padding: var(--space-lg);
+    padding: var(--space-lg) 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
@@ -218,14 +218,15 @@ a:hover { color: var(--accent); }
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    padding: var(--space-md) var(--space-sm) var(--space-sm);
+    padding: var(--space-md) var(--space-lg) var(--space-sm);
 }
 
 .nav-item {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-sm);
+    margin: 0 var(--space-md);
+    padding: var(--space-sm) var(--space-sm);
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font-size: var(--font-md);
@@ -462,10 +463,11 @@ a:hover { color: var(--accent); }
 }
 .sidebar.collapsed:hover .nav-item {
     justify-content: flex-start;
-    padding: var(--space-sm) var(--space-md);
-    width: 100% !important;
-    max-width: 100% !important;
-    gap: var(--space-md) !important;
+    margin: 0 var(--space-md);
+    padding: var(--space-sm) var(--space-sm);
+    width: auto !important;
+    max-width: none !important;
+    gap: var(--space-sm) !important;
 }
 
 .sidebar.collapsed .nav-item:hover {
