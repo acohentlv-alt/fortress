@@ -225,6 +225,44 @@ export async function renderCompany(container, siren) {
                         </div>
                     `}
                 </div>
+
+                <!-- Meta Data: Tags & Sources -->
+                ${tags.length > 0 || mc.sources?.length > 0 || mc.maps_url ? `
+                <div class="detail-section" style="display:flex; flex-direction:column; gap:var(--space-lg)">
+                    ${mc.maps_url ? `
+                        <a href="${mc.maps_url}" target="_blank" rel="noopener"
+                           style="display:inline-flex; align-items:center; justify-content:center; gap:var(--space-sm);
+                                  padding:var(--space-sm) var(--space-md);
+                                  background:var(--surface-raised); border:1px solid var(--border-subtle);
+                                  border-radius:var(--radius-sm); color:var(--accent);
+                                  font-weight:600; text-decoration:none; transition:all 0.2s; font-size:var(--font-sm);">
+                            🗺️ Voir l'entreprise sur Google Maps ↗
+                        </a>
+                    ` : ''}
+
+                    ${tags.length > 0 ? `
+                        <div>
+                            <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
+                                Trouvé dans
+                            </span>
+                            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-xs)">
+                                ${tags.map(t => `<span class="badge badge-accent">${escapeHtml(t.query_name)}</span>`).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${mc.sources && mc.sources.length > 0 ? `
+                        <div>
+                            <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
+                                Sources de données
+                            </span>
+                            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-xs)">
+                                ${mc.sources.map(s => `<span class="badge badge-muted">${escapeHtml(s)}</span>`).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+                ` : ''}
             </div>
 
             <!-- Right Column: CRM Notes -->
@@ -250,66 +288,22 @@ export async function renderCompany(container, siren) {
             </div>
         </div>
 
-        <!-- BOTTOM SECTION: Legacy Identity & Meta Data -->
-        <div class="company-detail">
-            <!-- Left Column: Identity Card -->
-            <div class="company-detail-identity">
-                <!-- Quick Stats Moved to Header -->
-                <!-- Google Maps Link (prominent) -->
-                ${mc.maps_url ? `
-                    <div style="margin-top: var(--space-2xl); text-align:center">
-                        <a href="${mc.maps_url}" target="_blank" rel="noopener"
-                           style="display:inline-flex; align-items:center; gap:var(--space-sm);
-                                  padding:var(--space-md) var(--space-xl);
-                                  background:var(--surface-raised); border:1px solid var(--border);
-                                  border-radius:var(--radius-lg); color:var(--accent);
-                                  font-weight:600; text-decoration:none; transition:all 0.2s">
-                            🗺️ Voir sur Google Maps ↗
-                        </a>
-                    </div>
-                ` : ''}
+        <!-- BOTTOM SECTION: Remaining Data Cards -->
+        <div class="company-detail-remaining" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:var(--space-xl); align-items:start;">
 
-                <!-- Tags -->
-                ${tags.length > 0 ? `
-                    <div style="margin-top: var(--space-2xl)">
-                        <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
-                            Trouvé dans
-                        </span>
-                        <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-sm)">
-                            ${tags.map(t => `<span class="badge badge-accent">${escapeHtml(t.query_name)}</span>`).join('')}
-                        </div>
-                    </div>
-                ` : ''}
-
-                <!-- Sources -->
-                ${mc.sources && mc.sources.length > 0 ? `
-                    <div style="margin-top: var(--space-xl)">
-                        <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
-                            Sources de données
-                        </span>
-                        <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-sm)">
-                            ${mc.sources.map(s => `<span class="badge badge-muted">${escapeHtml(s)}</span>`).join('')}
-                        </div>
-                    </div>
-                ` : ''}
+            <!-- 3. Identité juridique -->
+            <div class="detail-section">
+                <h3 class="detail-section-title">🏛️ Identité juridique</h3>
+                ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
+                ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
+                ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
+                ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
+                ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
             </div>
 
-            <!-- Right Column: Data Sections -->
-
-
-                <!-- 3. Identité juridique -->
-                <div class="detail-section">
-                    <h3 class="detail-section-title">🏛️ Identité juridique</h3>
-                    ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
-                    ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
-                    ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
-                    ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
-                    ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
-                </div>
-
-                <!-- 4. Localisation -->
-                <div class="detail-section">
+            <!-- 4. Localisation -->
+            <div class="detail-section">
                     <h3 class="detail-section-title">📍 Localisation</h3>
                     ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse', co.adresse || '')}
                     ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal', co.code_postal || '')}
