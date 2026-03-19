@@ -174,24 +174,18 @@ export async function renderCompany(container, siren) {
             <div class="detail-section">
                 <h3 class="detail-section-title">📞 Contact</h3>
                 ${detailRow('Téléphone', mc.phone
-? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${mc.phone}</a>`
-: unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone')}
+? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
+: unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}
                 ${detailRow('Email', mc.email
         ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
-        : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email')}
+        : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email', mc.email || '')}
                 ${detailRow('Site web', mc.website
             ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
-            : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website')}
+            : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website', mc.website || '')}
                 ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
-                ${detailRow('LinkedIn', mc.social_linkedin
-                    ? `<a href="${mc.social_linkedin}" target="_blank">Profil LinkedIn ↗</a>`
-                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_linkedin_source), 'social_linkedin')}
-                ${detailRow('Facebook', mc.social_facebook
-                    ? `<a href="${mc.social_facebook}" target="_blank">Page Facebook ↗</a>`
-                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_facebook_source), 'social_facebook')}
-                ${detailRow('Twitter', mc.social_twitter
-                    ? `<a href="${mc.social_twitter}" target="_blank">Profil Twitter ↗</a>`
-                    : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_twitter_source), 'social_twitter')}
+                ${detailRow('LinkedIn', formatSocial(mc.social_linkedin, 'Profil LinkedIn'), sourceLabel(mc.social_linkedin_source), 'social_linkedin', mc.social_linkedin || '')}
+                ${detailRow('Facebook', formatSocial(mc.social_facebook, 'Page Facebook'), sourceLabel(mc.social_facebook_source), 'social_facebook', mc.social_facebook || '')}
+                ${detailRow('Twitter', formatSocial(mc.social_twitter, 'Profil Twitter'), sourceLabel(mc.social_twitter_source), 'social_twitter', mc.social_twitter || '')}
                 ${mc.rating ? `
                     <div class="detail-row" style="margin-top:var(--space-md)">
                         <span class="detail-label">Avis Google <span class="provenance-badge" title="Source : ${sourceLabel(mc.rating_source)}">ℹ️</span></span>
@@ -287,7 +281,7 @@ export async function renderCompany(container, siren) {
                 <!-- 3. Identité juridique -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">🏛️ Identité juridique</h3>
-                    ${detailRow('Dénomination', escapeHtml(co.denomination), 'Registre SIRENE', 'denomination')}
+                    ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
                     ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
                     ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
                     ${detailRow('Forme juridique', co.forme_juridique || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
@@ -298,9 +292,9 @@ export async function renderCompany(container, siren) {
                 <!-- 4. Localisation -->
                 <div class="detail-section">
                     <h3 class="detail-section-title">📍 Localisation</h3>
-                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse')}
-                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal')}
-                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville')}
+                    ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse', co.adresse || '')}
+                    ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal', co.code_postal || '')}
+                    ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville', co.ville || '')}
                     ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 </div>
 
@@ -360,7 +354,7 @@ export async function renderCompany(container, siren) {
     _loadEnrichHistory(siren, data.contacts || []);
 
     // ── Inline editing on detail rows ───────────────────────────
-    _initInlineEditing(container, siren, { co, mc });
+    _initInlineEditing(container, siren);
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
@@ -443,20 +437,10 @@ function _formatNoteDate(dateStr) {
 }
 
 // ── Inline Edit Logic ────────────────────────────────────────────
-function _initInlineEditing(container, siren, { co, mc }) {
-    // Raw values for pre-filling inputs (field → current value)
-    const rawValues = {
-        phone: mc.phone || '',
-        email: mc.email || '',
-        website: mc.website || '',
-        social_linkedin: mc.social_linkedin || '',
-        social_facebook: mc.social_facebook || '',
-        social_twitter: mc.social_twitter || '',
-        denomination: co.denomination || '',
-        adresse: co.adresse || '',
-        code_postal: co.code_postal || '',
-        ville: co.ville || '',
-    };
+function _initInlineEditing(container, siren) {
+    // Avoid double-attaching the event listener across re-renders
+    if (container.dataset.hasEditListener === "true") return;
+    container.dataset.hasEditListener = "true";
 
     container.addEventListener('click', (e) => {
         const btn = e.target.closest('.btn-inline-edit');
@@ -468,7 +452,8 @@ function _initInlineEditing(container, siren, { co, mc }) {
         const valueCell = row.querySelector('.detail-value');
         if (!valueCell || valueCell.querySelector('.inline-edit-input')) return; // Already editing
 
-        const currentVal = rawValues[field] || '';
+        // Read raw value securely from the DOM, not a stale JS closure
+        const currentVal = row.dataset.rawValue || '';
 
         // Replace value cell content with input + save/cancel
         const originalHTML = valueCell.innerHTML;
@@ -490,7 +475,8 @@ function _initInlineEditing(container, siren, { co, mc }) {
 
         const input = valueCell.querySelector('.inline-edit-input');
         input.focus();
-        input.select();
+        // Place cursor at the end instead of selecting all
+        input.setSelectionRange(input.value.length, input.value.length);
 
         // Cancel
         valueCell.querySelector('.inline-edit-cancel').onclick = (ev) => {
@@ -604,15 +590,25 @@ function sourceLabel(src) {
     return map[src] || src;
 }
 
-function detailRow(label, value, source = null, editField = null) {
+function formatSocial(url, label) {
+    if (!url) return '<span style="color:var(--text-disabled)">—</span>';
+    if (url.startsWith('http') || url.startsWith('www.')) {
+        const href = url.startsWith('http') ? url : `https://${url}`;
+        return `<a href="${href}" target="_blank">${label} ↗</a>`;
+    }
+    return `<span style="color:var(--text-primary)">${escapeHtml(url)}</span>`;
+}
+
+function detailRow(label, value, source = null, editField = null, rawValue = null) {
     const tooltip = source
         ? `<span class="provenance-badge" title="Source : ${source}">ℹ️</span>`
         : '';
     const editBtn = editField
         ? `<button class="btn-inline-edit" data-field="${editField}" title="Modifier">✏️</button>`
         : '';
+    const dataRaw = editField && rawValue !== null ? ` data-raw-value="${escapeHtml(rawValue)}"` : '';
     return `
-        <div class="detail-row" ${editField ? `data-edit-field="${editField}"` : ''}>
+        <div class="detail-row" ${editField ? `data-edit-field="${editField}"` : ''}${dataRaw}>
             <span class="detail-label">${label} ${tooltip}</span>
             <span class="detail-value">${value} ${editBtn}</span>
         </div>
