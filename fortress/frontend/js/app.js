@@ -306,36 +306,58 @@ function _setupSidebarToggle() {
         }
     }
 
-    // Default strategy for "Hover to expand":
-    // The sidebar is pinned collapsed by default, expanding via CSS hover.
-    // Clicking the logo toggles the "pinned open" state (removing 'collapsed').
     const storedState = localStorage.getItem('fortress_sidebar_collapsed');
     
-    // If explicitly pinned open previously (0) and screen is large enough
+    // Default load state
     if (storedState === '0' && window.innerWidth > 1100) {
         _applyState(false);
     } else {
-        _applyState(true); // Default to collapsed
+        _applyState(true);
     }
 
-    // Make the brand look clickable
     brandBtn.style.cursor = 'pointer';
     brandBtn.title = 'Fixer/réduire le menu';
 
+    // Click to pin/unpin
     brandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const willCollapse = !sidebar.classList.contains('collapsed');
-        _applyState(willCollapse);
-        localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
+        const isHoverExpanded = sidebar.dataset.hoverExpanded === 'true';
+        
+        if (isHoverExpanded) {
+            // Un-flag hover expansion, lock it open
+            sidebar.dataset.hoverExpanded = 'false';
+            localStorage.setItem('fortress_sidebar_collapsed', '0');
+        } else {
+            // Normal toggle
+            const willCollapse = !sidebar.classList.contains('collapsed');
+            _applyState(willCollapse);
+            localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
+        }
     });
 
-    // Auto-fold when screen shrinks (Issue 13)
+    // JS Hover Architecture
+    sidebar.addEventListener('mouseenter', () => {
+        if (sidebar.classList.contains('collapsed')) {
+            sidebar.dataset.hoverExpanded = 'true';
+            _applyState(false); // expand it
+        }
+    });
+
+    sidebar.addEventListener('mouseleave', () => {
+        if (sidebar.dataset.hoverExpanded === 'true') {
+            sidebar.dataset.hoverExpanded = 'false';
+            _applyState(true); // collapse it back
+        }
+    });
+
+    // Auto-fold when screen shrinks
     let resizeTimer;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
             if (window.innerWidth <= 1100 && !sidebar.classList.contains('collapsed')) {
                 _applyState(true);
+                sidebar.dataset.hoverExpanded = 'false';
             }
         }, 100);
     });

@@ -164,7 +164,9 @@ a:hover { color: var(--accent); }
     left: 0;
     bottom: 0;
     z-index: 100;
-    transition: width var(--transition);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-x: hidden;
+    white-space: nowrap;
 }
 
 .sidebar-brand {
@@ -351,210 +353,37 @@ a:hover { color: var(--accent); }
 .sidebar-brand-badge,
 .nav-item span:not(.nav-item-icon),
 .sidebar-footer-version,
-.sidebar-user-display {
-    transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease, transform var(--duration-fast) ease;
+.sidebar-user-display span:not(.user-display-icon) {
+    transition: opacity 0.2s ease;
+    opacity: 1;
 }
 
-/* 1) The Collapsed State (Default when pinned closed) */
+/* 1) The Collapsed State (72px rail) */
 .sidebar.collapsed {
-    width: var(--sidebar-collapsed);
-    overflow: hidden;
-    /* Maintain border and background cleanly */
+    width: var(--sidebar-collapsed-width);
 }
 
-/* 2) The Hover State (Expanding over main content) */
-.sidebar.collapsed:hover {
-    width: var(--sidebar-width);
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.2);
-    z-index: 200;
-}
-
-/* 3) Adjust text layout when collapsed */
+/* 2) Fade out text when collapsed */
 .sidebar.collapsed .sidebar-brand-text,
 .sidebar.collapsed .sidebar-brand-badge,
 .sidebar.collapsed .nav-item span:not(.nav-item-icon),
 .sidebar.collapsed .sidebar-footer-version,
-.sidebar.collapsed .sidebar-footer-logout {
-    opacity: 0;
-    width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    pointer-events: none;
-    margin: 0;
-    padding: 0;
-}
-
-/* Restore text layout when hovered */
-.sidebar.collapsed:hover .sidebar-brand-text,
-.sidebar.collapsed:hover .sidebar-brand-badge,
-.sidebar.collapsed:hover .nav-item span:not(.nav-item-icon),
-.sidebar.collapsed:hover .sidebar-footer-version,
-.sidebar.collapsed:hover .sidebar-footer-logout {
-    opacity: 1;
-    width: auto;
-    pointer-events: auto;
-}
-
-/* Section labels → thin centered divider lines */
+.sidebar.collapsed .sidebar-user-display span:not(.user-display-icon),
 .sidebar.collapsed .sidebar-section-label {
-    opacity: 1;
-    width: 32px;
-    height: 1px;
-    background: var(--border-subtle);
-    margin: var(--space-xs) auto;
-    padding: 0;
-    font-size: 0;
-    line-height: 0;
-    color: transparent;
+    opacity: 0;
     pointer-events: none;
+}
+
+/* 3) Section labels fade cleanly */
+.sidebar-section-label {
+    transition: opacity 0.2s ease;
+    white-space: nowrap;
     overflow: hidden;
 }
 
-/* Restore section labels when hovered */
-.sidebar.collapsed:hover .sidebar-section-label {
-    width: auto;
-    height: auto;
-    background: transparent;
-    margin: 0;
-    padding: var(--space-md) var(--space-lg) var(--space-sm);
-    font-size: var(--font-xs);
-    line-height: normal;
-    color: var(--text-muted);
-}
+/* Hover state is now handled natively via JavaScript removing .collapsed temporarily! 
+   No need for messy CSS overrides anymore. */
 
-/* Brand area */
-.sidebar.collapsed .sidebar-brand {
-    padding: 0;
-    justify-content: center;
-    align-items: center;
-    height: var(--header-height);
-    gap: 0;
-}
-.sidebar.collapsed:hover .sidebar-brand {
-    padding: var(--space-xl) var(--space-lg);
-    justify-content: flex-start;
-    gap: var(--space-md);
-}
-
-.sidebar.collapsed .sidebar-brand-icon {
-    font-size: 1.5rem;
-}
-
-/* Nav alignment */
-.sidebar.collapsed .sidebar-nav {
-    padding: var(--space-md) 0;
-    align-items: center;
-    gap: 2px;
-}
-.sidebar.collapsed:hover .sidebar-nav {
-    padding: var(--space-lg) 0;
-    align-items: flex-start;
-    gap: var(--space-xs);
-}
-
-/* Nav items */
-.sidebar.collapsed .nav-item {
-    justify-content: center;
-    padding: 0;
-    width: 40px !important;
-    max-width: 40px !important;
-    height: 40px;
-    border-radius: var(--radius);
-    margin: 0 auto;
-    gap: 0 !important;
-}
-.sidebar.collapsed:hover .nav-item {
-    justify-content: flex-start;
-    margin: 0 var(--space-md);
-    padding: 0 var(--space-md);
-    width: auto !important;
-    max-width: none !important;
-    gap: var(--space-sm) !important;
-}
-
-.sidebar.collapsed .nav-item:hover {
-    background: var(--bg-hover);
-    transform: scale(1.08);
-}
-.sidebar.collapsed:hover .nav-item:hover {
-    background: var(--bg-hover);
-    transform: none; /* remove pop out effect when expanded */
-}
-
-.sidebar.collapsed .nav-item.active {
-    background: var(--accent-subtle);
-    box-shadow: 0 0 0 1px var(--accent) inset;
-}
-
-.sidebar.collapsed .nav-item-icon {
-    margin: 0;
-    width: auto;
-    font-size: 1.25rem;
-}
-.sidebar.collapsed:hover .nav-item-icon {
-    width: 24px;
-}
-
-/* Footer layout */
-.sidebar.collapsed .sidebar-footer {
-    padding: var(--space-sm) 0 var(--space-md);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-sm);
-}
-.sidebar.collapsed:hover .sidebar-footer {
-    padding: var(--space-lg);
-    align-items: flex-start;
-}
-
-/* User display initials circle */
-.sidebar.collapsed .sidebar-user-display {
-    width: 32px !important;
-    height: 32px !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    background: var(--accent-subtle) !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    margin: 0 auto !important;
-    border: 1px solid var(--border-default) !important;
-}
-.sidebar.collapsed:hover .sidebar-user-display {
-    width: 100% !important;
-    height: auto !important;
-    padding: var(--space-sm) !important;
-    border-radius: var(--radius-sm) !important;
-    background: transparent !important;
-    margin: 0 !important;
-    border: none !important;
-    justify-content: flex-start !important;
-}
-
-.sidebar.collapsed .user-display-text {
-    display: none !important;
-}
-.sidebar.collapsed:hover .user-display-text {
-    display: inline !important;
-}
-
-.sidebar.collapsed .user-display-icon {
-    font-size: 0 !important;
-}
-.sidebar.collapsed:hover .user-display-icon {
-    font-size: 1.2rem !important;
-}
-
-.sidebar.collapsed .user-display-icon::after {
-    content: attr(data-initials);
-    font-size: var(--font-sm);
-    font-weight: 700;
-    color: var(--accent-hover);
-}
-.sidebar.collapsed:hover .user-display-icon::after {
-    display: none !important;
-}
 
 .sidebar.collapsed ~ .main-content {
     margin-left: var(--sidebar-collapsed);
