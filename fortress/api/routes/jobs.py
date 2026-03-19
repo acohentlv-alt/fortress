@@ -57,13 +57,21 @@ async def delete_job(query_id: str, request: Request):
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            "SELECT status, query_name, companies_scraped, batch_size FROM scrape_jobs WHERE query_id = %s",
+            """SELECT status, query_name, companies_scraped, batch_size, updated_at,
+                      EXTRACT(EPOCH FROM (NOW() - updated_at)) AS idle_seconds,
+                      COALESCE(companies_qualified, 0) AS companies_qualified
+               FROM scrape_jobs WHERE query_id = %s""",
             (query_id,),
         )).fetchone()
 
         if not row:
             return JSONResponse(status_code=404, content={"error": "Job introuvable"})
-        if row[0] == "in_progress":
+        
+        raw_status = row[0]
+        idle_seconds = row[5] or 0
+        # Same 180s timeout logic as frontend: if idle for 3+ min, treat as completed/failed
+        is_stale = idle_seconds > 180
+        if raw_status == "in_progress" and not is_stale:
             return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
 
         # Soft-delete the job
