@@ -227,7 +227,8 @@ a:hover { color: var(--accent); }
     align-items: center;
     gap: var(--space-sm);
     margin: 0 var(--space-md);
-    padding: var(--space-sm) var(--space-sm);
+    padding: 0 var(--space-md);
+    height: 40px;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font-size: var(--font-md);
@@ -237,7 +238,7 @@ a:hover { color: var(--accent); }
     text-decoration: none;
     border: none;
     background: none;
-    width: 100%;
+    width: auto;
     text-align: left;
     white-space: nowrap;
 }
@@ -465,7 +466,7 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed:hover .nav-item {
     justify-content: flex-start;
     margin: 0 var(--space-md);
-    padding: var(--space-sm) var(--space-sm);
+    padding: 0 var(--space-md);
     width: auto !important;
     max-width: none !important;
     gap: var(--space-sm) !important;
