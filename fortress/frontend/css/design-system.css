@@ -170,7 +170,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-brand {
-    padding: var(--space-xl) var(--space-lg);
+    padding: var(--space-xl) var(--space-xl);
     display: flex;
     align-items: center;
     gap: var(--space-md);
@@ -228,7 +228,7 @@ a:hover { color: var(--accent); }
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    margin: 0 var(--space-md);
+    margin: 0 var(--space-lg);
     padding: 0 var(--space-sm);
     height: 40px;
     border-radius: var(--radius-sm);
@@ -264,7 +264,7 @@ a:hover { color: var(--accent); }
 }
 
 .sidebar-footer {
-    padding: var(--space-lg);
+    padding: var(--space-lg) var(--space-xl);
     border-top: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
