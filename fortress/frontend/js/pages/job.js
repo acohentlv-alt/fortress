@@ -210,18 +210,19 @@ export async function renderJob(container, queryId) {
                     <p><strong>Batch :</strong> ${escapeHtml(job.query_name)}</p>
                     <p><strong>Créé le :</strong> ${formatDateTime(job.created_at)}</p>
                     <p><strong>${scraped}</strong> entreprises collectées</p>
-                    <p style="color:var(--warning)">⚠️ Les tags de recherche seront supprimés.</p>
-                    <p style="color:var(--success)">✅ Les fiches entreprises et contacts resteront dans la base.</p>
+                    <p style="color:var(--danger)">⚠️ <strong>Suppression complète :</strong> contacts enrichis, historique d'audit et tags seront effacés.</p>
+                    <p style="color:var(--text-muted)">Les fiches entreprises (SIRENE) et les données importées manuellement restent dans la base.</p>
                 `,
-                confirmLabel: 'Supprimer',
+                confirmLabel: 'Supprimer définitivement',
                 danger: true,
                 onConfirm: async () => {
                     const result = await deleteJob(queryId);
                     if (result._ok !== false) {
-                        showToast('Batch supprimé avec succès', 'success');
+                        const msg = `Batch supprimé : ${result.deleted_contacts || 0} contacts, ${result.sirens_affected || 0} entreprises nettoyées`;
+                        showToast(msg, 'success');
                         window.location.hash = '#/';
                     } else {
-                        showToast('Erreur lors de la suppression', 'error');
+                        showToast(result.error || 'Erreur lors de la suppression', 'error');
                     }
                 },
             });

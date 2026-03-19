@@ -69,21 +69,54 @@ async def delete_job(query_id: str, request: Request):
         
         raw_status = row[0]
         idle_seconds = row[5] or 0
-        # Same 180s timeout logic as frontend: if idle for 3+ min, treat as completed/failed
         is_stale = idle_seconds > 180
         if raw_status == "in_progress" and not is_stale:
             return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
 
-        # Soft-delete the job
-        await conn.execute(
-            "UPDATE scrape_jobs SET status = 'deleted', updated_at = NOW() WHERE query_id = %s",
+        query_name = row[1]
+
+        # ── Hard delete: contacts, audit, tags, job ──────────────────
+        # 1. Get all SIRENs that belong to THIS batch (via scrape_audit)
+        batch_sirens = await (await conn.execute(
+            "SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s",
+            (query_id,),
+        )).fetchall()
+        siren_list = [r[0] for r in batch_sirens] if batch_sirens else []
+
+        deleted_contacts = 0
+        if siren_list:
+            # 2. Delete contacts for these SIRENs (only source='website_crawl' or 'google_maps')
+            #    Keep 'upload' source contacts (user-uploaded data)
+            result = await conn.execute(
+                "DELETE FROM contacts WHERE siren = ANY(%s) AND source NOT IN ('upload', 'client_upload')",
+                (siren_list,),
+            )
+            deleted_contacts = result.rowcount
+
+        # 3. Delete scrape_audit rows for this batch
+        result = await conn.execute(
+            "DELETE FROM scrape_audit WHERE query_id = %s",
             (query_id,),
         )
-        # Remove query_tags scoped to THIS batch only (via scrape_audit)
-        # so sibling batches sharing the same query_name keep their tags
+        deleted_audit = result.rowcount
+
+        # 4. Delete enrichment_log rows for this batch
         await conn.execute(
-            "DELETE FROM query_tags WHERE query_name = %s AND siren IN (SELECT DISTINCT siren FROM scrape_audit WHERE query_id = %s)",
-            (row[1], query_id),
+            "DELETE FROM enrichment_log WHERE query_id = %s",
+            (query_id,),
+        )
+
+        # 5. Delete query_tags for these SIRENs + this query_name
+        if siren_list:
+            await conn.execute(
+                "DELETE FROM query_tags WHERE query_name = %s AND siren = ANY(%s)",
+                (query_name, siren_list),
+            )
+
+        # 6. Hard delete the job row itself
+        await conn.execute(
+            "DELETE FROM scrape_jobs WHERE query_id = %s",
+            (query_id,),
         )
         await conn.commit()
 
@@ -93,10 +126,16 @@ async def delete_job(query_id: str, request: Request):
         action='delete_job',
         target_type='job',
         target_id=query_id,
-        details=f"Suppression du batch {row[1] or query_id}",
+        details=f"Suppression complète du batch {query_name or query_id}: {deleted_contacts} contacts, {deleted_audit} audit, {len(siren_list)} entreprises",
     )
 
-    return {"deleted": True, "query_id": query_id}
+    return {
+        "deleted": True,
+        "query_id": query_id,
+        "deleted_contacts": deleted_contacts,
+        "deleted_audit": deleted_audit,
+        "sirens_affected": len(siren_list),
+    }
 
 
 @router.post("/{query_id}/cancel")
