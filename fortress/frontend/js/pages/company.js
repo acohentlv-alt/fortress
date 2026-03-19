@@ -51,7 +51,7 @@ function enrichmentPanelHTML() {
     return `
         <button class="btn btn-primary enrich-submit" id="enrich-submit-btn" style="display:inline-flex; align-items:center; gap:var(--space-sm); font-weight:600; padding:var(--space-sm) var(--space-xl); border-radius:var(--radius-lg)">
             <span class="enrich-spinner" style="display:none; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite"></span>
-            <span class="enrich-submit-text">🚀 Enrichir SIREN</span>
+            <span class="enrich-submit-text">🚀 Enrichir via site web</span>
         </button>
     `;
 }
@@ -193,7 +193,7 @@ export async function renderCompany(container, siren) {
                         ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
                         : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email', mc.email || '')}
                     ${detailRow('Site web', mc.website
-                        ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a>`
+                        ? `<div style="display:flex; align-items:center; gap:var(--space-xs)"><a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a> <button class="btn-spider-crawl" data-siren="${co.siren}" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0; line-height:1; display:flex; align-items:center;" title="Scanner ce site pour extraire les contacts (emails, réseaux sociaux)">🔍</button></div>`
                         : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website', mc.website || '')}
                     ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
                     ${detailRow('LinkedIn', formatSocial(mc.social_linkedin, 'Profil LinkedIn'), sourceLabel(mc.social_linkedin_source), 'social_linkedin', mc.social_linkedin || '')}
@@ -355,6 +355,9 @@ export async function renderCompany(container, siren) {
     // ── Wire up Smart Enrichment Panel ───────────────────────────
     _initEnrichmentPanel(siren, container);
 
+    // ── Spider Crawl logic ───────────────────────────────────────
+    _initSpiderCrawl(siren, container);
+
     // ── Load Enrichment History ──────────────────────────────────
     _loadEnrichHistory(siren, data.contacts || []);
 
@@ -363,6 +366,48 @@ export async function renderCompany(container, siren) {
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
+}
+
+// ── Spider Crawl Logic ───────────────────────────────────────────
+function _initSpiderCrawl(siren, container) {
+    const spiderBtn = container.querySelector('.btn-spider-crawl');
+    if (!spiderBtn) return;
+    
+    // Prevent double binding
+    if (spiderBtn.dataset.bound) return;
+    spiderBtn.dataset.bound = "true";
+
+    spiderBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const originalHtml = spiderBtn.innerHTML;
+        spiderBtn.innerHTML = '<span class="enrich-spinner" style="display:inline-block; width:12px; height:12px; border:2px solid rgba(0,0,0,0.1); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite"></span>';
+        spiderBtn.disabled = true;
+
+        try {
+            // New direct endpoint call to bypass batch tracking
+            const res = await fetch(`/api/companies/${siren}/crawl-website`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            
+            if (res.ok) {
+                showToast(data.message || 'Crawl terminé', 'success');
+                // Reload company to see new contacts
+                await renderCompany(container, siren);
+            } else {
+                showToast(data.error || 'Erreur lors du crawl', 'error');
+                spiderBtn.innerHTML = originalHtml;
+                spiderBtn.disabled = false;
+            }
+        } catch (err) {
+            showToast('Erreur réseau lors du crawl', 'error');
+            spiderBtn.innerHTML = originalHtml;
+            spiderBtn.disabled = false;
+        }
+    });
 }
 
 // ── Notes System ─────────────────────────────────────────────────
@@ -582,9 +627,8 @@ function _initInlineEditing(container, siren) {
 
 // ── Enrichment Panel Logic ───────────────────────────────────────
 function _initEnrichmentPanel(siren, container) {
-    const panel = document.getElementById('enrich-panel');
     const submitBtn = document.getElementById('enrich-submit-btn');
-    if (!panel || !submitBtn) return;
+    if (!submitBtn) return;
 
     // Crawl-only enrichment (Maps already ran in batch)
     const modules = ['contact_web'];
@@ -622,15 +666,13 @@ function _initEnrichmentPanel(siren, container) {
             e.stopPropagation();
             const targetModule = btn.dataset.enrichModule;
 
-            // Scroll to the enrichment panel
-            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Scroll to the enrichment button since the panel container is gone
+            submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-            // Highlight the panel briefly
-            panel.classList.add('enrich-panel-highlight');
-            setTimeout(() => panel.classList.remove('enrich-panel-highlight'), 2000);
-
-            // Scroll-and-highlight only — no checkbox toggling
-            // (the panel has a single hardcoded module, no checkboxes)
+            // Highlight the button briefly
+            submitBtn.style.transform = "scale(1.05)";
+            submitBtn.style.transition = "transform 0.2s";
+            setTimeout(() => submitBtn.style.transform = "scale(1)", 500);
         });
     });
 }

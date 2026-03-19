@@ -298,6 +298,122 @@ async def enrich_company(siren: str, body: EnrichRequest):
 
 
 # ---------------------------------------------------------------------------
+# Action 1.5: Synchronous, single-company website crawl
+# ---------------------------------------------------------------------------
+
+@router.post("/{siren}/crawl-website")
+async def crawl_website_sync(siren: str):
+    """Synchronously crawl a known website to extract email/phone/socials.
+    
+    Bypasses the `fortress.runner` batch queue entirely.
+    """
+    company = await fetch_one(
+        "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
+    )
+    if not company:
+        return JSONResponse(status_code=404, content={"error": "Company not found", "siren": siren})
+
+    contact = await fetch_one(
+        "SELECT website FROM contacts WHERE siren = %s AND website IS NOT NULL ORDER BY collected_at DESC LIMIT 1",
+        (siren,)
+    )
+    if not contact or not contact.get("website"):
+        return JSONResponse(status_code=400, content={"error": "Company has no known website to crawl"})
+
+    website = contact["website"]
+
+    from fortress.module_c.curl_client import CurlClient, CurlClientError
+    from fortress.module_b.contact_parser import (
+        extract_emails, extract_phones, extract_social_links
+    )
+    from urllib.parse import urlparse
+    import time
+
+    all_emails = []
+    all_phones = []
+    all_social = {}
+    
+    try:
+        parsed = urlparse(website)
+        root_url = f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        root_url = website
+
+    pages_to_crawl = [
+        root_url,
+        f"{root_url}/contact",
+        f"{root_url}/mentions-legales",
+        f"{root_url}/nous-contacter",
+        f"{root_url}/a-propos",
+    ]
+
+    t0 = time.monotonic()
+    curl_client = CurlClient(timeout=8.0, max_retries=1, delay_min=0.3, delay_max=0.5, delay_jitter=0.0)
+    
+    async with curl_client as client:
+        for page_url in pages_to_crawl:
+            try:
+                resp = await client.get(page_url)
+                if resp.status_code == 200 and len(resp.text) > 500:
+                    all_emails.extend(extract_emails(resp.text))
+                    all_phones.extend(extract_phones(resp.text))
+                    all_social.update(extract_social_links(resp.text))
+            except CurlClientError as exc:
+                err_str = str(exc).lower()
+                if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
+                    break
+    
+    # Select best email and phone
+    from fortress.module_d.enricher import _best_email, _best_phone
+    best_email = _best_email(list(set(all_emails)), root_url, siren)
+    
+    # Keep all valid phones for _best_phone
+    best_phone = _best_phone(list(set(all_phones)), siren)
+    
+    extracted = {
+        "email": best_email,
+        "phone": best_phone,
+        "social_linkedin": all_social.get("linkedin"),
+        "social_facebook": all_social.get("facebook"),
+        "social_twitter": all_social.get("twitter"),
+    }
+    # Filter out empty values
+    extracted = {k: v for k, v in extracted.items() if v}
+    
+    if not extracted:
+        return {"siren": siren, "message": "Aucun contact trouvé sur le site", "extracted": {}}
+
+    # Upsert into contacts
+    async with get_conn() as conn:
+        columns = ["siren", "source", "website"] + list(extracted.keys())
+        placeholders = ["%s"] * len(columns)
+        values = [siren, "website_crawl", website] + list(extracted.values())
+        on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
+        
+        await conn.execute(f"""
+            INSERT INTO contacts ({', '.join(columns)}, collected_at)
+            VALUES ({', '.join(placeholders)}, NOW())
+            ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
+        """, tuple(values))
+
+        # Log to scrape_audit
+        duration = int((time.monotonic() - t0) * 1000)
+        found_data = ", ".join(f"{k}={v}" for k, v in extracted.items())
+        await conn.execute("""
+            INSERT INTO scrape_audit (query_id, siren, action, result, source_url, duration_ms, timestamp)
+            VALUES ('SYNC_CRAWL', %s, 'website_crawl', 'success', %s, %s, NOW())
+        """, (siren, found_data, duration))
+
+        await conn.commit()
+
+    return {
+        "siren": siren,
+        "message": "Enrichissement terminé avec succès" if (best_email or best_phone) else "Réseaux sociaux trouvés",
+        "extracted": extracted
+    }
+
+
+# ---------------------------------------------------------------------------
 # Action 2: Search with NAF code + sorting
 # ---------------------------------------------------------------------------
 
