@@ -631,7 +631,7 @@ function detailRow(label, value, source = null, editField = null) {
         ? `<span class="provenance-badge" title="Source : ${source}">ℹ️</span>`
         : '';
     const editBtn = editField
-        ? `<button class="btn-inline-edit" data-field="${editField}" title="Modifier" onclick="event.stopPropagation()">✏️</button>`
+        ? `<button class="btn-inline-edit" data-field="${editField}" title="Modifier">✏️</button>`
         : '';
     return `
         <div class="detail-row" ${editField ? `data-edit-field="${editField}"` : ''}>

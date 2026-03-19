@@ -256,6 +256,25 @@ a:hover { color: var(--accent); }
     gap: var(--space-xs);
 }
 
+.sidebar-user-display {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: var(--font-sm);
+    transition: all var(--transition-fast);
+}
+
+.user-display-icon {
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .sidebar-footer-version {
     font-size: var(--font-xs);
     color: var(--text-muted);
@@ -312,6 +331,7 @@ a:hover { color: var(--accent); }
 /* ── Sidebar Collapsed State — Premium Icon Rail ─────────────── */
 .sidebar.collapsed {
     width: var(--sidebar-collapsed);
+    overflow: hidden;
 }
 
 /* Hide text elements smoothly */
@@ -369,7 +389,8 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed .nav-item {
     justify-content: center;
     padding: 0;
-    width: 40px;
+    width: 40px !important;
+    max-width: 40px !important;
     height: 40px;
     border-radius: var(--radius);
     margin: 0 auto;
@@ -403,18 +424,33 @@ a:hover { color: var(--accent); }
 }
 
 /* User display → small initials circle */
-.sidebar.collapsed #user-display {
+.sidebar.collapsed .sidebar-user-display {
     font-size: var(--font-xs) !important;
     width: 32px !important;
     height: 32px !important;
+    padding: 0 !important;
     border-radius: 50% !important;
     background: var(--accent-subtle) !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    overflow: hidden !important;
-    margin-bottom: 0 !important;
+    margin: 0 auto !important;
     border: 1px solid var(--border-default);
+}
+
+.sidebar.collapsed .user-display-text {
+    display: none !important;
+}
+
+.sidebar.collapsed .user-display-icon {
+    font-size: 0 !important;
+}
+
+.sidebar.collapsed .user-display-icon::after {
+    content: attr(data-initials);
+    font-size: var(--font-sm);
+    font-weight: 700;
+    color: var(--accent-hover);
 }
 
 /* Toggle: bordered pill, always visible */
@@ -458,90 +494,10 @@ a:hover { color: var(--accent); }
 
 /* ── Responsive: auto-collapse sidebar for split-screen / small windows ── */
 @media (max-width: 900px) {
-    .sidebar {
-        width: var(--sidebar-collapsed);
-    }
-    /* Hide text */
-    .sidebar .sidebar-brand-text,
-    .sidebar .sidebar-brand-badge,
-    .sidebar .nav-item span:not(.nav-item-icon),
-    .sidebar .sidebar-footer-version,
-    .sidebar .sidebar-footer-logout,
-    .sidebar .sidebar-toggle-label {
-        opacity: 0;
-        width: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        pointer-events: none;
-    }
-    /* Section labels → divider lines */
-    .sidebar .sidebar-section-label {
-        opacity: 1 !important;
-        width: 32px !important;
-        height: 1px;
-        background: var(--border-subtle);
-        margin: var(--space-xs) auto;
-        padding: 0;
-        font-size: 0;
-        line-height: 0;
-        color: transparent;
-        pointer-events: none;
-        overflow: hidden;
-    }
-    .sidebar .sidebar-brand {
-        padding: 0;
-        justify-content: center;
-        align-items: center;
-        height: var(--header-height);
-        gap: 0;
-    }
-    .sidebar .sidebar-nav {
-        padding: var(--space-md) 0;
-        align-items: center;
-        gap: 2px;
-    }
-    .sidebar .nav-item {
-        justify-content: center;
-        padding: 0;
-        width: 40px;
-        height: 40px;
-        border-radius: var(--radius);
-        margin: 0 auto;
-    }
-    .sidebar .nav-item-icon {
-        margin: 0;
-        width: auto;
-        font-size: 1.25rem;
-    }
-    .sidebar .sidebar-footer {
-        padding: var(--space-sm) 0 var(--space-md);
-        align-items: center;
-        gap: var(--space-sm);
-    }
-    .sidebar .sidebar-toggle {
-        width: 36px;
-        height: 36px;
-        justify-content: center;
-        padding: 0;
-        margin: 0 auto;
-        border: 1px solid var(--border-default);
-        border-radius: var(--radius);
-    }
-    .sidebar #user-display {
-        font-size: var(--font-xs) !important;
-        width: 32px !important;
-        height: 32px !important;
-        border-radius: 50% !important;
-        background: var(--accent-subtle) !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        overflow: hidden !important;
-        margin-bottom: 0 !important;
-        border: 1px solid var(--border-default);
-    }
-    .main-content {
-        margin-left: var(--sidebar-collapsed);
+    /* Auto-collapse is now managed by JS in app.js. 
+       We only keep rules here if they specifically differ from .collapsed behavior. */
+    .header-search {
+        display: none; /* Hide global search on small screens */
     }
 }
 

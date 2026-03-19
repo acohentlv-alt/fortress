@@ -79,13 +79,21 @@ function _updateUserDisplay(user) {
     const el = document.getElementById('user-display');
     if (!el) return;
     if (!user) {
-        el.style.display = 'none';
+        el.classList.add('hidden');
         return;
     }
     const icon = user.role === 'admin' ? '👑' : '👤';
     const label = user.display_name || user.username;
-    el.innerHTML = `${icon} ${label}`;
-    el.style.display = 'block';
+    
+    // We need initials for the collapsed state avatar circle
+    const initials = label.charAt(0).toUpperCase();
+    
+    // Structure it so CSS can hide text and keep the icon/initials in collapsed mode
+    el.innerHTML = `
+        <span class="user-display-icon" data-initials="${initials}">${icon}</span>
+        <span class="user-display-text">${label}</span>
+    `;
+    el.classList.remove('hidden');
 }
 
 function _showIntroPage() {
@@ -111,7 +119,7 @@ function _showLoginPage() {
 function _setupLogout() {
     const logoutBtn = document.getElementById('btn-logout');
     if (!logoutBtn) return;
-    logoutBtn.style.display = 'block';
+    logoutBtn.classList.remove('hidden');
     // Remove old listener by cloning
     const fresh = logoutBtn.cloneNode(true);
     logoutBtn.parentNode.replaceChild(fresh, logoutBtn);
@@ -296,31 +304,40 @@ function _setupSidebarToggle() {
             toggleBtn.setAttribute('aria-expanded', 'false');
             toggleBtn.title = 'Ouvrir le menu';
             toggleBtn.setAttribute('aria-label', 'Ouvrir le menu');
-            if (iconEl) iconEl.textContent = '\u00bb';
+            if (iconEl) iconEl.textContent = '\u00bb'; /* » */
             if (labelEl) labelEl.textContent = 'Ouvrir';
         } else {
             sidebar.classList.remove('collapsed');
             toggleBtn.setAttribute('aria-expanded', 'true');
             toggleBtn.title = 'R\u00e9duire le menu';
             toggleBtn.setAttribute('aria-label', 'R\u00e9duire le menu');
-            if (iconEl) iconEl.textContent = '\u00ab';
+            if (iconEl) iconEl.textContent = '\u00ab'; /* « */
             if (labelEl) labelEl.textContent = 'R\u00e9duire';
         }
     }
 
-    // Restore saved state
-    if (localStorage.getItem('fortress_sidebar_collapsed') === '1') {
+    // Restore saved state, OR default to collapsed if screen is small
+    const storedState = localStorage.getItem('fortress_sidebar_collapsed');
+    if (storedState === '1' || (storedState === null && window.innerWidth <= 1100)) {
         _applyState(true);
     }
 
     toggleBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Don't toggle if responsive breakpoint forces collapse
-        if (window.innerWidth <= 900) return;
-
         const willCollapse = !sidebar.classList.contains('collapsed');
         _applyState(willCollapse);
         localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
+    });
+
+    // Auto-fold when screen shrinks (Issue 13)
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            if (window.innerWidth <= 1100 && !sidebar.classList.contains('collapsed')) {
+                _applyState(true);
+            }
+        }, 100);
     });
 }
 

@@ -891,19 +891,22 @@
 .detail-value {
     font-size: var(--font-base);
     color: var(--text-primary);
-    word-break: break-word;
     min-width: 0;
-    overflow: hidden;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+}
+
+.detail-value span:not(.btn-inline-edit) {
+    word-break: break-word;
 }
 
 .detail-value a {
     color: var(--accent-hover);
-    display: inline-block;
-    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    vertical-align: bottom;
 }
 
 /* ── Progress Bar ──────────────────────────────────────────────── */
