@@ -177,6 +177,9 @@ a:hover { color: var(--accent); }
 
 .sidebar-brand-icon {
     font-size: 1.5rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
 }
 
 .sidebar-brand-text {
@@ -184,6 +187,9 @@ a:hover { color: var(--accent); }
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--text-primary);
+    line-height: 1;
+    display: flex;
+    align-items: center;
 }
 
 .sidebar-brand-badge {
@@ -194,6 +200,9 @@ a:hover { color: var(--accent); }
     padding: 2px 8px;
     border-radius: var(--radius-full);
     margin-left: auto;
+    line-height: 1;
+    display: flex;
+    align-items: center;
 }
 
 .sidebar-nav {
@@ -328,42 +337,64 @@ a:hover { color: var(--accent); }
     transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease;
 }
 
-/* ── Sidebar Collapsed State — Premium Icon Rail ─────────────── */
-.sidebar.collapsed {
+/* ── Sidebar Collapsed State — Hover to Expand ─────────────── */
+
+/* Base transition for the sidebar container */
+.sidebar {
     transition: width var(--transition) ease, box-shadow var(--transition) ease;
 }
 
-.sidebar.collapsed:not(:hover) {
-    width: var(--sidebar-collapsed);
-    overflow: hidden;
+/* Ensure child text elements always have transition properties to avoid popping */
+.sidebar-brand-text,
+.sidebar-brand-badge,
+.nav-item span:not(.nav-item-icon),
+.sidebar-footer-version,
+.sidebar-user-display {
+    transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease, transform var(--duration-fast) ease;
 }
 
-/* When collapsed and hovered, it expands and overflows main content (floating) */
+/* 1) The Collapsed State (Default when pinned closed) */
+.sidebar.collapsed {
+    width: var(--sidebar-collapsed);
+    overflow: hidden;
+    /* Maintain border and background cleanly */
+}
+
+/* 2) The Hover State (Expanding over main content) */
 .sidebar.collapsed:hover {
     width: var(--sidebar-width);
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.2);
     z-index: 200;
 }
 
-/* Hide text elements smoothly only when NOT hovered */
-.sidebar.collapsed:not(:hover) .sidebar-brand-text,
-.sidebar.collapsed:not(:hover) .sidebar-brand-badge,
-.sidebar.collapsed:not(:hover) .nav-item span:not(.nav-item-icon),
-.sidebar.collapsed:not(:hover) .sidebar-footer-version,
-.sidebar.collapsed:not(:hover) .sidebar-footer-logout,
-.sidebar.collapsed:not(:hover) .sidebar-toggle-label {
+/* 3) Adjust text layout when collapsed */
+.sidebar.collapsed .sidebar-brand-text,
+.sidebar.collapsed .sidebar-brand-badge,
+.sidebar.collapsed .nav-item span:not(.nav-item-icon),
+.sidebar.collapsed .sidebar-footer-version,
+.sidebar.collapsed .sidebar-footer-logout {
     opacity: 0;
     width: 0;
     overflow: hidden;
     white-space: nowrap;
-    transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease;
     pointer-events: none;
 }
 
+/* Restore text layout when hovered */
+.sidebar.collapsed:hover .sidebar-brand-text,
+.sidebar.collapsed:hover .sidebar-brand-badge,
+.sidebar.collapsed:hover .nav-item span:not(.nav-item-icon),
+.sidebar.collapsed:hover .sidebar-footer-version,
+.sidebar.collapsed:hover .sidebar-footer-logout {
+    opacity: 1;
+    width: auto;
+    pointer-events: auto;
+}
+
 /* Section labels → thin centered divider lines */
-.sidebar.collapsed:not(:hover) .sidebar-section-label {
-    opacity: 1 !important;
-    width: 32px !important;
+.sidebar.collapsed .sidebar-section-label {
+    opacity: 1;
+    width: 32px;
     height: 1px;
     background: var(--border-subtle);
     margin: var(--space-xs) auto;
@@ -373,95 +404,147 @@ a:hover { color: var(--accent); }
     color: transparent;
     pointer-events: none;
     overflow: hidden;
-    transition: none;
 }
 
-/* Brand area: centered icon, same height as header */
-.sidebar.collapsed:not(:hover) .sidebar-brand {
+/* Restore section labels when hovered */
+.sidebar.collapsed:hover .sidebar-section-label {
+    width: auto;
+    height: auto;
+    background: transparent;
+    margin: 0;
+    padding: var(--space-lg) var(--space-md) var(--space-sm);
+    font-size: var(--font-xs);
+    line-height: normal;
+    color: var(--text-muted);
+}
+
+/* Brand area */
+.sidebar.collapsed .sidebar-brand {
     padding: 0;
     justify-content: center;
     align-items: center;
     height: var(--header-height);
     gap: 0;
 }
+.sidebar.collapsed:hover .sidebar-brand {
+    padding: var(--space-xl);
+    justify-content: flex-start;
+    gap: var(--space-md);
+}
 
-.sidebar.collapsed:not(:hover) .sidebar-brand-icon {
+.sidebar.collapsed .sidebar-brand-icon {
     font-size: 1.5rem;
 }
 
-/* Nav: centered column */
-.sidebar.collapsed:not(:hover) .sidebar-nav {
+/* Nav alignment */
+.sidebar.collapsed .sidebar-nav {
     padding: var(--space-md) 0;
     align-items: center;
     gap: 2px;
 }
+.sidebar.collapsed:hover .sidebar-nav {
+    padding: var(--space-lg) var(--space-md);
+    align-items: flex-start;
+    gap: var(--space-xs);
+}
 
-/* Nav items: uniform 40×40 centered rounded squares */
-.sidebar.collapsed:not(:hover) .nav-item {
+/* Nav items */
+.sidebar.collapsed .nav-item {
     justify-content: center;
     padding: 0;
-    width: 40px !important;
-    max-width: 40px !important;
+    width: 40px;
     height: 40px;
     border-radius: var(--radius);
     margin: 0 auto;
-    transition: all var(--transition-fast);
+}
+.sidebar.collapsed:hover .nav-item {
+    justify-content: flex-start;
+    padding: var(--space-sm) var(--space-md);
+    width: 100%;
 }
 
-.sidebar.collapsed:not(:hover) .nav-item:hover {
+.sidebar.collapsed .nav-item:hover {
     background: var(--bg-hover);
     transform: scale(1.08);
 }
+.sidebar.collapsed:hover .nav-item:hover {
+    background: var(--bg-hover);
+    transform: none; /* remove pop out effect when expanded */
+}
 
-.sidebar.collapsed:not(:hover) .nav-item.active {
+.sidebar.collapsed .nav-item.active {
     background: var(--accent-subtle);
     box-shadow: 0 0 0 1px var(--accent) inset;
 }
 
-.sidebar.collapsed:not(:hover) .nav-item-icon {
+.sidebar.collapsed .nav-item-icon {
     margin: 0;
     width: auto;
     font-size: 1.25rem;
 }
+.sidebar.collapsed:hover .nav-item-icon {
+    width: 24px;
+}
 
-/* Footer: clean minimal stack */
-.sidebar.collapsed:not(:hover) .sidebar-footer {
+/* Footer layout */
+.sidebar.collapsed .sidebar-footer {
     padding: var(--space-sm) 0 var(--space-md);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--space-sm);
-    border-top: 1px solid var(--border-subtle);
+}
+.sidebar.collapsed:hover .sidebar-footer {
+    padding: var(--space-lg);
+    align-items: flex-start;
 }
 
-/* User display → small initials circle */
-.sidebar.collapsed:not(:hover) .sidebar-user-display {
-    font-size: var(--font-xs) !important;
-    width: 32px !important;
-    height: 32px !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    background: var(--accent-subtle) !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    margin: 0 auto !important;
+/* User display initials circle */
+.sidebar.collapsed .sidebar-user-display {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--accent-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
     border: 1px solid var(--border-default);
 }
-
-.sidebar.collapsed:not(:hover) .user-display-text {
-    display: none !important;
+.sidebar.collapsed:hover .sidebar-user-display {
+    width: 100%;
+    height: auto;
+    padding: var(--space-sm);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    margin: 0;
+    border: none;
+    justify-content: flex-start;
 }
 
-.sidebar.collapsed:not(:hover) .user-display-icon {
-    font-size: 0 !important;
+.sidebar.collapsed .user-display-text {
+    display: none;
+}
+.sidebar.collapsed:hover .user-display-text {
+    display: inline;
 }
 
-.sidebar.collapsed:not(:hover) .user-display-icon::after {
+.sidebar.collapsed .user-display-icon {
+    font-size: 0;
+}
+.sidebar.collapsed:hover .user-display-icon {
+    font-size: 1.2rem;
+}
+
+.sidebar.collapsed .user-display-icon::after {
     content: attr(data-initials);
     font-size: var(--font-sm);
     font-weight: 700;
     color: var(--accent-hover);
+}
+.sidebar.collapsed:hover .user-display-icon::after {
+    display: none;
 }
 
 .sidebar.collapsed ~ .main-content {
