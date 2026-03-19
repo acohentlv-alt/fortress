@@ -72,10 +72,21 @@ async def lifespan(app: FastAPI):
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS company_notes (
+                        id SERIAL PRIMARY KEY,
+                        siren VARCHAR(9) NOT NULL,
+                        user_id INTEGER,
+                        username VARCHAR(100),
+                        text TEXT NOT NULL,
+                        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_siren ON company_notes (siren)")
                 await conn.commit()
-                logger.info("✅ contact_requests table ready")
+                logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
-            logger.warning("Could not create contact_requests table: %s", e)
+            logger.warning("Could not create dynamic tables: %s", e)
     else:
         logger.warning("🏰 Fortress API started — database OFFLINE: %s", db["error"])
     yield
