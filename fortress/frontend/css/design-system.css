@@ -414,7 +414,7 @@ a:hover { color: var(--accent); }
     height: auto;
     background: transparent;
     margin: 0;
-    padding: var(--space-lg) var(--space-md) var(--space-sm);
+    padding: var(--space-md) var(--space-lg) var(--space-sm);
     font-size: var(--font-xs);
     line-height: normal;
     color: var(--text-muted);
@@ -445,7 +445,7 @@ a:hover { color: var(--accent); }
     gap: 2px;
 }
 .sidebar.collapsed:hover .sidebar-nav {
-    padding: var(--space-lg) var(--space-md);
+    padding: var(--space-lg) 0;
     align-items: flex-start;
     gap: var(--space-xs);
 }
