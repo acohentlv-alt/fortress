@@ -321,33 +321,24 @@ function _setupSidebarToggle() {
     // Click to pin/unpin
     brandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isHoverExpanded = sidebar.dataset.hoverExpanded === 'true';
         
-        if (isHoverExpanded) {
-            // Un-flag hover expansion, lock it open
-            sidebar.dataset.hoverExpanded = 'false';
-            localStorage.setItem('fortress_sidebar_collapsed', '0');
-        } else {
-            // Normal toggle
-            const willCollapse = !sidebar.classList.contains('collapsed');
-            _applyState(willCollapse);
-            localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
-        }
+        // Always kill hover state before applying pin state
+        sidebar.classList.remove('hover-expanded');
+        
+        const willCollapse = !sidebar.classList.contains('collapsed');
+        _applyState(willCollapse);
+        localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
     });
 
-    // JS Hover Architecture
+    // JS Hover Architecture (Overlay tray)
     sidebar.addEventListener('mouseenter', () => {
         if (sidebar.classList.contains('collapsed')) {
-            sidebar.dataset.hoverExpanded = 'true';
-            _applyState(false); // expand it
+            sidebar.classList.add('hover-expanded');
         }
     });
 
     sidebar.addEventListener('mouseleave', () => {
-        if (sidebar.dataset.hoverExpanded === 'true') {
-            sidebar.dataset.hoverExpanded = 'false';
-            _applyState(true); // collapse it back
-        }
+        sidebar.classList.remove('hover-expanded');
     });
 
     // Auto-fold when screen shrinks
@@ -357,7 +348,7 @@ function _setupSidebarToggle() {
         resizeTimer = setTimeout(() => {
             if (window.innerWidth <= 1100 && !sidebar.classList.contains('collapsed')) {
                 _applyState(true);
-                sidebar.dataset.hoverExpanded = 'false';
+                sidebar.classList.remove('hover-expanded');
             }
         }, 100);
     });

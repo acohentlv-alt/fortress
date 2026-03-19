@@ -374,15 +374,31 @@ a:hover { color: var(--accent); }
     pointer-events: none;
 }
 
-/* 3) Section labels fade cleanly */
+/* 3) JS Hover Expansion (Overlay tray) */
+/* This cleanly flies OVER the main content without pushing it sideways */
+.sidebar.collapsed.hover-expanded {
+    width: var(--sidebar-width);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.2);
+    z-index: 200;
+}
+
+/* Restore text when hover-expanded */
+.sidebar.collapsed.hover-expanded .sidebar-brand-text,
+.sidebar.collapsed.hover-expanded .sidebar-brand-badge,
+.sidebar.collapsed.hover-expanded .nav-item span:not(.nav-item-icon),
+.sidebar.collapsed.hover-expanded .sidebar-footer-version,
+.sidebar.collapsed.hover-expanded .sidebar-user-display span:not(.user-display-icon),
+.sidebar.collapsed.hover-expanded .sidebar-section-label {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* 4) Section labels fade cleanly */
 .sidebar-section-label {
     transition: opacity 0.2s ease;
     white-space: nowrap;
     overflow: hidden;
 }
-
-/* Hover state is now handled natively via JavaScript removing .collapsed temporarily! 
-   No need for messy CSS overrides anymore. */
 
 
 .sidebar.collapsed ~ .main-content {
