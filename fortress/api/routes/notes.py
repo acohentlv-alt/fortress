@@ -42,8 +42,8 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
         if not user:
             return JSONResponse(status_code=401, content={"error": "Non authentifié"})
 
-        user_id = user.get("id")
-        username = user.get("username", "unknown")
+        user_id = user.id
+        username = user.username
 
         # Verify company exists
         company = await fetch_one(
@@ -101,7 +101,7 @@ async def delete_note(note_id: int, request: Request):
         return JSONResponse(status_code=404, content={"error": "Note introuvable"})
 
     # Only author or admin can delete
-    if note["user_id"] != user.get("id") and user.get("role") != "admin":
+    if note["user_id"] != user.id and user.role != "admin":
         return JSONResponse(
             status_code=403, content={"error": "Non autorisé à supprimer cette note"}
         )
@@ -111,12 +111,12 @@ async def delete_note(note_id: int, request: Request):
         await conn.commit()
 
     await log_activity(
-        user_id=user.get("id"),
-        username=user.get("username", "admin"),
+        user_id=user.id,
+        username=user.username,
         action='note_deleted',
-        target_type='company',
+        target_type='note',
         target_id=str(note_id),
-        details=f"Note #{note_id} supprimée",
+        details=f"Note {note_id} supprimée",
     )
 
     return {"deleted": True, "id": note_id}
