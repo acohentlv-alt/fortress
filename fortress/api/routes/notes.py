@@ -53,14 +53,20 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
             status_code=404, content={"error": "Entreprise introuvable"}
         )
 
-    async with get_conn() as conn:
-        result = await conn.execute("""
-            INSERT INTO company_notes (siren, user_id, username, text)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, created_at
-        """, (siren, user_id, username, body.text.strip()))
-        row = await result.fetchone()
-        await conn.commit()
+    try:
+        async with get_conn() as conn:
+            result = await conn.execute("""
+                INSERT INTO company_notes (siren, user_id, username, text)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, created_at
+            """, (siren, user_id, username, body.text.strip()))
+            row = await result.fetchone()
+            await conn.commit()
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            status_code=500, content={"error": f"Database exception: {str(e)}\n\n{traceback.format_exc()}"}
+        )
 
     await log_activity(
         user_id=user_id,
