@@ -453,7 +453,8 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed .nav-item {
     justify-content: center;
     padding: 0;
-    width: 40px;
+    width: 40px !important;
+    max-width: 40px !important;
     height: 40px;
     border-radius: var(--radius);
     margin: 0 auto;
@@ -461,7 +462,8 @@ a:hover { color: var(--accent); }
 .sidebar.collapsed:hover .nav-item {
     justify-content: flex-start;
     padding: var(--space-sm) var(--space-md);
-    width: 100%;
+    width: 100% !important;
+    max-width: 100% !important;
 }
 
 .sidebar.collapsed .nav-item:hover {
@@ -502,40 +504,40 @@ a:hover { color: var(--accent); }
 
 /* User display initials circle */
 .sidebar.collapsed .sidebar-user-display {
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border-radius: 50%;
-    background: var(--accent-subtle);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto;
-    border: 1px solid var(--border-default);
+    width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    background: var(--accent-subtle) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 auto !important;
+    border: 1px solid var(--border-default) !important;
 }
 .sidebar.collapsed:hover .sidebar-user-display {
-    width: 100%;
-    height: auto;
-    padding: var(--space-sm);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    margin: 0;
-    border: none;
-    justify-content: flex-start;
+    width: 100% !important;
+    height: auto !important;
+    padding: var(--space-sm) !important;
+    border-radius: var(--radius-sm) !important;
+    background: transparent !important;
+    margin: 0 !important;
+    border: none !important;
+    justify-content: flex-start !important;
 }
 
 .sidebar.collapsed .user-display-text {
-    display: none;
+    display: none !important;
 }
 .sidebar.collapsed:hover .user-display-text {
-    display: inline;
+    display: inline !important;
 }
 
 .sidebar.collapsed .user-display-icon {
-    font-size: 0;
+    font-size: 0 !important;
 }
 .sidebar.collapsed:hover .user-display-icon {
-    font-size: 1.2rem;
+    font-size: 1.2rem !important;
 }
 
 .sidebar.collapsed .user-display-icon::after {
@@ -545,7 +547,7 @@ a:hover { color: var(--accent); }
     color: var(--accent-hover);
 }
 .sidebar.collapsed:hover .user-display-icon::after {
-    display: none;
+    display: none !important;
 }
 
 .sidebar.collapsed ~ .main-content {
