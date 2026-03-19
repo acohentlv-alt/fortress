@@ -378,6 +378,8 @@ a:hover { color: var(--accent); }
     overflow: hidden;
     white-space: nowrap;
     pointer-events: none;
+    margin: 0;
+    padding: 0;
 }
 
 /* Restore text layout when hovered */
