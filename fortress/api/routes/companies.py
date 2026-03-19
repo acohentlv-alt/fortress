@@ -117,8 +117,8 @@ async def update_company_fields(siren: str, body: dict):
         # Audit trail
         for field, value in updates.items():
             await conn.execute("""
-                INSERT INTO scrape_audit (siren, action, result, source_url, timestamp)
-                VALUES (%s, 'manual_edit', 'success', %s, NOW())
+                INSERT INTO scrape_audit (query_id, siren, action, result, source_url, timestamp)
+                VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', %s, NOW())
             """, (siren, f"{field}={value}"))
 
         await conn.commit()
