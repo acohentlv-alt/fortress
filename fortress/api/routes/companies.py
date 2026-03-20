@@ -457,6 +457,9 @@ async def crawl_website_sync(siren: str):
     # Geographic phone priority — département-aware
     best_phone = _best_phone(list(set(all_phones)), siren, departement=departement)
     
+    # Google Maps URL is extracted for display but NOT saved to contacts (no column)
+    found_gmaps_url = all_social.pop("google_maps", None)
+
     extracted = {
         "email": best_email,
         "phone": best_phone,
@@ -503,12 +506,16 @@ async def crawl_website_sync(siren: str):
         # ── SIRET merge: link MAPS entity to real company ────────
         if found_siren and found_siren != siren:
             real_co = await (await conn.execute(
-                "SELECT siren, denomination FROM companies WHERE siren = %s", (found_siren,)
+                "SELECT siren, denomination, departement, adresse, code_naf, forme_juridique, effectif FROM companies WHERE siren = %s", (found_siren,)
             )).fetchone()
             if real_co:
+                if isinstance(real_co, tuple):
+                    real_name = real_co[1]
+                else:
+                    real_name = real_co.get("denomination")
                 siret_merge_info = {
                     "real_siren": found_siren,
-                    "real_name": real_co[1] if isinstance(real_co, tuple) else real_co.get("denomination"),
+                    "real_name": real_name,
                 }
                 # Copy crawl data to the real SIREN's contacts too
                 if extracted:
@@ -521,11 +528,39 @@ async def crawl_website_sync(siren: str):
                         VALUES ({', '.join(merge_phs)}, NOW())
                         ON CONFLICT (siren, source) DO UPDATE SET {merge_conflict}, collected_at = NOW()
                     """, tuple(merge_vals))
+
+                # If current entity is a MAPS discovery, update it with real company data
+                if siren.startswith("MAPS"):
+                    # Copy MAPS contacts to the real SIREN
+                    maps_contacts = await (await conn.execute(
+                        "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, source FROM contacts WHERE siren = %s",
+                        (siren,)
+                    )).fetchall()
+                    for mc in (maps_contacts or []):
+                        mc_source = mc[8] if isinstance(mc, tuple) else mc.get("source")
+                        mc_fields = {}
+                        field_names = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"]
+                        for i, fname in enumerate(field_names):
+                            val = mc[i] if isinstance(mc, tuple) else mc.get(fname)
+                            if val:
+                                mc_fields[fname] = val
+                        if mc_fields:
+                            mc_cols = ["siren", "source"] + list(mc_fields.keys())
+                            mc_phs = ["%s"] * len(mc_cols)
+                            mc_vals = [found_siren, mc_source] + list(mc_fields.values())
+                            mc_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in mc_fields)
+                            await conn.execute(f"""
+                                INSERT INTO contacts ({', '.join(mc_cols)}, collected_at)
+                                VALUES ({', '.join(mc_phs)}, NOW())
+                                ON CONFLICT (siren, source) DO UPDATE SET {mc_conflict}, collected_at = NOW()
+                            """, tuple(mc_vals))
+                    siret_merge_info["maps_contacts_merged"] = len(maps_contacts or [])
+
                 # Log the SIRET linkage
                 await conn.execute("""
                     INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
                     VALUES ('SYNC_CRAWL', %s, 'siret_match', 'success', %s, NOW())
-                """, (siren, f"SIRET found on website → real SIREN {found_siren} ({siret_merge_info['real_name']})"))
+                """, (siren, f"SIRET found on website → real SIREN {found_siren} ({real_name})"))
 
         # ── Fix 4: Before/after audit trail ──────────────────────
         # Build detailed log with before/after and rejections

@@ -263,7 +263,8 @@ _WEB_AGENCY_DOMAINS = frozenset(
 
 _SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
     "linkedin": re.compile(
-        r"https?://(?:www\.)?linkedin\.com/company/[a-zA-Z0-9\-_%]+/?",
+        # Match both /company/ pages AND /in/ personal profiles
+        r"https?://(?:www\.)?linkedin\.com/(?:company|in)/[a-zA-Z0-9\-_%]+/?",
         re.IGNORECASE,
     ),
     "facebook": re.compile(
@@ -272,8 +273,8 @@ _SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     "twitter": re.compile(
         # Must be a real profile handle, NOT /intent, /share, /hashtag, /i, /search etc.
-        r"https?://(?:www\.)?(?:twitter|x)\.com/(?!intent|share|hashtag|search|i/|home|explore|login|signup|privacy|tos)[a-zA-Z0-9_]{1,15}(?:/?)$",
-        re.IGNORECASE | re.MULTILINE,
+        r'https?://(?:www\.)?(?:twitter|x)\.com/(?!intent|share|hashtag|search|i/|home|explore|login|signup|privacy|tos)[a-zA-Z0-9_]{1,15}(?:/?)(?=["\'\s<>])',
+        re.IGNORECASE,
     ),
     "instagram": re.compile(
         # Instagram company/brand profiles (exclude /p/, /reel/, /explore/, /accounts/)
@@ -282,6 +283,10 @@ _SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     "tiktok": re.compile(
         r"https?://(?:www\.)?tiktok\.com/@[a-zA-Z0-9_.]{1,24}/?",
+        re.IGNORECASE,
+    ),
+    "google_maps": re.compile(
+        r"https?://(?:www\.)?google\.com/maps/place/[^\s\"'<>]+",
         re.IGNORECASE,
     ),
 }
