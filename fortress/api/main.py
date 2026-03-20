@@ -131,6 +131,17 @@ async def lifespan(app: FastAPI):
                     except Exception:
                         pass  # column already renamed
 
+                # ── One-time data fix: restore corrupted contacts ────────
+                # PAROT VI (309467884): remove bad manual_edit with Medina's phone
+                await conn.execute(
+                    "DELETE FROM contacts WHERE siren = '309467884' AND source = 'manual_edit'"
+                )
+                # MEDINA (MAPS00005): remove bad website_crawl with anthedesign data
+                await conn.execute(
+                    "DELETE FROM contacts WHERE siren = 'MAPS00005' AND source = 'website_crawl'"
+                )
+                logger.info("✅ Data fix: restored PAROT VI + MEDINA contacts")
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:

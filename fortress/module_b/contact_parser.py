@@ -446,6 +446,61 @@ def is_personal_email(email: str, company_name: str | None = None) -> bool:
     return True  # Generic personal email (e.g. jean.dupont@gmail.com)
 
 
+def is_agency_email(email: str, company_website: str | None = None) -> bool:
+    """Return True if this email likely belongs to a web agency, not the company.
+
+    Detects domain mismatch: if the company website is transport-medina.com and
+    the email is contact@anthedesign.fr, the domains don't match → it's the web
+    developer's contact, not the business contact.
+
+    Personal domains (gmail, outlook, etc.) are NOT flagged — businesses
+    sometimes legitimately use personal emails.
+    """
+    if not email or not company_website:
+        return False
+
+    email = email.lower().strip()
+    _, _, email_domain = email.partition("@")
+    if not email_domain:
+        return False
+
+    # Personal providers are allowed (handled by is_personal_email separately)
+    if email_domain in _PERSONAL_DOMAINS:
+        return False
+
+    # Already flagged as junk infrastructure or known agency
+    if is_junk_email(email):
+        return True
+
+    # Extract the company website's root domain
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(company_website if "://" in company_website else f"https://{company_website}")
+        site_host = parsed.hostname or ""
+        # Get root domain: "www.transport-medina.com" → "transport-medina.com"
+        site_parts = site_host.split(".")
+        if len(site_parts) >= 2:
+            site_root = ".".join(site_parts[-2:])
+        else:
+            site_root = site_host
+    except Exception:
+        return False  # Can't parse website, allow the email
+
+    # Get root domain from email: "contact@anthedesign.fr" → "anthedesign.fr"
+    email_parts = email_domain.split(".")
+    if len(email_parts) >= 2:
+        email_root = ".".join(email_parts[-2:])
+    else:
+        email_root = email_domain
+
+    # If the email's root domain matches the website's root domain → it's the business
+    if email_root == site_root:
+        return False
+
+    # Domains don't match — this email is likely from the web developer/agency
+    return True
+
+
 def parse_schema_org(html: str) -> dict[str, Any]:
     """Extract telephone, email, and url from JSON-LD structured data.
 

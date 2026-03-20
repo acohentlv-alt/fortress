@@ -603,9 +603,34 @@ function _initInlineEditing(container, siren) {
             try {
                 const res = await updateCompany(siren, { [field]: newVal || null });
                 if (res._ok !== false) {
+                    // Update cell in-place — NO full page re-render
+                    const displayVal = newVal || '—';
+                    const editBtn = `<button class="btn-inline-edit" data-field="${field}" title="Modifier">✏️</button>`;
+                    
+                    // Format display based on field type
+                    let formattedVal;
+                    if (field === 'phone' && newVal) {
+                        formattedVal = `<a href="tel:${escapeHtml(newVal)}" style="color:var(--success)">${escapeHtml(newVal)}</a>`;
+                    } else if (field === 'email' && newVal) {
+                        formattedVal = `<a href="mailto:${escapeHtml(newVal)}" style="color:var(--accent)">${escapeHtml(newVal)}</a>`;
+                    } else if ((field === 'website' || field.startsWith('social_')) && newVal && (newVal.startsWith('http') || newVal.startsWith('www'))) {
+                        const href = newVal.startsWith('http') ? newVal : `https://${newVal}`;
+                        formattedVal = `<a href="${escapeHtml(href)}" target="_blank">${escapeHtml(displayVal)} ↗</a>`;
+                    } else {
+                        formattedVal = newVal ? `<span style="color:var(--text-primary)">${escapeHtml(displayVal)}</span>` : '<span style="color:var(--text-disabled)">—</span>';
+                    }
+                    
+                    valueCell.innerHTML = `${formattedVal} ${editBtn}`;
+                    
+                    // Update raw value for future edits
+                    row.dataset.rawValue = newVal || '';
+                    
+                    // Green flash to confirm save
+                    row.style.transition = 'background 0.3s';
+                    row.style.background = 'rgba(34, 197, 94, 0.15)';
+                    setTimeout(() => { row.style.background = ''; }, 1200);
+                    
                     showToast(`${field} mis à jour ✅`, 'success');
-                    // Refresh the page to show updated data
-                    await renderCompany(container, siren);
                 } else {
                     showToast(extractApiError(res), 'error');
                     valueCell.innerHTML = originalHTML;

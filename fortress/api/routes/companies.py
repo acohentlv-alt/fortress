@@ -90,6 +90,19 @@ async def update_company_fields(siren: str, body: dict):
     saved = []
 
     async with get_conn() as conn:
+        # ── Read current values for before/after audit trail ─────
+        before_values = {}
+        if ct_updates:
+            existing = await (await conn.execute(
+                "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok FROM contacts WHERE siren = %s ORDER BY collected_at DESC LIMIT 1",
+                (siren,),
+            )).fetchone()
+            if existing:
+                field_map = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"]
+                for i, f in enumerate(field_map):
+                    if f in ct_updates and existing[i]:
+                        before_values[f] = existing[i]
+
         # Update companies table
         if co_updates:
             set_parts = [f"{k} = %s" for k in co_updates]
@@ -102,7 +115,6 @@ async def update_company_fields(siren: str, body: dict):
 
         # Upsert contacts table (source='manual_edit')
         if ct_updates:
-            # Build upsert: INSERT ... ON CONFLICT (siren, source) DO UPDATE
             columns = ["siren", "source"] + list(ct_updates.keys())
             placeholders = ["%s"] * len(columns)
             values = [siren, "manual_edit"] + list(ct_updates.values())
@@ -114,12 +126,17 @@ async def update_company_fields(siren: str, body: dict):
             """, tuple(values))
             saved.extend(ct_updates.keys())
 
-        # Audit trail
+        # Audit trail with before/after
         for field, value in updates.items():
+            old_val = before_values.get(field)
+            if old_val:
+                log_entry = f"{field}: {old_val} → {value}"
+            else:
+                log_entry = f"{field}={value}"
             await conn.execute("""
                 INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
                 VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', %s, NOW())
-            """, (siren, f"{field}={value}"))
+            """, (siren, log_entry))
 
         await conn.commit()
 
@@ -368,8 +385,15 @@ async def crawl_website_sync(siren: str):
     
     # Select best email and phone — now with company context
     from fortress.module_d.enricher import _best_email, _best_phone
+    from fortress.module_b.contact_parser import is_agency_email
     best_email = _best_email(list(set(all_emails)), root_url, siren, company_name=company_name)
     
+    # ── Fix 1: Agency email rejection (domain mismatch) ─────────
+    rejected_email = None
+    if best_email and is_agency_email(best_email, website):
+        rejected_email = best_email
+        best_email = None  # Reject the agency email
+
     # Geographic phone priority — département-aware
     best_phone = _best_phone(list(set(all_phones)), siren, departement=departement)
     
@@ -385,36 +409,89 @@ async def crawl_website_sync(siren: str):
     # Filter out empty values
     extracted = {k: v for k, v in extracted.items() if v}
     
-    if not extracted:
+    if not extracted and not rejected_email:
         return {"siren": siren, "message": "Aucun contact trouvé sur le site", "extracted": {}}
 
-    # Upsert into contacts
-    async with get_conn() as conn:
-        columns = ["siren", "source", "website"] + list(extracted.keys())
-        placeholders = ["%s"] * len(columns)
-        values = [siren, "website_crawl", website] + list(extracted.values())
-        on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
-        
-        await conn.execute(f"""
-            INSERT INTO contacts ({', '.join(columns)}, collected_at)
-            VALUES ({', '.join(placeholders)}, NOW())
-            ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
-        """, tuple(values))
+    duration = int((time.monotonic() - t0) * 1000)
 
-        # Log to batch_log
-        duration = int((time.monotonic() - t0) * 1000)
-        found_data = ", ".join(f"{k}={v}" for k, v in extracted.items())
+    # ── Fix 2: Protect Maps/Upload data from overwrite ──────────
+    # Read existing trusted data BEFORE upserting
+    async with get_conn() as conn:
+        existing_rows = await (await conn.execute(
+            "SELECT phone, email, source FROM contacts WHERE siren = %s AND source IN ('google_maps', 'upload', 'client_upload', 'manual_edit')",
+            (siren,),
+        )).fetchall()
+        
+        existing_phone = None
+        existing_email = None
+        for row in (existing_rows or []):
+            if row[0] and not existing_phone:
+                existing_phone = row[0]
+            if row[1] and not existing_email:
+                existing_email = row[1]
+
+        # Don't overwrite trusted phone/email with crawler data
+        protected_fields = []
+        if existing_phone and "phone" in extracted:
+            protected_fields.append(f"phone kept: {existing_phone} (crawler found: {extracted['phone']})")
+            del extracted["phone"]
+        if existing_email and "email" in extracted:
+            protected_fields.append(f"email kept: {existing_email} (crawler found: {extracted['email']})")
+            del extracted["email"]
+
+        # ── Fix 4: Before/after audit trail ──────────────────────
+        # Build detailed log with before/after and rejections
+        log_parts = []
+        if rejected_email:
+            log_parts.append(f"REJECTED email: {rejected_email} (domain ≠ {root_url})")
+        for note in protected_fields:
+            log_parts.append(f"PROTECTED {note}")
+        for k, v in extracted.items():
+            log_parts.append(f"ADDED {k}={v}")
+        
+        found_data = ", ".join(log_parts) if log_parts else "no new data"
+
+        if extracted:
+            columns = ["siren", "source", "website"] + list(extracted.keys())
+            placeholders = ["%s"] * len(columns)
+            values = [siren, "website_crawl", website] + list(extracted.values())
+            on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
+            
+            await conn.execute(f"""
+                INSERT INTO contacts ({', '.join(columns)}, collected_at)
+                VALUES ({', '.join(placeholders)}, NOW())
+                ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
+            """, tuple(values))
+
+        # Log to batch_log (always log, even if some data was rejected/protected)
         await conn.execute("""
             INSERT INTO batch_log (batch_id, siren, action, result, source_url, duration_ms, timestamp)
-            VALUES ('SYNC_CRAWL', %s, 'website_crawl', 'success', %s, %s, NOW())
-        """, (siren, found_data, duration))
+            VALUES ('SYNC_CRAWL', %s, 'website_crawl', %s, %s, %s, NOW())
+        """, (siren, 'success' if extracted else 'filtered', found_data, duration))
 
         await conn.commit()
 
+    # Build user-facing message
+    warnings = []
+    if rejected_email:
+        warnings.append(f"Email {rejected_email} rejeté (domaine du développeur web)")
+    if protected_fields:
+        warnings.append("Données Maps/import existantes protégées")
+    
+    message = "Enrichissement terminé"
+    if extracted:
+        message += f" — {len(extracted)} données ajoutées"
+    if warnings:
+        message += f" ⚠️ {'; '.join(warnings)}"
+    if not extracted and not warnings:
+        message = "Aucun contact trouvé sur le site"
+
     return {
         "siren": siren,
-        "message": "Enrichissement terminé avec succès" if (best_email or best_phone) else "Réseaux sociaux trouvés",
-        "extracted": extracted
+        "message": message,
+        "extracted": extracted,
+        "rejected": {"email": rejected_email} if rejected_email else {},
+        "protected": protected_fields,
     }
 
 
