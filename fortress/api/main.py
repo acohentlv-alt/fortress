@@ -142,6 +142,26 @@ async def lifespan(app: FastAPI):
                 )
                 logger.info("✅ Data fix: restored PAROT VI + MEDINA contacts")
 
+                # ── Entity linking columns ────────────────────────────
+                for col, col_type in [
+                    ("linked_siren", "TEXT"),
+                    ("link_confidence", "TEXT"),
+                    ("link_method", "TEXT"),
+                ]:
+                    try:
+                        await conn.execute(
+                            f"ALTER TABLE companies ADD COLUMN {col} {col_type} DEFAULT NULL"
+                        )
+                        logger.info("✅ Added companies.%s column", col)
+                    except Exception:
+                        pass  # Column already exists
+
+                # Index for fast address matching on 14.7M rows
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_dept_addr
+                    ON companies (departement, LOWER(adresse))
+                """)
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:

@@ -107,6 +107,152 @@ function renderNotesDirect(notes, limit = 2) {
 }
 
 // ── Context-aware breadcrumb ─────────────────────────────────────
+// ── Entity Link Banner ───────────────────────────────────────────────
+
+function _buildEntityLinkBanner(co, linkedCo, suggestedMatches) {
+    if (!co.siren || !co.siren.startsWith('MAPS')) return '';
+
+    if (linkedCo) {
+        // Confirmed link — show real company info with merge/unlink buttons
+        return `
+        <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(59,130,246,0.08)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-md)">
+            <div style="display:flex; align-items:center; gap:var(--space-md); flex:1; min-width:0">
+                <span style="font-size:1.5rem">🔗</span>
+                <div style="min-width:0">
+                    <div style="font-weight:700; color:var(--success); font-size:var(--font-base)">Lié à ${escapeHtml(linkedCo.denomination || '')}</div>
+                    <div style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-top:2px">
+                        <span>SIREN: ${linkedCo.siren}</span>
+                        ${linkedCo.naf_code ? `<span>· 📋 ${escapeHtml(linkedCo.naf_code)}</span>` : ''}
+                        ${linkedCo.tranche_effectif && linkedCo.tranche_effectif !== 'NN' ? `<span>· 👥 ${effectifLabel(linkedCo.tranche_effectif) || linkedCo.tranche_effectif}</span>` : ''}
+                        ${linkedCo.ville ? `<span>· ${escapeHtml(linkedCo.ville)}</span>` : ''}
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; gap:var(--space-sm); flex-shrink:0">
+                <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">🔀 Fusionner</button>
+                <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">Dissocier</button>
+            </div>
+        </div>`;
+    }
+
+    if (suggestedMatches.length > 0) {
+        const m = suggestedMatches[0]; // Show the best match
+        const methodLabel = m.method === 'address' ? 'même adresse' : m.method === 'fuzzy_name' ? 'nom similaire' : m.method;
+        return `
+        <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.1), rgba(59,130,246,0.06)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-md)">
+            <div style="display:flex; align-items:center; gap:var(--space-md); flex:1; min-width:0">
+                <span style="font-size:1.5rem">💡</span>
+                <div style="min-width:0">
+                    <div style="font-weight:700; color:var(--warning); font-size:var(--font-base)">Correspondance possible</div>
+                    <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:2px">
+                        ${escapeHtml(m.denomination)} (${m.siren}) — ${methodLabel}
+                        ${m.ville ? ` · ${escapeHtml(m.ville)}` : ''}
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; gap:var(--space-sm); flex-shrink:0">
+                <button class="btn btn-primary btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm)">🔗 Lier</button>
+                <button class="btn btn-secondary btn-sm" id="btn-ignore-match" style="font-size:var(--font-sm); opacity:0.7">Ignorer</button>
+            </div>
+        </div>`;
+    }
+
+    return '';
+}
+
+function _initEntityLinkHandlers(container, siren) {
+    // Merge button
+    const mergeBtn = container.querySelector('#btn-merge-entity');
+    if (mergeBtn) {
+        mergeBtn.addEventListener('click', async () => {
+            const mapsSiren = mergeBtn.dataset.maps;
+            const targetSiren = mergeBtn.dataset.target;
+            if (!confirm(`Fusionner ${mapsSiren} dans ${targetSiren} ? Cette action est irréversible.`)) return;
+            mergeBtn.disabled = true;
+            mergeBtn.textContent = '⏳ Fusion...';
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${mapsSiren}/merge`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_siren: targetSiren }),
+                });
+                const data = await res.json();
+                if (res.ok && data.redirect_to) {
+                    showToast(`✅ Fusionné avec ${data.target_name}`, 'success');
+                    window.location.hash = `#/company/${data.redirect_to}`;
+                } else {
+                    showToast(data.error || 'Erreur lors de la fusion', 'error');
+                    mergeBtn.disabled = false;
+                    mergeBtn.textContent = '🔀 Fusionner';
+                }
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+                mergeBtn.disabled = false;
+                mergeBtn.textContent = '🔀 Fusionner';
+            }
+        });
+    }
+
+    // Link button (for suggested matches)
+    const linkBtn = container.querySelector('#btn-link-entity');
+    if (linkBtn) {
+        linkBtn.addEventListener('click', async () => {
+            const mapsSiren = linkBtn.dataset.maps;
+            const targetSiren = linkBtn.dataset.target;
+            linkBtn.disabled = true;
+            linkBtn.textContent = '⏳...';
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${mapsSiren}/link`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_siren: targetSiren }),
+                });
+                if (res.ok) {
+                    showToast('✅ Entités liées', 'success');
+                    await renderCompany(container, siren);
+                } else {
+                    const data = await res.json();
+                    showToast(data.error || 'Erreur', 'error');
+                    linkBtn.disabled = false;
+                    linkBtn.textContent = '🔗 Lier';
+                }
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+                linkBtn.disabled = false;
+                linkBtn.textContent = '🔗 Lier';
+            }
+        });
+    }
+
+    // Ignore button
+    const ignoreBtn = container.querySelector('#btn-ignore-match');
+    if (ignoreBtn) {
+        ignoreBtn.addEventListener('click', () => {
+            const banner = container.querySelector('#entity-link-banner');
+            if (banner) banner.remove();
+        });
+    }
+
+    // Unlink button
+    const unlinkBtn = container.querySelector('#btn-unlink-entity');
+    if (unlinkBtn) {
+        unlinkBtn.addEventListener('click', async () => {
+            const mapsSiren = unlinkBtn.dataset.maps;
+            try {
+                await fetch(`${window.__API_BASE || ''}/api/companies/${mapsSiren}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ linked_siren: null, link_confidence: null, link_method: null }),
+                });
+                showToast('Lien supprimé', 'success');
+                await renderCompany(container, siren);
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+            }
+        });
+    }
+}
+
 function _buildBreadcrumb(co, tags) {
     const items = [{ label: 'Dashboard', href: '#/' }];
 
@@ -152,11 +298,14 @@ export async function renderCompany(container, siren) {
     const mc = data.merged_contact || {};
     const officers = data.officers || [];
     const tags = data.batch_tags || [];
-
+    const linkedCo = data.linked_company;
+    const suggestedMatches = data.suggested_matches || [];
 
 
     container.innerHTML = `
         ${_buildBreadcrumb(co, tags)}
+
+        ${_buildEntityLinkBanner(co, linkedCo, suggestedMatches)}
 
         <!-- Top Header Panel -->
         <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
@@ -189,13 +338,17 @@ export async function renderCompany(container, siren) {
                     ${detailRow('Téléphone', mc.phone
                         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
                         : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}
+                    ${mc.phone_alt ? altValueRow(mc.phone_alt) : ''}
                     ${detailRow('Email', mc.email
                         ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
                         : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email', mc.email || '')}
+                    ${mc.email_alt ? altValueRow(mc.email_alt) : ''}
                     ${detailRow('Site web', mc.website
                         ? `<div style="display:flex; align-items:center; gap:var(--space-xs)"><a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a> <button class="btn-spider-crawl" data-siren="${co.siren}" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0; line-height:1; display:flex; align-items:center;" title="Scanner ce site pour extraire les contacts (emails, réseaux sociaux)">🔍</button></div>`
                         : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website', mc.website || '')}
+                    ${mc.website_alt ? altValueRow(mc.website_alt) : ''}
                     ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
+                    ${mc.address_alt ? altValueRow(mc.address_alt) : ''}
                     ${detailRow('LinkedIn', formatSocial(mc.social_linkedin, 'Profil LinkedIn'), sourceLabel(mc.social_linkedin_source), 'social_linkedin', mc.social_linkedin || '')}
                     ${detailRow('Facebook', formatSocial(mc.social_facebook, 'Page Facebook'), sourceLabel(mc.social_facebook_source), 'social_facebook', mc.social_facebook || '')}
                     ${detailRow('Twitter', formatSocial(mc.social_twitter, 'Profil Twitter'), sourceLabel(mc.social_twitter_source), 'social_twitter', mc.social_twitter || '')}
@@ -365,6 +518,7 @@ export async function renderCompany(container, siren) {
 
     // ── Inline editing on detail rows ───────────────────────────
     _initInlineEditing(container, siren);
+    _initEntityLinkHandlers(container, siren);
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
@@ -717,13 +871,30 @@ function _initEnrichmentPanel(siren, container) {
 function sourceLabel(src) {
     if (!src) return null;
     const map = {
-        google_maps:   '🗺️ Google Maps',
-        website_crawl: '🌐 Site web',
-        synthesized:   '🔗 Synthèse',
-        inpi:          '📋 INPI',
-        sirene:        '🏛️ Registre SIRENE',
+        google_maps:           '🗺️ Google Maps',
+        website_crawl:         '🌐 Site web',
+        mentions_legales:      '📜 Mentions légales',
+        recherche_entreprises: '🏛️ Registre National',
+        google_cse:            '🔍 Google Search',
+        synthesized:           '🔗 Synthèse',
+        inpi:                  '📋 INPI',
+        sirene:                '🏛️ Registre SIRENE',
+        manual_edit:           '✏️ Saisi manuellement',
+        upload:                '📤 Import fichier',
+        directory_search:      '📖 Annuaire',
+        pages_jaunes:          '📒 Pages Jaunes',
     };
     return map[src] || src;
+}
+
+/** Show an alternate value from a different source (muted sub-row) */
+function altValueRow(alt) {
+    if (!alt || !alt.value) return '';
+    const src = sourceLabel(alt.source) || alt.source;
+    return `<div class="detail-row" style="padding-left:var(--space-lg); opacity:0.6; font-size:var(--font-sm)">
+        <span class="detail-label">↳ aussi</span>
+        <span class="detail-value">${escapeHtml(alt.value)} <span class="provenance-badge" title="Source : ${src}">ℹ️</span></span>
+    </div>`;
 }
 
 function formatSocial(url, label) {

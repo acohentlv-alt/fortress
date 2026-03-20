@@ -621,7 +621,7 @@ async def enrich_companies(
             )
             continue
 
-        contact, source_label, match_confidence, maps_name = result
+        contact, source_label, match_confidence, maps_name, ml_result = result
         source_counts[source_label] += 1
 
         # ── ALWAYS ACCEPT — Maps is enrichment, not a gatekeeper ──────
@@ -682,6 +682,74 @@ async def enrich_companies(
         # Notify runner of incremental progress
         if on_progress:
             await on_progress(len(tried_sirens), replaced_count, len(contacts))
+
+        # ── Step 3: Officer upserts (mentions légales + Recherche Entreprises)
+        # These need DB access, so they run in the caller, not _enrich_one().
+        if has_enrichment:
+            try:
+                async with pool.connection() as conn:
+                    # 3a: Mentions Légales director
+                    if ml_result and ml_result.get("director_name"):
+                        from fortress.models import Officer, ContactSource
+                        from fortress.module_d.deduplicator import upsert_officer
+                        # Split name into nom/prenom (best effort)
+                        name_parts = ml_result["director_name"].split()
+                        if len(name_parts) >= 2:
+                            prenom = name_parts[0].title()
+                            nom = " ".join(name_parts[1:]).upper()
+                        else:
+                            prenom = None
+                            nom = name_parts[0].upper()
+
+                        officer = Officer(
+                            siren=company.siren,
+                            nom=nom,
+                            prenom=prenom,
+                            role=ml_result.get("director_role"),
+                            civilite=ml_result.get("director_civilite"),
+                            email_direct=ml_result.get("director_email"),
+                            source=ContactSource.MENTIONS_LEGALES,
+                        )
+                        await upsert_officer(conn, officer)
+                        log.info(
+                            "enricher.officer_from_mentions_legales",
+                            siren=company.siren,
+                            name=ml_result["director_name"],
+                        )
+
+                    # 3b: Recherche Entreprises API — official directors
+                    from fortress.module_b.recherche_entreprises import fetch_dirigeants
+                    dirigeants = await fetch_dirigeants(
+                        company.siren,
+                        curl_client=curl_client,
+                    )
+                    for d in dirigeants:
+                        from fortress.models import Officer, ContactSource
+                        from fortress.module_d.deduplicator import upsert_officer
+                        officer = Officer(
+                            siren=company.siren,
+                            nom=d["nom"],
+                            prenom=d.get("prenom"),
+                            role=d.get("qualite"),
+                            civilite=d.get("civilite"),
+                            source=ContactSource.RECHERCHE_ENTREPRISES,
+                        )
+                        await upsert_officer(conn, officer)
+
+                    if dirigeants:
+                        log.info(
+                            "enricher.officers_from_api",
+                            siren=company.siren,
+                            count=len(dirigeants),
+                        )
+
+                    await conn.commit()
+            except Exception as officer_exc:
+                log.debug(
+                    "enricher.officer_upsert_error",
+                    siren=company.siren,
+                    error=str(officer_exc),
+                )
 
         # Log for admin
         outcome = "qualified" if has_enrichment else "sirene_only"
@@ -760,13 +828,14 @@ async def _enrich_one(
     curl_client: CurlClient,
     maps_scraper: Any | None = None,
     query_domain: str = "",
-) -> tuple[Contact | None, str, str, str | None]:
+) -> tuple[Contact | None, str, str, str | None, dict]:
     """Enrich a single company: Maps first, then website crawl.
 
     Returns:
-        (Contact | None, source_label, match_confidence, maps_name).
+        (Contact | None, source_label, match_confidence, maps_name, ml_result).
         match_confidence is 'high', 'low', or 'none'.
-        Returns (None, "none", "none", None) when no data was found.
+        ml_result is the mentions-légales extraction dict (may be empty).
+        Returns (None, "none", "none", None, {}) when no data was found.
     """
     siren = company.siren
     denomination = company.denomination or ""
@@ -1214,7 +1283,7 @@ async def _enrich_one(
 
     if not has_data:
         log.debug("enricher.no_data_found", siren=siren, denomination=denomination)
-        return (None, "none", match_confidence if maps_scraper else "none", maps_result.get("maps_name"))
+        return (None, "none", match_confidence if maps_scraper else "none", maps_result.get("maps_name"), ml_result if maps_website else {})
 
     # Source attribution: Maps when phone came from Maps, website_crawl when email came from crawl
     source = ContactSource.GOOGLE_MAPS
@@ -1254,6 +1323,7 @@ async def _enrich_one(
         source_label,
         match_confidence if maps_scraper else "none",
         maps_result.get("maps_name"),
+        ml_result if maps_website else {},
     )
 
 

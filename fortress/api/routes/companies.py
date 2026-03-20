@@ -820,7 +820,8 @@ async def get_company(siren: str):
             co.chiffre_affaires, co.annee_ca, co.tranche_ca,
             co.date_fondation, co.type_etablissement,
             co.extra_data,
-            co.created_at, co.updated_at
+            co.created_at, co.updated_at,
+            co.linked_siren, co.link_confidence, co.link_method
         FROM companies co
         WHERE co.siren = %s
     """, (siren,))
@@ -878,6 +879,63 @@ async def get_company(siren: str):
         ORDER BY created_at DESC
     """, (siren,))
 
+    # ── Entity linking: MAPS → SIREN matching ─────────────────
+    linked_company = None
+    suggested_matches = []
+
+    if siren.startswith("MAPS"):
+        linked_siren = company.get("linked_siren")
+        if linked_siren:
+            # Already linked — fetch the real company data
+            linked_company = await fetch_one("""
+                SELECT siren, denomination, naf_code, naf_libelle,
+                       forme_juridique, tranche_effectif, effectif_exact,
+                       adresse, code_postal, ville, departement
+                FROM companies WHERE siren = %s
+            """, (linked_siren,))
+        else:
+            # Not linked yet — try to find matches
+            try:
+                from fortress.module_b.entity_matcher import find_matches
+                async with get_conn() as conn:
+                    matches = await find_matches(
+                        maps_siren=siren,
+                        maps_addr=company.get("adresse"),
+                        maps_name=company.get("denomination"),
+                        departement=company.get("departement"),
+                        conn=conn,
+                    )
+                    if matches:
+                        # Auto-link HIGH confidence matches
+                        best = matches[0]
+                        if best.confidence == "high":
+                            await conn.execute("""
+                                UPDATE companies
+                                SET linked_siren = %s, link_confidence = %s, link_method = %s
+                                WHERE siren = %s
+                            """, (best.siren, best.confidence, best.method, siren))
+                            await conn.commit()
+                            linked_company = await fetch_one("""
+                                SELECT siren, denomination, naf_code, naf_libelle,
+                                       forme_juridique, tranche_effectif, effectif_exact,
+                                       adresse, code_postal, ville, departement
+                                FROM companies WHERE siren = %s
+                            """, (best.siren,))
+                        else:
+                            suggested_matches = [
+                                {
+                                    "siren": m.siren,
+                                    "denomination": m.denomination,
+                                    "confidence": m.confidence,
+                                    "method": m.method,
+                                    "address": m.address,
+                                    "ville": m.ville,
+                                }
+                                for m in matches
+                            ]
+            except Exception:
+                pass  # Matching failed — no big deal, card still loads
+
     return {
         "company": company,
         "contacts": contacts,
@@ -886,6 +944,8 @@ async def get_company(siren: str):
         "batch_tags": tags,
         "enrichment_history": enrichment_history,
         "notes": notes or [],
+        "linked_company": linked_company,
+        "suggested_matches": suggested_matches,
     }
 
 
@@ -1001,3 +1061,125 @@ def _merge_contacts(contacts: list[dict]) -> dict:
     merged["sources"] = list(dict.fromkeys(merged["sources"]))  # dedupe, preserve order
     return merged
 
+
+# ── Entity linking endpoints ──────────────────────────────────────────
+
+class LinkBody(BaseModel):
+    target_siren: str = Field(..., description="The real SIREN to link to")
+
+
+@router.post("/{siren}/link")
+async def link_entity(siren: str, body: LinkBody):
+    """Confirm a MAPS entity is linked to a real SIREN."""
+    if not siren.startswith("MAPS"):
+        return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be linked"})
+
+    # Verify target exists
+    target = await fetch_one(
+        "SELECT siren, denomination FROM companies WHERE siren = %s", (body.target_siren,)
+    )
+    if not target:
+        return JSONResponse(status_code=404, content={"error": f"Target SIREN {body.target_siren} not found"})
+
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE companies
+            SET linked_siren = %s, link_confidence = 'high', link_method = 'manual'
+            WHERE siren = %s
+        """, (body.target_siren, siren))
+
+        await conn.execute("""
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
+            VALUES ('ENTITY_LINK', %s, 'link', 'success', %s, NOW())
+        """, (siren, f"Linked to {body.target_siren} ({target.get('denomination')})"))
+
+        await conn.commit()
+
+    return {
+        "linked": True,
+        "maps_siren": siren,
+        "target_siren": body.target_siren,
+        "target_name": target.get("denomination"),
+    }
+
+
+@router.post("/{siren}/merge")
+async def merge_entity(siren: str, body: LinkBody):
+    """Merge a MAPS entity into a real SIREN — moves all data, then deletes MAPS row."""
+    if not siren.startswith("MAPS"):
+        return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be merged"})
+
+    target_siren = body.target_siren
+
+    # Verify target exists
+    target = await fetch_one(
+        "SELECT siren, denomination FROM companies WHERE siren = %s", (target_siren,)
+    )
+    if not target:
+        return JSONResponse(status_code=404, content={"error": f"Target SIREN {target_siren} not found"})
+
+    async with get_conn() as conn:
+        # 1. Contacts: move to real SIREN (handle conflicts by updating)
+        await conn.execute("""
+            UPDATE contacts SET siren = %s
+            WHERE siren = %s
+            AND source NOT IN (
+                SELECT source FROM contacts WHERE siren = %s
+            )
+        """, (target_siren, siren, target_siren))
+        # Delete remaining MAPS contacts (conflicts)
+        await conn.execute("DELETE FROM contacts WHERE siren = %s", (siren,))
+
+        # 2. Company notes
+        await conn.execute(
+            "UPDATE company_notes SET siren = %s WHERE siren = %s",
+            (target_siren, siren),
+        )
+
+        # 3. Batch tags (ignore conflicts)
+        try:
+            await conn.execute(
+                "UPDATE batch_tags SET siren = %s WHERE siren = %s",
+                (target_siren, siren),
+            )
+        except Exception:
+            await conn.execute("DELETE FROM batch_tags WHERE siren = %s", (siren,))
+
+        # 4. Batch log
+        await conn.execute(
+            "UPDATE batch_log SET siren = %s WHERE siren = %s",
+            (target_siren, siren),
+        )
+
+        # 5. Enrichment log
+        await conn.execute(
+            "UPDATE enrichment_log SET siren = %s WHERE siren = %s",
+            (target_siren, siren),
+        )
+
+        # 6. Officers (ignore conflicts)
+        try:
+            await conn.execute(
+                "UPDATE officers SET siren = %s WHERE siren = %s",
+                (target_siren, siren),
+            )
+        except Exception:
+            await conn.execute("DELETE FROM officers WHERE siren = %s", (siren,))
+
+        # 7. Log the merge event
+        await conn.execute("""
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
+            VALUES ('ENTITY_MERGE', %s, 'merge', 'success', %s, NOW())
+        """, (target_siren, f"Merged from {siren}"))
+
+        # 8. Delete the MAPS entity
+        await conn.execute("DELETE FROM companies WHERE siren = %s", (siren,))
+
+        await conn.commit()
+
+    return {
+        "merged": True,
+        "deleted_maps": siren,
+        "redirect_to": target_siren,
+        "target_name": target.get("denomination"),
+    }
