@@ -268,7 +268,8 @@ _SOCIAL_PATTERNS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "facebook": re.compile(
-        r"https?://(?:www\.)?facebook\.com/[a-zA-Z0-9.\-_%/]+",
+        # Reject generic/utility Facebook URLs (profile.php, sharer.php, etc.)
+        r"https?://(?:www\.)?facebook\.com/(?!profile\.php|sharer|share\.php|login|dialog|hashtag|watch|groups/|events/|marketplace|gaming|help)[a-zA-Z0-9.\-_%/]+",
         re.IGNORECASE,
     ),
     "twitter": re.compile(
@@ -322,13 +323,51 @@ def extract_phones(html: str) -> list[str]:
 
 
 def extract_emails(html: str) -> list[str]:
-    """Extract business emails from HTML, excluding junk and personal domains."""
+    """Extract business emails from HTML, excluding junk and personal domains.
+    
+    Also decodes JavaScript-obfuscated emails (ml/mi char-code pattern).
+    """
     found: set[str] = set()
+    # Standard regex extraction
     for match in _EMAIL_RE.finditer(html):
         email = match.group(0).lower()
         if not is_junk_email(email):
             found.add(email)
+    # Decode JS-obfuscated emails (common WordPress email protection)
+    for email in _decode_js_emails(html):
+        if not is_junk_email(email):
+            found.add(email)
     return sorted(found)
+
+
+def _decode_js_emails(html: str) -> list[str]:
+    """Decode emails hidden by JavaScript ml/mi char-code obfuscation.
+    
+    Pattern: var ml="...",mi="..."; o+= ml.charAt(mi.charCodeAt(j)-48)
+    This is used by WordPress email protection plugins (e.g. Email Encoder Bundle).
+    The decoded output is URL-encoded HTML, which may contain mailto: links.
+    """
+    decoded_emails: list[str] = []
+    # Find all ml/mi pairs in the HTML
+    for m in re.finditer(
+        r'var\s+ml\s*=\s*"([^"]+)"\s*,\s*mi\s*=\s*"([^"]+)"',
+        html,
+    ):
+        ml, mi = m.group(1), m.group(2)
+        try:
+            import urllib.parse
+            o = ""
+            for j in range(len(mi)):
+                idx = ord(mi[j]) - 48
+                if 0 <= idx < len(ml):
+                    o += ml[idx]
+            decoded = urllib.parse.unquote(o)
+            # Extract email addresses from the decoded HTML
+            for em in _EMAIL_RE.finditer(decoded):
+                decoded_emails.append(em.group(0).lower())
+        except Exception:
+            continue
+    return decoded_emails
 
 
 def extract_social_links(html: str) -> dict[str, str]:
