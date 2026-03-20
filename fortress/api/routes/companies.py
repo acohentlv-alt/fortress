@@ -505,8 +505,9 @@ async def crawl_website_sync(siren: str):
 
         # ── SIRET merge: link MAPS entity to real company ────────
         if found_siren and found_siren != siren:
+          try:
             real_co = await (await conn.execute(
-                "SELECT siren, denomination, departement, adresse, code_naf, forme_juridique, effectif FROM companies WHERE siren = %s", (found_siren,)
+                "SELECT siren, denomination FROM companies WHERE siren = %s", (found_siren,)
             )).fetchone()
             if real_co:
                 if isinstance(real_co, tuple):
@@ -529,9 +530,8 @@ async def crawl_website_sync(siren: str):
                         ON CONFLICT (siren, source) DO UPDATE SET {merge_conflict}, collected_at = NOW()
                     """, tuple(merge_vals))
 
-                # If current entity is a MAPS discovery, update it with real company data
+                # If current entity is a MAPS discovery, copy contacts to real SIREN
                 if siren.startswith("MAPS"):
-                    # Copy MAPS contacts to the real SIREN
                     maps_contacts = await (await conn.execute(
                         "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, source FROM contacts WHERE siren = %s",
                         (siren,)
@@ -561,6 +561,9 @@ async def crawl_website_sync(siren: str):
                     INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
                     VALUES ('SYNC_CRAWL', %s, 'siret_match', 'success', %s, NOW())
                 """, (siren, f"SIRET found on website → real SIREN {found_siren} ({real_name})"))
+          except Exception as merge_err:
+                import logging
+                logging.getLogger("fortress").warning("SIRET merge failed for %s: %s", siren, merge_err)
 
         # ── Fix 4: Before/after audit trail ──────────────────────
         # Build detailed log with before/after and rejections
