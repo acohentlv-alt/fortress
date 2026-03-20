@@ -25,6 +25,8 @@ from typing import Any
 # Matches: +33 6 12 34 56 78 / +33612345678 / 06 12 34 56 78 / 0612345678
 # Also: 0800 123 456, 3XXX short numbers (excluded — not useful)
 _PHONE_PATTERNS: list[re.Pattern[str]] = [
+    # International with (0): +33 (0)4.68.68.19.33 — very common on French corporate sites
+    re.compile(r"\+33\s?\(0\)\s?[1-9](?:[\s.\-]?\d{2}){4}"),
     # International: +33 X XX XX XX XX (with optional separators)
     re.compile(r"\+33\s?[1-9](?:[\s.\-]?\d{2}){4}"),
     # National: 0X XX XX XX XX (land + mobile)
@@ -33,7 +35,7 @@ _PHONE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"08(?:0[0-9]|[1-9]\d)[\s.\-]?\d{3}[\s.\-]?\d{3}"),
 ]
 
-_PHONE_NORMALISE_RE = re.compile(r"[\s.\-]")
+_PHONE_NORMALISE_RE = re.compile(r"[\s.\-()]")  # also strip parentheses from +33(0) format
 
 # ---------------------------------------------------------------------------
 # Phone validation — shared with web_search.py (avoid circular import)
@@ -336,6 +338,41 @@ def extract_social_links(html: str) -> dict[str, str]:
         if match:
             result[platform] = match.group(0)
     return result
+
+
+# ---------------------------------------------------------------------------
+# SIRET / SIREN extraction
+# ---------------------------------------------------------------------------
+
+_SIRET_RE = re.compile(
+    r"(?:SIRET|siret)\s*:?\s*(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})",
+)
+_SIREN_RE = re.compile(
+    r"(?:SIREN|siren)\s*:?\s*(\d{3}\s?\d{3}\s?\d{3})(?!\d)",
+)
+
+
+def extract_siret(html: str) -> str | None:
+    """Extract SIREN (9 digits) from SIRET or SIREN mentions in HTML.
+
+    If a 14-digit SIRET is found, returns the first 9 digits (the SIREN).
+    Returns None if nothing found.
+    """
+    # Try SIRET first (more specific, 14 digits)
+    m = _SIRET_RE.search(html)
+    if m:
+        digits = re.sub(r"\s", "", m.group(1))
+        if len(digits) == 14:
+            return digits[:9]  # SIREN = first 9 of SIRET
+
+    # Fallback: look for explicit SIREN mention (9 digits)
+    m = _SIREN_RE.search(html)
+    if m:
+        digits = re.sub(r"\s", "", m.group(1))
+        if len(digits) == 9:
+            return digits
+
+    return None
 
 
 def is_junk_email(email: str) -> bool:

@@ -344,14 +344,16 @@ async def crawl_website_sync(siren: str):
 
     from fortress.module_c.curl_client import CurlClient, CurlClientError
     from fortress.module_b.contact_parser import (
-        extract_emails, extract_phones, extract_social_links
+        extract_emails, extract_phones, extract_social_links, extract_siret
     )
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, urljoin
     import time
+    import re as _re
 
     all_emails = []
     all_phones = []
     all_social = {}
+    all_html = []  # Store raw HTML for SIRET extraction
     
     try:
         parsed = urlparse(website)
@@ -359,29 +361,87 @@ async def crawl_website_sync(siren: str):
     except Exception:
         root_url = website
 
-    pages_to_crawl = [
+    # ── Smart page discovery ────────────────────────────────────
+    # Contact-related keywords to look for in <a href> links
+    _CONTACT_KEYWORDS = _re.compile(
+        r"contact|mention|legal|propos|equipe|coordonn|societe|qui-sommes|nous-contacter|impressum",
+        _re.IGNORECASE,
+    )
+
+    # Start with homepage + common fallback paths
+    seed_pages = [
         root_url,
         f"{root_url}/contact",
         f"{root_url}/mentions-legales",
-        f"{root_url}/nous-contacter",
-        f"{root_url}/a-propos",
     ]
+    crawled_urls: set[str] = set()
+    discovered_pages: list[str] = []
 
     t0 = time.monotonic()
-    curl_client = CurlClient(timeout=8.0, max_retries=1, delay_min=0.3, delay_max=0.5, delay_jitter=0.0)
+    WALL_CLOCK_LIMIT = 13.0  # Leave 2s buffer for DB ops within 15s total
+    MAX_PAGES = 10
+
+    curl_client = CurlClient(timeout=5.0, max_retries=1, delay_min=0.2, delay_max=0.4, delay_jitter=0.0)
     
     async with curl_client as client:
-        for page_url in pages_to_crawl:
+        # Phase 1: Crawl homepage to discover real nav links
+        try:
+            resp = await client.get(root_url)
+            crawled_urls.add(root_url)
+            if resp.status_code == 200 and len(resp.text) > 500:
+                all_emails.extend(extract_emails(resp.text))
+                all_phones.extend(extract_phones(resp.text))
+                all_social.update(extract_social_links(resp.text))
+                all_html.append(resp.text)
+
+                # Discover contact-related links from homepage
+                for href_match in _re.finditer(r'href=["\']([^"\']+)["\']', resp.text):
+                    href = href_match.group(1)
+                    if _CONTACT_KEYWORDS.search(href):
+                        # Resolve relative URLs
+                        abs_url = urljoin(root_url, href)
+                        if abs_url.startswith(root_url) and abs_url not in crawled_urls:
+                            discovered_pages.append(abs_url)
+        except CurlClientError as exc:
+            err_str = str(exc).lower()
+            if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
+                # DNS/SSL failure — site is unreachable, skip everything
+                discovered_pages.clear()
+                seed_pages.clear()
+
+        # Phase 2: Crawl seed paths + discovered links
+        pages_to_crawl = []
+        for url in seed_pages[1:]:  # Skip homepage (already crawled)
+            if url not in crawled_urls:
+                pages_to_crawl.append(url)
+        # Discovered pages go after seeds (they're more likely to succeed)
+        for url in discovered_pages:
+            if url not in crawled_urls and url not in pages_to_crawl:
+                pages_to_crawl.append(url)
+
+        for page_url in pages_to_crawl[:MAX_PAGES - 1]:  # -1 for homepage
+            if time.monotonic() - t0 > WALL_CLOCK_LIMIT:
+                break
+            if page_url in crawled_urls:
+                continue
+            crawled_urls.add(page_url)
             try:
                 resp = await client.get(page_url)
                 if resp.status_code == 200 and len(resp.text) > 500:
                     all_emails.extend(extract_emails(resp.text))
                     all_phones.extend(extract_phones(resp.text))
                     all_social.update(extract_social_links(resp.text))
-            except CurlClientError as exc:
-                err_str = str(exc).lower()
-                if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
-                    break
+                    all_html.append(resp.text)
+            except CurlClientError:
+                continue  # Page doesn't exist or timed out, try next
+
+    # ── SIRET extraction from all crawled HTML ──────────────────
+    found_siren = None
+    for html_chunk in all_html:
+        s = extract_siret(html_chunk)
+        if s:
+            found_siren = s
+            break
     
     # Select best email and phone — now with company context
     from fortress.module_d.enricher import _best_email, _best_phone
@@ -416,6 +476,7 @@ async def crawl_website_sync(siren: str):
 
     # ── Fix 2: Protect Maps/Upload data from overwrite ──────────
     # Read existing trusted data BEFORE upserting
+    siret_merge_info = None
     async with get_conn() as conn:
         existing_rows = await (await conn.execute(
             "SELECT phone, email, source FROM contacts WHERE siren = %s AND source IN ('google_maps', 'upload', 'client_upload', 'manual_edit')",
@@ -439,6 +500,33 @@ async def crawl_website_sync(siren: str):
             protected_fields.append(f"email kept: {existing_email} (crawler found: {extracted['email']})")
             del extracted["email"]
 
+        # ── SIRET merge: link MAPS entity to real company ────────
+        if found_siren and found_siren != siren:
+            real_co = await (await conn.execute(
+                "SELECT siren, denomination FROM companies WHERE siren = %s", (found_siren,)
+            )).fetchone()
+            if real_co:
+                siret_merge_info = {
+                    "real_siren": found_siren,
+                    "real_name": real_co[1] if isinstance(real_co, tuple) else real_co.get("denomination"),
+                }
+                # Copy crawl data to the real SIREN's contacts too
+                if extracted:
+                    merge_cols = ["siren", "source", "website"] + list(extracted.keys())
+                    merge_phs = ["%s"] * len(merge_cols)
+                    merge_vals = [found_siren, "website_crawl", website] + list(extracted.values())
+                    merge_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
+                    await conn.execute(f"""
+                        INSERT INTO contacts ({', '.join(merge_cols)}, collected_at)
+                        VALUES ({', '.join(merge_phs)}, NOW())
+                        ON CONFLICT (siren, source) DO UPDATE SET {merge_conflict}, collected_at = NOW()
+                    """, tuple(merge_vals))
+                # Log the SIRET linkage
+                await conn.execute("""
+                    INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
+                    VALUES ('SYNC_CRAWL', %s, 'siret_match', 'success', %s, NOW())
+                """, (siren, f"SIRET found on website → real SIREN {found_siren} ({siret_merge_info['real_name']})"))
+
         # ── Fix 4: Before/after audit trail ──────────────────────
         # Build detailed log with before/after and rejections
         log_parts = []
@@ -448,6 +536,9 @@ async def crawl_website_sync(siren: str):
             log_parts.append(f"PROTECTED {note}")
         for k, v in extracted.items():
             log_parts.append(f"ADDED {k}={v}")
+        if found_siren:
+            log_parts.append(f"SIRET: {found_siren}")
+        log_parts.append(f"pages: {len(crawled_urls)} crawled, {len(discovered_pages)} discovered")
         
         found_data = ", ".join(log_parts) if log_parts else "no new data"
 
@@ -481,9 +572,11 @@ async def crawl_website_sync(siren: str):
     message = "Enrichissement terminé"
     if extracted:
         message += f" — {len(extracted)} données ajoutées"
+    if siret_merge_info:
+        message += f" — SIRET trouvé: lié à {siret_merge_info['real_name']} ({siret_merge_info['real_siren']})"
     if warnings:
         message += f" ⚠️ {'; '.join(warnings)}"
-    if not extracted and not warnings:
+    if not extracted and not warnings and not siret_merge_info:
         message = "Aucun contact trouvé sur le site"
 
     return {
@@ -492,6 +585,9 @@ async def crawl_website_sync(siren: str):
         "extracted": extracted,
         "rejected": {"email": rejected_email} if rejected_email else {},
         "protected": protected_fields,
+        "siret_match": siret_merge_info,
+        "pages_crawled": len(crawled_urls),
+        "pages_discovered": len(discovered_pages),
     }
 
 
