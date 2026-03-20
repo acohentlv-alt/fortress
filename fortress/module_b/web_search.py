@@ -190,6 +190,52 @@ def is_directory_url(url: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Social media platform detection — reclassify Maps "website" → social field
+# ---------------------------------------------------------------------------
+
+# Maps often returns a social page as the business "website".
+# These should be stored in the correct social_* column, not as website.
+# Value = contacts column name, or None to discard entirely.
+SOCIAL_DOMAINS: dict[str, str | None] = {
+    "facebook.com": "social_facebook",
+    "fb.com": "social_facebook",
+    "fb.me": "social_facebook",
+    "instagram.com": "social_instagram",
+    "twitter.com": "social_twitter",
+    "x.com": "social_twitter",
+    "linkedin.com": "social_linkedin",
+    "tiktok.com": "social_tiktok",
+    "wa.me": None,           # WhatsApp deep link — not a company profile
+    "youtube.com": None,     # YouTube — no structured contact data
+    "youtu.be": None,
+}
+
+
+def classify_social_url(url: str) -> str | None:
+    """Classify a URL as a social media platform.
+
+    Returns:
+        Column name (e.g. "social_facebook") if it's a social platform.
+        None if it's a social platform with no contact value (WhatsApp, YouTube).
+        Empty string "" if it's NOT a social platform (treat as regular website).
+
+    Usage:
+        result = classify_social_url(maps_url)
+        if result:          # e.g. "social_facebook" — store in that column
+        elif result is None: # WhatsApp/YouTube — discard
+        else:               # "" — regular website, proceed with crawl
+    """
+    try:
+        netloc = urlparse(url).netloc.lower().lstrip("www.")
+    except ValueError:
+        return ""
+    for domain, column in SOCIAL_DOMAINS.items():
+        if netloc == domain or netloc.endswith("." + domain):
+            return column
+    return ""
+
+
 # Minimum character overlap required between domain and company name
 # to consider a URL match valid (prevents random unrelated domains).
 _MIN_DOMAIN_OVERLAP = 3

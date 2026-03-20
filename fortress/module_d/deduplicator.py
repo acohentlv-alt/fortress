@@ -156,22 +156,31 @@ async def upsert_contact(conn: Any, contact: Contact) -> None:
 
 
 async def upsert_officer(conn: Any, officer: Officer) -> None:
-    """Insert an officer row. Uses (siren, nom, prenom) as the natural key.
+    """Insert or update an officer row. Uses (siren, nom, prenom) as the natural key.
 
-    Duplicate officer rows (same name + same company from different sources)
-    are silently skipped via DO NOTHING.
+    On conflict, non-null incoming values fill in missing fields.
+    Existing non-null values are preserved (COALESCE).
     """
     await conn.execute(
         """
-        INSERT INTO officers (siren, nom, prenom, role, source, collected_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT DO NOTHING
+        INSERT INTO officers (siren, nom, prenom, role, civilite,
+                              email_direct, ligne_directe, source, collected_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (siren, nom, COALESCE(prenom, '')) DO UPDATE SET
+            role          = COALESCE(EXCLUDED.role,          officers.role),
+            civilite      = COALESCE(EXCLUDED.civilite,      officers.civilite),
+            email_direct  = COALESCE(EXCLUDED.email_direct,  officers.email_direct),
+            ligne_directe = COALESCE(EXCLUDED.ligne_directe, officers.ligne_directe),
+            collected_at  = EXCLUDED.collected_at
         """,
         (
             officer.siren,
             officer.nom,
             officer.prenom,
             officer.role,
+            officer.civilite,
+            officer.email_direct,
+            officer.ligne_directe,
             officer.source.value,
             officer.collected_at or datetime.now(tz=timezone.utc),
         ),

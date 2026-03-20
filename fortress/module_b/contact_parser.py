@@ -686,3 +686,199 @@ def _normalise_phone(raw: str) -> str:
 
     # Fallback — return as-is
     return digits if len(digits) >= 9 else ""
+
+
+# ---------------------------------------------------------------------------
+# Mentions Légales structured parser
+# ---------------------------------------------------------------------------
+
+# French legal pages (LCEN Article 6) must list specific information.
+# This parser understands the structure and extracts director information
+# that the generic email/phone regex would miss or misattribute.
+
+# Director role keywords — proximity matching
+_DIRECTOR_KEYWORDS = re.compile(
+    r"directeur\s+de\s+(?:la\s+)?publication"
+    r"|responsable\s+de\s+(?:la\s+)?publication"
+    r"|responsable\s+(?:de\s+)?(?:la\s+)?rédaction"
+    r"|gérant"
+    r"|gérante"
+    r"|représentant\s+légal"
+    r"|représentante\s+légale"
+    r"|président(?:e)?"
+    r"|directeur\s+général"
+    r"|directrice\s+général"
+    r"|fondateur"
+    r"|fondatrice",
+    re.IGNORECASE,
+)
+
+# Hébergeur section — everything after these keywords is about the hosting provider
+_HEBERGEUR_KEYWORDS = re.compile(
+    r"hébergeur|hébergement|hebergeur|hebergement"
+    r"|hosting\s+provider"
+    r"|site\s+hébergé"
+    r"|site\s+heberge",
+    re.IGNORECASE,
+)
+
+# Hébergeur company names (in addition to domain blacklist)
+_HEBERGEUR_NAMES = frozenset({
+    "ovh", "o2switch", "gandi", "online", "scaleway", "amazon",
+    "google cloud", "microsoft azure", "ionos", "lws", "infomaniak",
+    "planethoster", "hostinger", "cloudflare", "digitalocean",
+    "vercel", "netlify", "heroku",
+})
+
+# Employee count patterns
+_EFFECTIF_RE = re.compile(
+    r"(\d+)\s*(?:salariés?|employés?|collaborateurs?|personnes)"
+    r"|effectif\s*(?:de\s*)?:?\s*(\d+)"
+    r"|(\d+)\s+(?:ETP|équivalents?\s+temps\s+plein)",
+    re.IGNORECASE,
+)
+
+# French name pattern: 1-3 capitalized words
+_NAME_RE = re.compile(
+    r"(?:M(?:me|r|\.)?\.?\s+)?([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+){0,2})"
+    r"|([A-ZÀ-Ÿ]{2,}(?:\s+[A-ZÀ-Ÿ]{2,}){0,2})"
+)
+
+# SIREN/SIRET patterns for cross-validation
+_SIREN_RE = re.compile(r"\b(\d{3}\s?\d{3}\s?\d{3})\b")
+_SIRET_RE = re.compile(r"\b(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})\b")
+
+
+def extract_mentions_legales(
+    html: str,
+    *,
+    company_siren: str | None = None,
+    website_domain: str | None = None,
+) -> dict[str, Any]:
+    """Extract structured data from a French mentions-légales page.
+
+    Goes beyond generic regex by understanding the legal page structure:
+    1. Splits page into sections (before/after hébergeur)
+    2. Finds director name near role keywords
+    3. Extracts director email (relaxed domain matching)
+    4. Extracts employee count
+
+    Args:
+        html: Raw HTML of the mentions-légales page.
+        company_siren: Optional SIREN for cross-validation.
+        website_domain: Optional domain of company website (e.g. "company.fr").
+
+    Returns:
+        Dict with keys: director_name, director_email, director_role,
+                        director_civilite, effectif, siren_match.
+        All values may be None.
+    """
+    result: dict[str, Any] = {
+        "director_name": None,
+        "director_email": None,
+        "director_role": None,
+        "director_civilite": None,
+        "effectif": None,
+        "siren_match": None,  # True/False/None
+    }
+
+    # Strip HTML tags for text analysis
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # ── Split at hébergeur section ─────────────────────────────────
+    # Everything before the hébergeur section is company data.
+    # Everything after is hosting provider data — skip it.
+    hebergeur_match = _HEBERGEUR_KEYWORDS.search(text)
+    company_section = text[:hebergeur_match.start()] if hebergeur_match else text
+
+    # ── SIREN cross-validation ─────────────────────────────────────
+    if company_siren:
+        siren_clean = company_siren.replace(" ", "")
+        for m in _SIREN_RE.finditer(company_section):
+            found_siren = m.group(1).replace(" ", "")
+            if found_siren == siren_clean:
+                result["siren_match"] = True
+                break
+            elif len(found_siren) == 9 and found_siren != siren_clean:
+                # Found a different SIREN — might be wrong site
+                result["siren_match"] = False
+
+    # ── Director name + role ───────────────────────────────────────
+    for role_match in _DIRECTOR_KEYWORDS.finditer(company_section):
+        role_text = role_match.group(0).strip()
+        # Look for a name within 150 characters after the keyword
+        context = company_section[role_match.start():role_match.end() + 150]
+
+        # Determine civilité
+        civilite = None
+        context_lower = context.lower()
+        if any(w in context_lower for w in ("mme", "madame", "gérante", "directrice",
+                                             "représentante", "présidente", "fondatrice")):
+            civilite = "Mme"
+        elif any(w in context_lower for w in ("m.", "monsieur", "gérant ", "directeur",
+                                               "représentant ", "président ", "fondateur")):
+            civilite = "M."
+
+        # Find name after the role keyword
+        after_keyword = company_section[role_match.end():role_match.end() + 150]
+        # Clean up separators: "Directeur de la publication : Jean Dupont"
+        after_keyword = re.sub(r"^[\s:–—\-]+", "", after_keyword)
+
+        name_match = _NAME_RE.search(after_keyword)
+        if name_match:
+            name = (name_match.group(1) or name_match.group(2) or "").strip()
+            # Reject if name matches a known hébergeur
+            if name and name.lower() not in _HEBERGEUR_NAMES and len(name) > 3:
+                result["director_name"] = name
+                result["director_role"] = role_text.title()
+                result["director_civilite"] = civilite
+                break
+
+    # ── Director email ─────────────────────────────────────────────
+    # Extract all emails from the company section (before hébergeur)
+    all_emails = _EMAIL_RE.findall(company_section)
+
+    for email in all_emails:
+        email_lower = email.lower()
+        local_part = email_lower.split("@")[0]
+        domain = email_lower.split("@")[-1]
+
+        # Skip junk emails (same filters as generic parser)
+        if local_part in _JUNK_EMAIL_PREFIXES:
+            continue
+        if domain in _JUNK_INFRASTRUCTURE_DOMAINS:
+            continue
+        if domain in _WEB_AGENCY_DOMAINS:
+            continue
+        # Skip image file extensions misidentified as emails
+        ext = domain.rsplit(".", 1)[-1]
+        if ext in _IMAGE_EXTENSIONS:
+            continue
+        if _UUID_LOCAL_RE.match(local_part):
+            continue
+
+        # Prefer domain-matching email, but accept personal domains too
+        if website_domain:
+            website_dom = website_domain.lower().lstrip("www.")
+            if domain == website_dom:
+                result["director_email"] = email
+                break
+        # If no website domain or no match yet, accept this email
+        if result["director_email"] is None:
+            result["director_email"] = email
+
+    # ── Employee count ─────────────────────────────────────────────
+    effectif_match = _EFFECTIF_RE.search(company_section)
+    if effectif_match:
+        count = effectif_match.group(1) or effectif_match.group(2) or effectif_match.group(3)
+        if count:
+            try:
+                effectif = int(count)
+                if 1 <= effectif <= 100000:  # Sanity check
+                    result["effectif"] = effectif
+            except ValueError:
+                pass
+
+    return result
+

@@ -23,6 +23,8 @@ class ContactSource(StrEnum):
     ANNUAIRE_ENTREPRISES = "annuaire_entreprises"
     DIRECTORY_SEARCH = "directory_search"
     PAGES_JAUNES = "pages_jaunes"
+    MENTIONS_LEGALES = "mentions_legales"
+    GOOGLE_CSE = "google_cse"
 
 
 class EmailType(StrEnum):
@@ -99,6 +101,9 @@ class Officer(BaseModel):
     nom: str
     prenom: str | None = None
     role: str | None = None
+    civilite: str | None = None
+    email_direct: str | None = None
+    ligne_directe: str | None = None
     source: ContactSource = ContactSource.INPI
     collected_at: datetime | None = None
 

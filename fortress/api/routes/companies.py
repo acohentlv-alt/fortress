@@ -126,6 +126,18 @@ async def update_company_fields(siren: str, body: dict):
             """, tuple(values))
             saved.extend(ct_updates.keys())
 
+            # ── Deletion propagation ─────────────────────────────
+            # When user CLEARS a field (sets to None/empty), also NULL
+            # that field in ALL other source rows so _merge_contacts()
+            # can't pull the deleted value back from website_crawl etc.
+            deleted_fields = [k for k, v in ct_updates.items() if not v]
+            if deleted_fields:
+                for field in deleted_fields:
+                    await conn.execute(f"""
+                        UPDATE contacts SET {field} = NULL
+                        WHERE siren = %s AND source != 'manual_edit'
+                    """, (siren,))
+
         # Audit trail with before/after
         for field, value in updates.items():
             old_val = before_values.get(field)
@@ -878,12 +890,57 @@ async def get_company(siren: str):
 
 
 def _merge_contacts(contacts: list[dict]) -> dict:
-    """Merge all contact rows into a single best-of dict with per-field provenance."""
-    merged = {
-        "phone": None, "phone_source": None,
-        "email": None, "email_source": None,
+    """Merge all contact rows into a single best-of dict with per-field provenance.
+
+    Source priority (highest to lowest):
+        Tier 1: manual_edit, upload          (human-verified)
+        Tier 2: website_crawl, mentions_legales  (found on company's own site)
+        Tier 3: google_maps, google_cse      (external discovery)
+        Tier 4: recherche_entreprises        (government API)
+        Tier 5: sirene, google_search, etc.  (baseline/legacy)
+
+    Special rules:
+        - address: Maps always wins unless manual_edit overrides (SIRENE address often differs)
+        - rating/maps_url: Only from google_maps (no other source provides these)
+
+    Returns merged dict with *_source provenance AND *_alt alternate values for UI.
+    """
+    _SOURCE_PRIORITY: dict[str, int] = {
+        "manual_edit": 0,
+        "upload": 1,
+        "website_crawl": 2,
+        "mentions_legales": 2,
+        "google_maps": 3,
+        "google_cse": 3,
+        "recherche_entreprises": 4,
+        "sirene": 5,
+        "google_search": 5,
+        "directory_search": 5,
+        "pages_jaunes": 5,
+        "inpi": 5,
+        "synthesized": 6,
+        "annuaire_entreprises": 5,
+    }
+
+    # Sort contacts by source priority (best first)
+    sorted_contacts = sorted(
+        contacts,
+        key=lambda c: _SOURCE_PRIORITY.get(c.get("source", ""), 99),
+    )
+
+    # Fields to merge with standard priority logic
+    MERGE_FIELDS = (
+        "phone", "email", "website",
+        "social_linkedin", "social_facebook", "social_twitter",
+        "social_instagram", "social_tiktok",
+        "maps_url",
+    )
+
+    merged: dict = {
+        "phone": None, "phone_source": None, "phone_alt": None,
+        "email": None, "email_source": None, "email_alt": None,
         "email_type": None,
-        "website": None, "website_source": None,
+        "website": None, "website_source": None, "website_alt": None,
         "social_linkedin": None, "social_linkedin_source": None,
         "social_facebook": None, "social_facebook_source": None,
         "social_twitter": None, "social_twitter_source": None,
@@ -892,19 +949,26 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         "rating": None, "rating_source": None,
         "review_count": None,
         "maps_url": None, "maps_url_source": None,
-        "address": None, "address_source": None,
+        "address": None, "address_source": None, "address_alt": None,
         "sources": [],
     }
-    for c in contacts:
+
+    for c in sorted_contacts:
         src = c.get("source")
         if src:
             merged["sources"].append(src)
-        for key in ("phone", "email", "website", "social_linkedin",
-                     "social_facebook", "social_twitter", "social_instagram",
-                     "social_tiktok", "maps_url", "address"):
-            if merged[key] is None and c.get(key):
-                merged[key] = c[key]
-                merged[f"{key}_source"] = src
+        for key in MERGE_FIELDS:
+            if c.get(key):
+                if merged[key] is None:
+                    # First (highest-priority) non-null wins
+                    merged[key] = c[key]
+                    merged[f"{key}_source"] = src
+                else:
+                    # Store alternate value for UI display (if different)
+                    alt_key = f"{key}_alt"
+                    if alt_key in merged and merged[alt_key] is None and c[key] != merged[key]:
+                        merged[alt_key] = {"value": c[key], "source": src}
+
         if merged["email_type"] is None and c.get("email_type"):
             merged["email_type"] = c["email_type"]
         if merged["rating"] is None and c.get("rating"):
@@ -912,5 +976,28 @@ def _merge_contacts(contacts: list[dict]) -> dict:
             merged["review_count"] = c.get("review_count")
             merged["rating_source"] = src
 
-    merged["sources"] = list(set(merged["sources"]))
+    # ── Special rule: address — Maps always wins (unless manual_edit) ──
+    # SIRENE address often differs from real business location.
+    # Maps address is verified by Google and represents actual location.
+    maps_addr = None
+    manual_addr = None
+    for c in sorted_contacts:
+        src = c.get("source")
+        if c.get("address"):
+            if src == "manual_edit" and not manual_addr:
+                manual_addr = c["address"]
+            elif src == "google_maps" and not maps_addr:
+                maps_addr = c["address"]
+
+    if manual_addr:
+        merged["address"] = manual_addr
+        merged["address_source"] = "manual_edit"
+        if maps_addr and maps_addr != manual_addr:
+            merged["address_alt"] = {"value": maps_addr, "source": "google_maps"}
+    elif maps_addr:
+        merged["address"] = maps_addr
+        merged["address_source"] = "google_maps"
+
+    merged["sources"] = list(dict.fromkeys(merged["sources"]))  # dedupe, preserve order
     return merged
+

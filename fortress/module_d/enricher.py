@@ -47,6 +47,7 @@ from fortress.models import Company, Contact, ContactSource
 from fortress.module_b.contact_parser import _is_valid_french_phone, is_junk_email, is_personal_email
 from fortress.module_b.web_search import (
     _is_individual_operator,
+    classify_social_url,
     is_directory_url,
 )
 from fortress.module_c.curl_client import CurlClient, CurlClientError
@@ -828,6 +829,7 @@ async def _enrich_one(
     maps_result: dict[str, Any] = {}
     maps_phone: str | None = None
     maps_website: str | None = None
+    social: dict[str, str] = {}  # Initialised here so Maps social URLs can be stored
     match_confidence: str = "none"  # Default: no Maps data
 
     if maps_scraper is not None and not skip_maps:
@@ -952,15 +954,38 @@ async def _enrich_one(
             seen_phones.add(maps_phone)
         raw_website = maps_result.get("website")
         if raw_website and not is_directory_url(raw_website):
-            # Normalise to base URL
-            try:
-                parsed = urlparse(raw_website)
-                if parsed.scheme and parsed.netloc:
-                    maps_website = f"{parsed.scheme}://{parsed.netloc}"
-                else:
+            # ── Social URL reclassification ───────────────────────
+            # Maps often returns Facebook/Instagram as the "website".
+            # Detect and reclassify into the correct social_* field.
+            social_col = classify_social_url(raw_website)
+            if social_col:
+                # It's a social platform (Facebook, Instagram, etc.)
+                # Store in the correct social column, NOT as website
+                social[social_col] = raw_website
+                log.info(
+                    "enricher.social_url_reclassified",
+                    siren=siren,
+                    url=raw_website,
+                    column=social_col,
+                )
+            elif social_col is None:
+                # WhatsApp/YouTube — no contact value, discard
+                log.debug(
+                    "enricher.social_url_discarded",
+                    siren=siren,
+                    url=raw_website,
+                    reason="No contact value (WhatsApp/YouTube)",
+                )
+            else:
+                # Regular website — normalise and use for crawl
+                try:
+                    parsed = urlparse(raw_website)
+                    if parsed.scheme and parsed.netloc:
+                        maps_website = f"{parsed.scheme}://{parsed.netloc}"
+                    else:
+                        maps_website = raw_website
+                except ValueError:
                     maps_website = raw_website
-            except ValueError:
-                maps_website = raw_website
     else:
         log.warning(
             "enricher.no_maps_scraper",
@@ -975,13 +1000,14 @@ async def _enrich_one(
     #           (NOT for DNS/SSL failures — those won't work in Playwright either).
     crawl_result: dict[str, Any] = {}
     best_email: str | None = None
-    social: dict[str, str] = {}
+    # social is initialised above (before Maps) so Maps social URLs can be stored
 
     if maps_website:
         from fortress.module_b.contact_parser import (
             extract_emails as _extract_emails,
             extract_phones as _extract_phones,
             extract_social_links as _extract_social,
+            extract_mentions_legales as _extract_ml,
         )
         from urllib.parse import urlparse as _urlparse
 
@@ -1008,6 +1034,7 @@ async def _enrich_one(
             f"{root_url}/a-propos",
         ]
         pages_visited = 0
+        mentions_legales_html: str | None = None  # Capture for structured parsing
 
         curl_crawl = CurlClient(timeout=8.0, max_retries=1, delay_min=0.3, delay_max=0.5, delay_jitter=0.0)
         try:
@@ -1020,6 +1047,9 @@ async def _enrich_one(
                         page_social = _extract_social(resp.text)
                         all_social.update(page_social)
                         pages_visited += 1
+                        # Capture mentions-légales HTML for structured parsing
+                        if "mentions-legales" in page_url or "mentions_legales" in page_url:
+                            mentions_legales_html = resp.text
                 except CurlClientError as exc:
                     # DNS or SSL failure — Playwright won't help either
                     err_str = str(exc).lower()
@@ -1107,7 +1137,42 @@ async def _enrich_one(
         raw_emails: list[str] = crawl_result.get("emails", [])
         clean_emails = [e for e in raw_emails if not is_junk_email(e)]
         best_email = _best_email(clean_emails, maps_website, siren, company_name=denomination)
-        social = crawl_result.get("social", {})
+        crawl_social = crawl_result.get("social", {})
+        social.update(crawl_social)  # Merge crawl social into Maps social
+
+        # ── Step 2b: Mentions Légales structured parsing ──────────────────
+        # If we fetched the mentions-legales page, run the structured parser
+        # to extract director info, employee count, and cross-validate SIREN.
+        ml_result: dict = {}
+        if mentions_legales_html:
+            try:
+                _parsed_domain = _urlparse(maps_website)
+                website_domain = _parsed_domain.netloc.lower().lstrip("www.")
+            except Exception:
+                website_domain = None
+
+            ml_result = _extract_ml(
+                mentions_legales_html,
+                company_siren=siren,
+                website_domain=website_domain,
+            )
+            log.info(
+                "enricher.mentions_legales_parsed",
+                siren=siren,
+                director_name=ml_result.get("director_name"),
+                director_email=ml_result.get("director_email"),
+                effectif=ml_result.get("effectif"),
+                siren_match=ml_result.get("siren_match"),
+            )
+
+            # Use director email if we haven't found one yet
+            if not best_email and ml_result.get("director_email"):
+                best_email = ml_result["director_email"]
+                log.info(
+                    "enricher.email_from_mentions_legales",
+                    siren=siren,
+                    email=best_email,
+                )
 
         # Crawl may also find phone numbers — merge with Maps phone
         if not maps_phone:
