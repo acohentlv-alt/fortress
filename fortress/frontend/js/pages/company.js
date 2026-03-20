@@ -405,7 +405,7 @@ function _initSpiderCrawl(siren, container) {
                 spiderBtn.disabled = false;
             }
         } catch (err) {
-            showToast('Erreur réseau lors du crawl', 'error');
+            showToast(`Erreur crawl: ${err.message || 'réseau indisponible'}`, 'error');
             spiderBtn.innerHTML = originalHtml;
             spiderBtn.disabled = false;
         }
