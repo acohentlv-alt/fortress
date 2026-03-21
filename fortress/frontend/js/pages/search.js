@@ -120,7 +120,7 @@ export async function renderSearch(container) {
     // ── Search function ──────────────────────────────────────────
     async function doSearch(q, offset = 0) {
         const hasFilters = !!(currentDepartment || currentNafCode);
-        if ((!q || q.length < 2) && !hasFilters) {
+        if (!q && !hasFilters) {
             resultsEl.innerHTML = '';
             return;
         }
@@ -182,10 +182,11 @@ export async function renderSearch(container) {
         const hasNext = currentOffset + PAGE_SIZE < total;
         const hasPrev = currentOffset > 0;
 
+        const termLabel = q ? `pour "${escapeHtml(q)}"` : 'pour les filtres sélectionnés';
         resultsEl.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-lg)">
                 <p style="font-size:var(--font-sm); color:var(--text-secondary); margin:0">
-                    ${total} résultat${total > 1 ? 's' : ''} pour "${escapeHtml(q)}"
+                    <strong>${total.toLocaleString('fr-FR')}</strong> résultat${total > 1 ? 's' : ''} ${termLabel}
                     ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
                 </p>
             </div>

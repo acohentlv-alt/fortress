@@ -91,12 +91,13 @@ async def search_sirene(
                         where_parts.append("naf_code ILIKE %s")
                         params.append(f"{clean_q}%")
                     else:
-                        # Fuzzy name search via trigram similarity
+                        # Hybrid fuzzy search: trigram similarity + substring match
                         # Uses idx_companies_denomination_trgm (GIN index)
-                        # Set a low threshold to be permissive (e.g. "cev" → "CEVA")
+                        # Threshold 0.15 is permissive for "cev" → "CEVA"
                         await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
-                        where_parts.append("denomination %% %s")
+                        where_parts.append("(denomination % % %s OR denomination ILIKE %s)")
                         params.append(clean_q)
+                        params.append(f"%{clean_q}%")
                         similarity_q = clean_q
 
                 # Optional filters
