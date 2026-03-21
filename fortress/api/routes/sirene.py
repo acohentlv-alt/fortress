@@ -63,8 +63,8 @@ async def search_sirene(
 
     try:
         async with get_conn() as conn:
-            # Set statement timeout (5 seconds) to protect against slow queries
-            await conn.execute("SET LOCAL statement_timeout = '5000ms'")
+            # Set statement timeout (10 seconds) for large SIRENE queries
+            await conn.execute("SET LOCAL statement_timeout = '10000ms'")
 
             if is_siren:
                 # Exact SIREN lookup — uses PK index (instant)
@@ -94,8 +94,9 @@ async def search_sirene(
                         # Hybrid fuzzy search: trigram similarity + substring match
                         # Uses idx_companies_denomination_trgm (GIN index)
                         # Threshold 0.15 is permissive for "cev" → "CEVA"
+                        # Use similarity() function to avoid % placeholder escaping issues
                         await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
-                        where_parts.append("(denomination %% %s OR denomination ILIKE %s)")
+                        where_parts.append("(similarity(denomination, %s) > 0.15 OR denomination ILIKE %s)")
                         params.append(clean_q)
                         params.append(f"%{clean_q}%")
                         similarity_q = clean_q
