@@ -355,7 +355,7 @@ export async function renderCompany(container, siren) {
                     ${detailRow('Twitter', formatSocial(mc.social_twitter, 'Profil Twitter'), sourceLabel(mc.social_twitter_source), 'social_twitter', mc.social_twitter || '')}
                     ${detailRow('Instagram', formatSocial(mc.social_instagram, 'Profil Instagram'), sourceLabel(mc.social_instagram_source), 'social_instagram', mc.social_instagram || '')}
                     ${detailRow('TikTok', formatSocial(mc.social_tiktok, 'Profil TikTok'), sourceLabel(mc.social_tiktok_source), 'social_tiktok', mc.social_tiktok || '')}
-                    ${detailRow('WhatsApp', mc.social_whatsapp ? `<a href="${mc.social_whatsapp}" target="_blank">💬 WhatsApp ↗</a>` : '<span style="color:var(--text-disabled)">—</span>', sourceLabel(mc.social_whatsapp_source), 'social_whatsapp', mc.social_whatsapp || '')}
+                    ${detailRow('WhatsApp', formatSocial(mc.social_whatsapp, '💬 WhatsApp'), sourceLabel(mc.social_whatsapp_source), 'social_whatsapp', mc.social_whatsapp || '')}
                     ${detailRow('YouTube', formatSocial(mc.social_youtube, 'Chaîne YouTube'), sourceLabel(mc.social_youtube_source), 'social_youtube', mc.social_youtube || '')}
                 </div>
 

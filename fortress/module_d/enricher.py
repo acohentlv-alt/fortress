@@ -757,6 +757,8 @@ async def enrich_companies(
                             _update_vals.append(re_company_data["tranche_effectif"])
                         if _update_parts:
                             _update_vals.append(company.siren)
+                            # chiffre_affaires = direct overwrite (API has latest fiscal year)
+                            # tranche_effectif = COALESCE (keep SIRENE data if already set)
                             await conn.execute(
                                 f"UPDATE companies SET {', '.join(_update_parts)} WHERE siren = %s",
                                 tuple(_update_vals),
