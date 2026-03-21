@@ -75,6 +75,27 @@ async def list_departments():
     return result
 
 
+@router.get("/{dept}")
+async def get_department_detail(dept: str):
+    """Get enriched companies in this department."""
+    rows = await fetch_all("""
+        SELECT DISTINCT ON (co.siren)
+            co.siren, co.denomination, co.naf_code, co.naf_libelle,
+            co.ville, co.code_postal,
+            ct.phone, ct.email, ct.website
+        FROM batch_tags qt
+        JOIN companies co ON co.siren = qt.siren
+        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        WHERE co.departement = %s
+        ORDER BY co.siren
+    """, (dept,))
+    return {
+        "department": dept,
+        "department_name": _DEPT_NAMES.get(dept, dept),
+        "companies": rows or []
+    }
+
+
 @router.get("/{dept}/jobs")
 async def get_department_jobs(dept: str):
     """All jobs that have companies in this department."""

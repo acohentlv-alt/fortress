@@ -48,6 +48,7 @@ def _format_count(exact_count: int) -> dict:
     return {"total": exact_count, "display": f"{thousands:.1f}K+", "exact": False}
 
 
+@router.get("")
 @router.get("/list")
 async def list_contacts(
     q: str = Query(None, description="Search by name, SIREN, phone, or email"),

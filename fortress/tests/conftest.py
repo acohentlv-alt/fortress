@@ -1,115 +1,120 @@
+"""Fortress Test Infrastructure — Real DB + TestClient + Auth Fixtures.
+
+Two test modes:
+  1. INTEGRATION: hits the real Neon DB (read-only queries, no mutations)
+  2. MOCK: uses mocked DB for fast unit tests
+
+Usage:
+  pytest fortress/tests/ -v --timeout=30
+"""
+
+import os
 import pytest
+import pytest_asyncio
+import httpx
 from unittest.mock import patch, MagicMock, AsyncMock
 
-@pytest.fixture(autouse=True)
-def mock_db_global():
-    # Global mocks for all DB interactions
+# ── Ensure DATABASE_URL is set for integration tests ─────────────────
+NEON_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://neondb_owner:npg_1bgBYwTSa5UP@ep-noisy-tree-agzjuw4w-pooler.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require",
+)
+os.environ["DATABASE_URL"] = NEON_URL
+
+
+# ── 1. Real DB connection fixture (integration tests) ────────────────
+
+@pytest_asyncio.fixture(scope="session")
+async def db_conn():
+    """A single real psycopg async connection to Neon, shared across all tests.
+    
+    All queries should be READ-ONLY or wrapped in a SAVEPOINT+ROLLBACK.
+    """
+    import psycopg
+    conn = await psycopg.AsyncConnection.connect(NEON_URL, row_factory=psycopg.rows.dict_row)
+    yield conn
+    await conn.close()
+
+
+# ── 2. FastAPI TestClient fixture (real app, mocked pool) ────────────
+
+@pytest_asyncio.fixture(scope="session")
+async def app_client():
+    """Async httpx client for the real Fortress FastAPI app.
+    
+    - Uses the real lifespan (connects to Neon DB)
+    - Uses the real middleware, real routes
+    - Auth: admin session cookie injected automatically
+    """
+    from fortress.api.auth import create_session_token
+    from fortress.api.main import app
+
+    # Create admin token for tests
+    admin_token = create_session_token(user_id=1, username="test_admin", role="admin")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+        cookies={"fortress_session": admin_token},
+    ) as client:
+        yield client
+
+
+# ── 3. Auth helper fixtures ──────────────────────────────────────────
+
+@pytest.fixture
+def admin_cookie():
+    """Returns a valid admin session cookie value."""
+    from fortress.api.auth import create_session_token
+    return create_session_token(user_id=1, username="test_admin", role="admin")
+
+
+@pytest.fixture
+def user_cookie():
+    """Returns a valid non-admin session cookie value."""
+    from fortress.api.auth import create_session_token
+    return create_session_token(user_id=2, username="test_user", role="user")
+
+
+# ── 4. Mock DB fixture (for unit tests that don't need real DB) ──────
+
+@pytest.fixture
+def mock_db():
+    """Provides mock DB functions for fast unit tests."""
     m_fetch_one = AsyncMock(return_value=None)
     m_fetch_all = AsyncMock(return_value=[])
-    m_execute = AsyncMock()
     m_conn = AsyncMock()
-    
-    # Psycopg 3: conn.cursor() is sync, returns an async context manager
     m_cursor = AsyncMock()
+    
     m_cursor_acm = MagicMock()
     m_cursor_acm.__aenter__ = AsyncMock(return_value=m_cursor)
     m_cursor_acm.__aexit__ = AsyncMock(return_value=None)
     m_conn.cursor = MagicMock(return_value=m_cursor_acm)
     
-    # Mock connection context manager
     m_cm = MagicMock()
     m_cm.__aenter__ = AsyncMock(return_value=m_conn)
     m_cm.__aexit__ = AsyncMock(return_value=None)
     
-    # Mock Crawler internals (source modules)
-    m_curl_resp = MagicMock()
-    m_curl_resp.status_code = 200
-    m_curl_resp.text = "<html><body>contact@realbusiness.fr</body></html>"
-    
-    m_curl_client = AsyncMock()
-    m_curl_client.get = AsyncMock(return_value=m_curl_resp)
-    m_curl_client.__aenter__ = AsyncMock(return_value=m_curl_client)
-    m_curl_client.__aexit__ = AsyncMock(return_value=None)
-    
-    m_curl_class = MagicMock(return_value=m_curl_client)
+    return {
+        "fetch_one": m_fetch_one,
+        "fetch_all": m_fetch_all,
+        "conn": m_conn,
+        "cursor": m_cursor,
+        "get_conn": MagicMock(return_value=m_cm),
+    }
 
-    modules_to_patch = [
-        "fortress.api.db",
-        "fortress.api.routes.auth",
-        "fortress.api.routes.notes",
-        "fortress.api.routes.activity",
-        "fortress.api.routes.companies",
-        "fortress.api.routes.batch",
-        "fortress.api.routes.admin",
-    ]
-    
-    stack = []
-    try:
-        # Patch source modules for crawler and enricher
-        stack.append(patch("fortress.module_c.curl_client.CurlClient", m_curl_class))
-        stack.append(patch("fortress.module_b.contact_parser.extract_emails", MagicMock(return_value=["contact@realbusiness.fr"])))
-        stack.append(patch("fortress.module_b.contact_parser.extract_phones", MagicMock(return_value=[])))
-        stack.append(patch("fortress.module_b.contact_parser.extract_social_links", MagicMock(return_value={})))
-        stack.append(patch("fortress.module_d.enricher._best_email", MagicMock(return_value="contact@realbusiness.fr")))
-        stack.append(patch("fortress.module_d.enricher._best_phone", MagicMock(return_value=None)))
-        
-        for p in stack:
-            p.start()
 
-        for mod in modules_to_patch:
-            # Patch fetch_one, fetch_all, execute, get_conn if they exist in the module
-            for func_name, mock_obj in [
-                ("fetch_one", m_fetch_one),
-                ("fetch_all", m_fetch_all),
-                ("execute", m_execute),
-                ("get_conn", m_cm),
-            ]:
-                try:
-                    p = patch(f"{mod}.{func_name}", mock_obj)
-                    stack.append(p)
-                    p.start()
-                except AttributeError:
-                    pass
+# ── 5. Backend URL for live server tests (Playwright) ────────────────
 
-        for mod in modules_to_patch:
-            # Patch fetch_one, fetch_all, execute, get_conn if they exist in the module
-            for func_name, mock_obj in [
-                ("fetch_one", m_fetch_one),
-                ("fetch_all", m_fetch_all),
-                ("execute", m_execute),
-                ("get_conn", m_cm),
-            ]:
-                try:
-                    p = patch(f"{mod}.{func_name}", mock_obj)
-                    stack.append(p)
-                    p.start()
-                except AttributeError:
-                    pass
-        
-        # Additional lifespan mocks
-        p1 = patch("fortress.api.db.pool_status", return_value={"connected": True})
-        p2 = patch("fortress.api.db.init_pool", AsyncMock())
-        p3 = patch("fortress.api.db.close_pool", AsyncMock())
-        for p in [p1, p2, p3]:
-            stack.append(p)
-            p.start()
-            
-        yield {
-            "fetch_one": m_fetch_one,
-            "fetch_all": m_fetch_all,
-            "conn": m_conn,
-            "cursor": m_cursor
-        }
-    finally:
-        for p in reversed(stack):
-            try: p.stop()
-            except: pass
+LIVE_URL = os.environ.get("FORTRESS_URL", "https://fortress-m4sd.onrender.com")
 
-@pytest.fixture
-def mock_auth():
-    # Patch decode_session_token in main.py (middleware)
-    with patch("fortress.api.main.decode_session_token") as mock_decode:
-        yield mock_decode
+@pytest.fixture(scope="session")
+def live_url():
+    """Base URL of the running Fortress instance (for Playwright E2E tests)."""
+    return LIVE_URL
+
+
+# ── 6. Session-scoped asyncio backend ────────────────────────────────
 
 @pytest.fixture(scope="session")
 def anyio_backend():

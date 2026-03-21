@@ -336,20 +336,36 @@ export async function renderCompany(container, siren) {
                 <!-- Contact Card -->
                 <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">📞 Contact</h3>
+                    ${data.siren_match === false ? `
+                    <div class="siren-mismatch-banner" style="
+                        background: rgba(255,193,7,0.12);
+                        border: 1px solid rgba(255,193,7,0.4);
+                        border-radius: var(--radius-md);
+                        padding: var(--space-md) var(--space-lg);
+                        margin-bottom: var(--space-md);
+                        display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap;
+                    ">
+                        <span style="font-size:1.3rem">⚠️</span>
+                        <span style="flex:1; color:var(--warning); font-size:var(--font-sm); font-weight:500">
+                            Le SIREN trouvé sur le site web ne correspond pas à cette entreprise.
+                            Les données du site peuvent appartenir à une autre société.
+                        </span>
+                    </div>
+                    ` : ''}
                     ${detailRow('Téléphone', mc.phone
                         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
                         : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}
-                    ${mc.phone_alt ? altValueRow(mc.phone_alt) : ''}
+                    ${mc.phone_alt ? conflictRow(mc.phone_alt, 'phone', co.siren, mc.phone, mc.phone_source) : ''}
                     ${detailRow('Email', mc.email
-                        ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}</a>${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}`
+                        ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}</a>`
                         : unenrichedField('contact_web'), sourceLabel(mc.email_source), 'email', mc.email || '')}
-                    ${mc.email_alt ? altValueRow(mc.email_alt) : ''}
+                    ${mc.email_alt ? conflictRow(mc.email_alt, 'email', co.siren, mc.email, mc.email_source) : ''}
                     ${detailRow('Site web', mc.website
                         ? `<div style="display:flex; align-items:center; gap:var(--space-xs)"><a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank">${escapeHtml(mc.website)}</a> <button class="btn-spider-crawl" data-siren="${co.siren}" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0; line-height:1; display:flex; align-items:center;" title="Scanner ce site pour extraire les contacts (emails, réseaux sociaux)">🔍</button></div>`
                         : unenrichedField('contact_web'), sourceLabel(mc.website_source), 'website', mc.website || '')}
-                    ${mc.website_alt ? altValueRow(mc.website_alt) : ''}
+                    ${mc.website_alt ? conflictRow(mc.website_alt, 'website', co.siren, mc.website, mc.website_source) : ''}
                     ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
-                    ${mc.address_alt ? altValueRow(mc.address_alt) : ''}
+                    ${mc.address_alt ? conflictRow(mc.address_alt, 'address', co.siren, mc.address, mc.address_source) : ''}
                     ${detailRow('LinkedIn', formatSocial(mc.social_linkedin, 'Profil LinkedIn'), sourceLabel(mc.social_linkedin_source), 'social_linkedin', mc.social_linkedin || '')}
                     ${detailRow('Facebook', formatSocial(mc.social_facebook, 'Page Facebook'), sourceLabel(mc.social_facebook_source), 'social_facebook', mc.social_facebook || '')}
                     ${detailRow('Twitter', formatSocial(mc.social_twitter, 'Profil Twitter'), sourceLabel(mc.social_twitter_source), 'social_twitter', mc.social_twitter || '')}
@@ -515,6 +531,45 @@ export async function renderCompany(container, siren) {
 
     // ── Spider Crawl logic ───────────────────────────────────────
     _initSpiderCrawl(siren, container);
+
+    // ── Merge conflict buttons (Utiliser / Ignorer) ─────────────
+    container.querySelectorAll('.btn-merge-use').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const field = btn.dataset.field;
+            const value = btn.dataset.value;
+            const s = btn.dataset.siren;
+            btn.disabled = true;
+            btn.textContent = '⏳...';
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${s}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ [field]: value }),
+                });
+                if (res.ok) {
+                    showToast(`✅ ${field} mis à jour`, 'success');
+                    await renderCompany(container, siren);
+                } else {
+                    showToast('Erreur lors de la mise à jour', 'error');
+                    btn.disabled = false;
+                    btn.textContent = '✅ Utiliser';
+                }
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+                btn.disabled = false;
+                btn.textContent = '✅ Utiliser';
+            }
+        });
+    });
+    container.querySelectorAll('.btn-merge-dismiss').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const field = btn.dataset.field;
+            const s = btn.dataset.siren;
+            localStorage.setItem(`dismissed_conflict_${s}_${field}`, '1');
+            const row = btn.closest('.conflict-row');
+            if (row) row.style.display = 'none';
+        });
+    });
 
     // ── Load Unified History (Enrichments + Notes) ────────────────
     _loadEnrichHistory(siren, data.history || []);
@@ -897,6 +952,45 @@ function altValueRow(alt) {
     return `<div class="detail-row" style="padding-left:var(--space-lg); opacity:0.6; font-size:var(--font-sm)">
         <span class="detail-label">↳ aussi</span>
         <span class="detail-value">${escapeHtml(alt.value)} <span class="provenance-badge" title="Source : ${src}">ℹ️</span></span>
+    </div>`;
+}
+
+function conflictRow(alt, field, siren, currentValue, currentSource) {
+    if (!alt || !alt.value) return '';
+    const altSrc = sourceLabel(alt.source) || alt.source;
+    const curSrc = sourceLabel(currentSource) || currentSource || '?';
+    const dismissedKey = `dismissed_conflict_${siren}_${field}`;
+    if (localStorage.getItem(dismissedKey)) return '';
+    return `<div class="detail-row conflict-row" id="conflict-${field}" style="
+        font-size:var(--font-sm);
+        background: rgba(255,193,7,0.06); border-left: 3px solid var(--warning);
+        padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm);
+        margin: var(--space-xs) 0;
+    ">
+        <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-xs)">
+            <span style="color:var(--warning); font-weight:600">⚡ Conflit détecté</span>
+            <span style="color:var(--text-muted); font-size:var(--font-xs)">— deux sources différentes pour <strong>${field}</strong></span>
+        </div>
+        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-sm); flex-wrap:wrap">
+            <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); border:1px solid rgba(16,185,129,0.2)">
+                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">✅ Actuel — ${curSrc}</div>
+                <div style="color:var(--text-primary); font-weight:500">${escapeHtml(currentValue || '—')}</div>
+            </div>
+            <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(255,193,7,0.08); border-radius:var(--radius-sm); border:1px solid rgba(255,193,7,0.2)">
+                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">📦 Alternative — ${altSrc}</div>
+                <div style="color:var(--text-primary); font-weight:500">${escapeHtml(alt.value)}</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:var(--space-sm); justify-content:flex-end">
+            <button class="btn-merge-use" data-field="${field}" data-value="${alt.value.replace(/"/g, '&quot;')}" data-siren="${siren}"
+                style="background:var(--success); color:#fff; border:none; padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs); font-weight:600;">
+                ✅ Utiliser l'alternative
+            </button>
+            <button class="btn-merge-dismiss" data-field="${field}" data-siren="${siren}"
+                style="background:var(--surface-elevated); color:var(--text-secondary); border:1px solid var(--border); padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs);">
+                ❌ Ignorer
+            </button>
+        </div>
     </div>`;
 }
 

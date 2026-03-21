@@ -543,36 +543,44 @@ async def get_all_data(
 @router.get("/stats/by-sector")
 async def get_stats_by_sector(request: Request):
     """Sector-level stats using unique SIRENs from batch_tags.
-
-    Admin: all data. User: scoped to their own jobs.
-    Returns unique company counts per sector so totals match the dashboard.
+    
+    Uses a CTE to pre-split batch_name, avoiding SQL grouping violations
+    when calculating batch counts and running status in subqueries.
     """
     # Shared workspace — no user scoping
     scope_clause = ""
     scope_params: tuple = ()
 
     rows = await fetch_all(f"""
+        WITH sector_data AS (
+            SELECT 
+                qt.siren,
+                UPPER(SPLIT_PART(qt.batch_name, ' ', 1)) AS normalized_sector,
+                SPLIT_PART(qt.batch_name, ' ', 2) AS normalized_dept,
+                ct.phone, ct.email, ct.website
+            FROM batch_tags qt
+            LEFT JOIN contacts ct ON ct.siren = qt.siren
+            {scope_clause}
+        )
         SELECT
-            UPPER(SPLIT_PART(qt.batch_name, ' ', 1)) AS sector,
-            COUNT(DISTINCT qt.siren) AS companies,
-            COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
-            COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
-            COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website,
-            COUNT(DISTINCT SPLIT_PART(qt.batch_name, ' ', 2)) AS dept_count,
+            normalized_sector AS sector,
+            COUNT(DISTINCT siren) AS companies,
+            COUNT(DISTINCT CASE WHEN phone IS NOT NULL THEN siren END) AS with_phone,
+            COUNT(DISTINCT CASE WHEN email IS NOT NULL THEN siren END) AS with_email,
+            COUNT(DISTINCT CASE WHEN website IS NOT NULL THEN siren END) AS with_website,
+            COUNT(DISTINCT normalized_dept) FILTER (WHERE normalized_dept != '') AS dept_count,
             (SELECT COUNT(DISTINCT sj2.batch_id)
              FROM batch_data sj2
-             WHERE UPPER(SPLIT_PART(sj2.batch_name, ' ', 1)) = UPPER(SPLIT_PART(qt.batch_name, ' ', 1))
+             WHERE UPPER(SPLIT_PART(sj2.batch_name, ' ', 1)) = normalized_sector
                AND sj2.status != 'deleted'
             ) AS batch_count,
             (SELECT BOOL_OR(sj3.status = 'in_progress')
              FROM batch_data sj3
-             WHERE UPPER(SPLIT_PART(sj3.batch_name, ' ', 1)) = UPPER(SPLIT_PART(qt.batch_name, ' ', 1))
+             WHERE UPPER(SPLIT_PART(sj3.batch_name, ' ', 1)) = normalized_sector
             ) AS has_running,
-            ARRAY_AGG(DISTINCT SPLIT_PART(qt.batch_name, ' ', 2)) FILTER (WHERE SPLIT_PART(qt.batch_name, ' ', 2) != '') AS departments
-        FROM batch_tags qt
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
-        {scope_clause}
-        GROUP BY sector
+            ARRAY_AGG(DISTINCT normalized_dept) FILTER (WHERE normalized_dept != '') AS departments
+        FROM sector_data
+        GROUP BY normalized_sector
         ORDER BY companies DESC
     """, scope_params)
     return rows

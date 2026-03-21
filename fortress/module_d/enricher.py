@@ -1349,6 +1349,7 @@ async def _enrich_one(
             social_tiktok=social.get("tiktok"),
             social_whatsapp=social.get("whatsapp"),
             social_youtube=social.get("youtube"),
+            siren_match=ml_result.get("siren_match") if ml_result else None,
             collected_at=datetime.now(tz=timezone.utc),
         ),
         source_label,

@@ -348,3 +348,8 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_whatsapp TEXT;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_youtube TEXT;
+
+-- ---------------------------------------------------------------------------
+-- SIREN mismatch flag — enricher sets this when mentions-légales SIREN ≠ company SIREN
+-- ---------------------------------------------------------------------------
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS siren_match BOOLEAN;

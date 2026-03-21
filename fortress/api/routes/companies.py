@@ -839,6 +839,7 @@ async def get_company(siren: str):
             phone, email, email_type, website, source,
             social_linkedin, social_facebook, social_twitter,
             social_instagram, social_tiktok, social_whatsapp, social_youtube,
+            siren_match,
             rating, review_count, maps_url, address, collected_at
         FROM contacts
         WHERE siren = %s
@@ -995,6 +996,8 @@ async def get_company(siren: str):
         "history": unified_history,
         "linked_company": linked_company,
         "suggested_matches": suggested_matches,
+        "data_conflicts": merged.get("data_conflicts", []),
+        "siren_match": merged.get("siren_match"),
     }
 
 
@@ -1110,6 +1113,31 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         merged["address_source"] = "google_maps"
 
     merged["sources"] = list(dict.fromkeys(merged["sources"]))  # dedupe, preserve order
+
+    # ── Build data_conflicts list for interactive merge UI ─────────────
+    # Each conflict = a field where two sources disagree.
+    data_conflicts = []
+    CONFLICT_FIELDS = ("phone", "email", "website", "address")
+    for field in CONFLICT_FIELDS:
+        alt = merged.get(f"{field}_alt")
+        if alt and alt.get("value"):
+            data_conflicts.append({
+                "field": field,
+                "current": {"value": merged[field], "source": merged.get(f"{field}_source")},
+                "alternative": {"value": alt["value"], "source": alt["source"]},
+            })
+    merged["data_conflicts"] = data_conflicts
+
+    # ── Extract siren_match status ────────────────────────────────────
+    # If any contact source has siren_match = False, flag it.
+    siren_match_status = None
+    for c in sorted_contacts:
+        sm = c.get("siren_match")
+        if sm is not None:
+            siren_match_status = sm
+            break  # First non-null wins (highest priority source)
+    merged["siren_match"] = siren_match_status
+
     return merged
 
 
