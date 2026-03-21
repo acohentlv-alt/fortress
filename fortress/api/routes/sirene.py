@@ -95,7 +95,7 @@ async def search_sirene(
                         # Uses idx_companies_denomination_trgm (GIN index)
                         # Threshold 0.15 is permissive for "cev" → "CEVA"
                         await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
-                        where_parts.append("(denomination % % %s OR denomination ILIKE %s)")
+                        where_parts.append("(denomination %% %s OR denomination ILIKE %s)")
                         params.append(clean_q)
                         params.append(f"%{clean_q}%")
                         similarity_q = clean_q
