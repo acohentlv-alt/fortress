@@ -346,3 +346,5 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log (user_id, creat
 -- ---------------------------------------------------------------------------
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_whatsapp TEXT;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_youtube TEXT;

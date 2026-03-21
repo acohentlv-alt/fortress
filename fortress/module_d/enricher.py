@@ -128,9 +128,9 @@ def _normalize_name(name: str) -> list[str]:
     filtered = [t for t in tokens if t not in _LEGAL_FORMS]
     if not filtered:
         return []
-    # If >50% of tokens are single chars, it's an acronym — keep all tokens
+    # If >= 50% of tokens are single chars, it's likely an acronym or important initial (e.g. "A T N" or "H CONVOYAGE")
     single_chars = sum(1 for t in filtered if len(t) == 1)
-    if single_chars > len(filtered) / 2:
+    if single_chars >= len(filtered) / 2:
         return filtered
     return [t for t in filtered if len(t) > 1]
 
@@ -154,6 +154,13 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     if not maps_tokens or not denom_tokens:
         return False
 
+    # Single-token guard: if denomination is just 1 word (e.g. "TAXI"),
+    # require it to be the FIRST token of the Maps name (not just anywhere).
+    # Prevents "TAXI" matching "Restaurant Chez Taxi" or "Les Frères" matching "Frères D'Armes".
+    # This check MUST run before general containment to avoid false positives.
+    if len(denom_tokens) == 1:
+        return denom_tokens[0] == maps_tokens[0]
+
     # Containment check (handles "BAILLOEUIL" vs "Bailloeuil Perpignan")
     maps_joined = " ".join(maps_tokens)
     denom_joined = " ".join(denom_tokens)
@@ -172,11 +179,8 @@ def _names_match(maps_name: str, denomination: str) -> bool:
     # AND at least 2 matching tokens to prevent single-word false positives.
     overlap = sum(1 for t in denom_tokens if t in maps_tokens)
 
-    # Single-token guard: if denomination is just 1 word (e.g. "TAXI"),
-    # require it to be the FIRST token of the Maps name (not just anywhere).
-    # Prevents "TAXI" matching "Restaurant Chez Taxi" or "Les Frères" matching "Frères D'Armes".
-    if len(denom_tokens) == 1:
-        return denom_tokens[0] == maps_tokens[0]
+    # Already handled at top of function
+    pass
 
     # 2-word names: 1 match is sufficient (geo-check in _assess_match is safety net)
     if len(denom_tokens) == 2:
@@ -191,6 +195,8 @@ def _geo_matches(maps_address: str, company: Any) -> bool:
     """Check if Maps address is in the same city/postal/dept as SIRENE data."""
     if not maps_address:
         return False
+
+    maps_address = maps_address.lower()
 
     code_postal = getattr(company, "code_postal", None)
     if code_postal and code_postal in maps_address:
@@ -524,8 +530,11 @@ async def enrich_companies(
     naf_prefix = (reference_company.naf_code or "")[:2]
     dept = reference_company.departement or ""
 
-    # Max total companies to try before giving up (prevent infinite loops)
-    max_attempts = target_count * 5
+    # Max total companies to try before giving up (prevent infinite loops).
+    # With ALWAYS ACCEPT, replacements only fire on _enrich_one exceptions.
+    # Each attempt = 2-4s on Maps. 2× is enough safety margin without
+    # causing the batch to "run forever" when Maps is flaky.
+    max_attempts = target_count * 2
 
     # ── Pre-load rejected SIRENs for this query pattern ────────────────────
     # Skip SIRENs that were rejected in previous runs of the same NAF+dept.

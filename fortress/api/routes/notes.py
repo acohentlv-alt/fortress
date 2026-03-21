@@ -81,9 +81,10 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
             "created_at": str(row[1]),
         }
     except Exception as e:
-        import traceback
+        import logging
+        logging.getLogger("fortress").exception("add_note crash for %s", siren)
         return JSONResponse(
-            status_code=500, content={"error": f"Fatal Route Crash: {str(e)}\n\n{traceback.format_exc()}"}
+            status_code=500, content={"error": "Erreur interne du serveur"}
         )
 
 

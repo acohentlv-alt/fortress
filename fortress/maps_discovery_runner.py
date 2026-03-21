@@ -438,7 +438,15 @@ async def run(batch_id: str) -> None:
                     if company:
                         siren = company.siren
                     else:
-                        siren = f"MAPS{idx:05d}"
+                        # Get the next globally unique MAPS ID
+                        async with pool.connection() as id_conn:
+                            cur = await id_conn.execute(
+                                """SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER))
+                                   FROM companies WHERE siren LIKE 'MAPS%'"""
+                            )
+                            max_row = await cur.fetchone()
+                            next_id = (max_row[0] or 0) + 1 if max_row else 1
+                        siren = f"MAPS{next_id:05d}"
                         company = Company(
                             siren=siren,
                             denomination=maps_name,

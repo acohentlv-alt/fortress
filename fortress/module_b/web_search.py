@@ -206,9 +206,11 @@ SOCIAL_DOMAINS: dict[str, str | None] = {
     "x.com": "social_twitter",
     "linkedin.com": "social_linkedin",
     "tiktok.com": "social_tiktok",
-    "wa.me": None,           # WhatsApp deep link — not a company profile
-    "youtube.com": None,     # YouTube — no structured contact data
-    "youtu.be": None,
+    "wa.me": "social_whatsapp",
+    "api.whatsapp.com": "social_whatsapp",
+    "whatsapp.com": "social_whatsapp",
+    "youtube.com": "social_youtube",
+    "youtu.be": "social_youtube",
 }
 
 

@@ -83,7 +83,7 @@ function renderNotesDirect(notes, limit = 2) {
                         ${initials}
                     </div>
                     <div style="font-size:var(--font-xs); color:var(--text-secondary); display:flex; gap:var(--space-xs); align-items:center">
-                        <span style="font-weight:600; color:var(--text-primary)" title="${escapeHtml(username)}">${initials}</span>
+                        <span style="font-weight:600; color:var(--text-primary)" title="${escapeHtml(username)}">${escapeHtml(username)}</span>
                         <span style="opacity:0.5">•</span>
                         <span>${dateStr}</span>
                         <span>${timeStr}</span>
@@ -145,7 +145,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches) {
                 <div style="min-width:0">
                     <div style="font-weight:700; color:var(--warning); font-size:var(--font-base)">Correspondance possible</div>
                     <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:2px">
-                        ${escapeHtml(m.denomination)} (${m.siren}) — ${methodLabel}
+                        ${escapeHtml(m.denomination)} (${m.siren}) — 
+                        <span style="font-weight:600; color:var(--text-primary)">${escapeHtml(m.reason || methodLabel)}</span>
                         ${m.ville ? ` · ${escapeHtml(m.ville)}` : ''}
                     </div>
                 </div>
@@ -513,8 +514,8 @@ export async function renderCompany(container, siren) {
     // ── Spider Crawl logic ───────────────────────────────────────
     _initSpiderCrawl(siren, container);
 
-    // ── Load Enrichment History ──────────────────────────────────
-    _loadEnrichHistory(siren, data.contacts || []);
+    // ── Load Unified History (Enrichments + Notes) ────────────────
+    _loadEnrichHistory(siren, data.history || []);
 
     // ── Inline editing on detail rows ───────────────────────────
     _initInlineEditing(container, siren);
@@ -922,78 +923,79 @@ function detailRow(label, value, source = null, editField = null, rawValue = nul
     `;
 }
 
-// ── Enrichment History ───────────────────────────────────────────
-async function _loadEnrichHistory(siren, contacts) {
+// ── Unified History Timeline (Enrichments + Notes) ──────────────
+function _loadEnrichHistory(siren, history) {
     const container = document.getElementById('enrich-history-container');
     if (!container) return;
 
-    let timeline = [];
-
-    // Try API first
-    try {
-        const apiData = await getCompanyEnrichHistory(siren);
-        if (apiData && apiData.history && Array.isArray(apiData.history) && apiData.history.length > 0) {
-            timeline = apiData.history;
-        }
-    } catch { /* fallback below */ }
-
-    // Fallback: derive timeline from contacts data
-    if (timeline.length === 0 && contacts.length > 0) {
-        const FIELD_LABELS = {
-            phone: '📞 Téléphone ajouté',
-            email: '✉️ Email trouvé',
-            website: '🌐 Site web trouvé',
-            rating: '⭐ Avis Google récupéré',
-            social_linkedin: '🔗 LinkedIn trouvé',
-            social_facebook: '📘 Facebook trouvé',
-        };
-        for (const c of contacts) {
-            const date = c.collected_at;
-            const agent = c.source || 'Inconnu';
-            for (const [field, label] of Object.entries(FIELD_LABELS)) {
-                if (c[field]) {
-                    timeline.push({
-                        date,
-                        action: label,
-                        agent,
-                        field,
-                        value: String(c[field]),
-                    });
-                }
-            }
-        }
-        // Sort newest first
-        timeline.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-    }
-
-    // Render
-    if (timeline.length === 0) {
+    if (!history || history.length === 0) {
         container.innerHTML = `
             <div style="color:var(--text-muted); font-style:italic; padding:var(--space-sm) 0; font-size:var(--font-sm)">
-                Aucun enrichissement enregistré — lancez un enrichissement ci-dessus ↑
+                Aucune activité enregistrée — lancez un enrichissement ou ajoutez une note.
             </div>
         `;
         return;
     }
 
     container.innerHTML = `
-        <div class="enrich-timeline">
-            ${timeline.map(ev => `
-                <div class="enrich-timeline-item">
-                    <div class="enrich-timeline-dot"></div>
-                    <div class="enrich-timeline-date">${_formatTimelineDate(ev.date)}</div>
-                    <div class="enrich-timeline-action">
-                        ${escapeHtml(ev.action)}
-                        ${ev.value ? `<span style="color:var(--text-muted); font-size:var(--font-xs)"> — ${escapeHtml(ev.value)}</span>` : ''}
-                    </div>
-                    <div class="enrich-timeline-agent">
-                        via <span class="badge badge-muted">${escapeHtml(ev.agent)}</span>
-                    </div>
-                </div>
-            `).join('')}
+        <div style="display:flex; flex-direction:column; gap:var(--space-sm)">
+            ${history.map(h => {
+                if (h.type === 'note') {
+                    return `
+                        <div style="display:flex; gap:var(--space-md); padding:var(--space-sm); background:var(--surface-raised); border-radius:var(--radius-sm); border-left:3px solid var(--accent)">
+                            <div style="font-size:1.2rem; flex-shrink:0">📝</div>
+                            <div style="flex:1; min-width:0">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
+                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">Note par ${escapeHtml(h.username)}</span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                </div>
+                                <div style="font-size:var(--font-sm); color:var(--text-primary); white-space:pre-wrap; word-break:break-word">${escapeHtml(h.text)}</div>
+                            </div>
+                        </div>
+                    `;
+                } else if (h.type === 'activity') {
+                    const actIcons = { manual_edit: '✏️', link: '🔗', merge: '🔀', unlink: '⛓️‍💥' };
+                    const icon = actIcons[h.action] || '📌';
+                    return `
+                        <div style="display:flex; gap:var(--space-md); padding:var(--space-sm); background:var(--surface-raised); border-radius:var(--radius-sm); border-left:3px solid var(--warning)">
+                            <div style="font-size:1.2rem; flex-shrink:0">${icon}</div>
+                            <div style="flex:1; min-width:0">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
+                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">${escapeHtml(h.action)} par ${escapeHtml(h.username)}</span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                </div>
+                                ${h.detail ? `<div style="font-size:var(--font-sm); color:var(--text-secondary)">${escapeHtml(h.detail)}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    const icon = h.action === 'manual_edit' ? '✏️' : h.action === 'crawl-website' ? '🌐' : (h.action === 'link' ? '🔗' : '⚙️');
+                    const color = h.result === 'success' ? 'var(--success)' : (h.result === 'error' ? 'var(--error)' : 'var(--text-secondary)');
+                    
+                    return `
+                        <div style="display:flex; gap:var(--space-md); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
+                            <div style="font-size:1.2rem; flex-shrink:0">${icon}</div>
+                            <div style="flex:1; min-width:0">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
+                                    <span style="font-weight:600; color:var(--text-primary); font-size:var(--font-xs); text-transform:uppercase; letter-spacing:0.02em">
+                                        ${escapeHtml(h.action)}
+                                    </span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                </div>
+                                <div style="font-size:var(--font-sm); color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(h.detail || '')}">
+                                    <span style="color:${color}; font-weight:700">${escapeHtml(h.result)}</span>
+                                    ${h.detail ? ` · ${escapeHtml(h.detail)}` : ''}
+                                    ${h.duration ? ` · ${h.duration}ms` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('')}
         </div>
     `;
 }
+
 
 function _formatTimelineDate(dateStr) {
     if (!dateStr) return '—';

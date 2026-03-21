@@ -58,13 +58,16 @@ DEFAULT_HEADERS: dict[str, str] = {
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-Site": "none",
+    "Sec-Ch-Ua": '"Not A(Brand";v="8", "Chromium";v="131", "Google Chrome";v="131"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
 }
 
 # HTTP status codes on which we retry.
-RETRYABLE_STATUSES: frozenset[int] = frozenset({429, 503})
+RETRYABLE_STATUSES: frozenset[int] = frozenset({403, 429, 503})
 
 # Status codes that are final — no retry, return immediately.
-NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({401, 403, 404})
+NON_RETRYABLE_STATUSES: frozenset[int] = frozenset({401, 404})
 
 
 # ---------------------------------------------------------------------------

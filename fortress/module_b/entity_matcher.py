@@ -115,6 +115,7 @@ class SirenMatch:
     denomination: str
     confidence: str  # 'high' or 'medium'
     method: str  # 'address', 'siret_website', 'fuzzy_name'
+    reason: str  # Human-readable explanation
     address: str | None = None
     ville: str | None = None
 
@@ -190,6 +191,7 @@ async def find_matches(
                     denomination=r_denom,
                     confidence="high",
                     method="address",
+                    reason=f"Même adresse : {street_key}",
                     address=r_addr,
                     ville=r_ville,
                 ))
@@ -234,6 +236,7 @@ async def find_matches(
                         denomination=r_denom,
                         confidence="medium",
                         method="fuzzy_name",
+                        reason=f"Nom similaire ({int(overlap * 100)}%)",
                         address=r_addr,
                         ville=r_ville,
                     ))

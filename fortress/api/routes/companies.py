@@ -203,9 +203,9 @@ async def enrich_company(siren: str, body: EnrichRequest):
     recent_scrape = await fetch_one("""
         SELECT action, timestamp FROM batch_log
         WHERE siren = %s AND result = 'success'
-          AND timestamp > NOW() - INTERVAL '%s hours'
+          AND timestamp > NOW() - make_interval(hours => %s)
         ORDER BY timestamp DESC LIMIT 1
-    """ % ('%s', _DEDUP_TTL_HOURS), (siren,))
+    """, (siren, _DEDUP_TTL_HOURS))
 
     if recent_scrape:
         # If scraped recently with success, skip all modules
@@ -306,8 +306,10 @@ async def enrich_company(siren: str, body: EnrichRequest):
             cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
             stdout=log_fh,
             stderr=log_fh,
+            close_fds=True,
             start_new_session=True,
         )
+        log_fh.close()  # Parent releases fd; subprocess keeps its own copy
         pid = proc.pid
     except Exception as exc:
         return JSONResponse(
@@ -928,6 +930,7 @@ async def get_company(siren: str):
                                     "denomination": m.denomination,
                                     "confidence": m.confidence,
                                     "method": m.method,
+                                    "reason": m.reason,
                                     "address": m.address,
                                     "ville": m.ville,
                                 }
@@ -936,14 +939,58 @@ async def get_company(siren: str):
             except Exception:
                 pass  # Matching failed — no big deal, card still loads
 
+    # ── Unified History ───────────────────────────────────────
+    # Merge enrichment_history (batch_log) + notes (company_notes) + activity_log
+    unified_history = []
+    
+    for h in enrichment_history:
+        unified_history.append({
+            "type": "enrichment",
+            "action": h["action"],
+            "result": h["result"],
+            "detail": h["source_url"],
+            "duration": h["duration_ms"],
+            "timestamp": str(h["timestamp"]),
+        })
+        
+    for n in (notes or []):
+        unified_history.append({
+            "type": "note",
+            "id": n["id"],
+            "username": n["username"],
+            "text": n["text"],
+            "timestamp": str(n["created_at"]),
+        })
+
+    # Activity log events for this company (manual edits, links, merges)
+    activity_events = await fetch_all("""
+        SELECT action, username, details, created_at
+        FROM activity_log
+        WHERE target_type = 'company' AND target_id = %s
+          AND action NOT IN ('note_added', 'note_deleted')
+        ORDER BY created_at DESC
+        LIMIT 50
+    """, (siren,))
+
+    for a in (activity_events or []):
+        unified_history.append({
+            "type": "activity",
+            "action": a["action"],
+            "username": a["username"],
+            "detail": a["details"],
+            "timestamp": str(a["created_at"]),
+        })
+        
+    # Sort by timestamp DESC
+    unified_history.sort(key=lambda x: x["timestamp"], reverse=True)
+
     return {
         "company": company,
         "contacts": contacts,
         "merged_contact": merged,
         "officers": officers,
         "batch_tags": tags,
-        "enrichment_history": enrichment_history,
-        "notes": notes or [],
+        "history": unified_history,
         "linked_company": linked_company,
         "suggested_matches": suggested_matches,
     }

@@ -152,7 +152,7 @@ export async function renderActivity(container) {
                             </div>
                             ${e.target_id ? `
                                 <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px; font-family:var(--font-mono)">
-                                    ${escapeHtml(e.target_id)}
+                                    ${e.target_type === 'company' ? `<a href="#/company/${encodeURIComponent(e.target_id)}" style="color:var(--accent); text-decoration:none; font-weight:600" title="Voir la fiche entreprise">${escapeHtml(e.target_id)} ↗</a>` : escapeHtml(e.target_id)}
                                 </div>
                             ` : ''}
                         </div>
