@@ -728,7 +728,7 @@ async def enrich_companies(
 
                     # 3b: Recherche Entreprises API — official directors
                     from fortress.module_b.recherche_entreprises import fetch_dirigeants
-                    dirigeants = await fetch_dirigeants(
+                    dirigeants, re_company_data = await fetch_dirigeants(
                         company.siren,
                         curl_client=curl_client,
                     )
@@ -745,11 +745,29 @@ async def enrich_companies(
                         )
                         await upsert_officer(conn, officer)
 
+                    # Store company-level data from API (revenue, effectif)
+                    if re_company_data:
+                        _update_parts = []
+                        _update_vals = []
+                        if "chiffre_affaires" in re_company_data:
+                            _update_parts.append("chiffre_affaires = %s")
+                            _update_vals.append(re_company_data["chiffre_affaires"])
+                        if "tranche_effectif" in re_company_data:
+                            _update_parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                            _update_vals.append(re_company_data["tranche_effectif"])
+                        if _update_parts:
+                            _update_vals.append(company.siren)
+                            await conn.execute(
+                                f"UPDATE companies SET {', '.join(_update_parts)} WHERE siren = %s",
+                                tuple(_update_vals),
+                            )
+
                     if dirigeants:
                         log.info(
                             "enricher.officers_from_api",
                             siren=company.siren,
                             count=len(dirigeants),
+                            ca=re_company_data.get("chiffre_affaires"),
                         )
 
                     await conn.commit()
@@ -1327,6 +1345,8 @@ async def _enrich_one(
             social_twitter=social.get("twitter"),
             social_instagram=social.get("instagram"),
             social_tiktok=social.get("tiktok"),
+            social_whatsapp=social.get("whatsapp"),
+            social_youtube=social.get("youtube"),
             collected_at=datetime.now(tz=timezone.utc),
         ),
         source_label,

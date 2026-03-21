@@ -55,7 +55,7 @@ _SORT_COLUMNS = {
 # ---------------------------------------------------------------------------
 
 _COMPANY_FIELDS = {"denomination", "adresse", "code_postal", "ville"}
-_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"}
+_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"}
 _EDITABLE_FIELDS = _COMPANY_FIELDS | _CONTACT_FIELDS
 
 
@@ -94,11 +94,11 @@ async def update_company_fields(siren: str, body: dict):
         before_values = {}
         if ct_updates:
             existing = await (await conn.execute(
-                "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok FROM contacts WHERE siren = %s ORDER BY collected_at DESC LIMIT 1",
+                "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, social_whatsapp, social_youtube FROM contacts WHERE siren = %s ORDER BY collected_at DESC LIMIT 1",
                 (siren,),
             )).fetchone()
             if existing:
-                field_map = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"]
+                field_map = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"]
                 for i, f in enumerate(field_map):
                     if f in ct_updates and existing[i]:
                         before_values[f] = existing[i]
@@ -482,6 +482,8 @@ async def crawl_website_sync(siren: str):
         "social_twitter": all_social.get("twitter"),
         "social_instagram": all_social.get("instagram"),
         "social_tiktok": all_social.get("tiktok"),
+        "social_whatsapp": all_social.get("whatsapp"),
+        "social_youtube": all_social.get("youtube"),
     }
     # Filter out empty values
     extracted = {k: v for k, v in extracted.items() if v}
@@ -547,13 +549,13 @@ async def crawl_website_sync(siren: str):
                 # If current entity is a MAPS discovery, copy contacts to real SIREN
                 if siren.startswith("MAPS"):
                     maps_contacts = await (await conn.execute(
-                        "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, source FROM contacts WHERE siren = %s",
+                        "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, social_whatsapp, social_youtube, source FROM contacts WHERE siren = %s",
                         (siren,)
                     )).fetchall()
                     for mc in (maps_contacts or []):
-                        mc_source = mc[8] if isinstance(mc, tuple) else mc.get("source")
+                        mc_source = mc[10] if isinstance(mc, tuple) else mc.get("source")
                         mc_fields = {}
-                        field_names = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok"]
+                        field_names = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"]
                         for i, fname in enumerate(field_names):
                             val = mc[i] if isinstance(mc, tuple) else mc.get(fname)
                             if val:
@@ -836,7 +838,7 @@ async def get_company(siren: str):
         SELECT
             phone, email, email_type, website, source,
             social_linkedin, social_facebook, social_twitter,
-            social_instagram, social_tiktok,
+            social_instagram, social_tiktok, social_whatsapp, social_youtube,
             rating, review_count, maps_url, address, collected_at
         FROM contacts
         WHERE siren = %s
@@ -1039,7 +1041,7 @@ def _merge_contacts(contacts: list[dict]) -> dict:
     MERGE_FIELDS = (
         "phone", "email", "website",
         "social_linkedin", "social_facebook", "social_twitter",
-        "social_instagram", "social_tiktok",
+        "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube",
         "maps_url",
     )
 
@@ -1053,6 +1055,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         "social_twitter": None, "social_twitter_source": None,
         "social_instagram": None, "social_instagram_source": None,
         "social_tiktok": None, "social_tiktok_source": None,
+        "social_whatsapp": None, "social_whatsapp_source": None,
+        "social_youtube": None, "social_youtube_source": None,
         "rating": None, "rating_source": None,
         "review_count": None,
         "maps_url": None, "maps_url_source": None,

@@ -58,21 +58,57 @@ async def fetch_dirigeants(
                 siren=siren,
                 status=resp.status_code,
             )
-            return []
+            return [], {}
 
         data = resp.json()
         results = data.get("results", [])
         if not results:
             log.debug("recherche_entreprises.no_results", siren=siren)
-            return []
+            return [], {}
 
         company = results[0]
 
-        # Extract dirigeants from the response
+        # ── Extract company-level data (revenue, effectif) ─────────
+        company_data: dict[str, Any] = {}
+
+        # Chiffre d'affaires (revenue) — latest year available
+        finances = company.get("finances", {})
+        if finances:
+            # Get the most recent year's data
+            latest_year = max(finances.keys(), default=None)
+            if latest_year:
+                ca = finances[latest_year].get("ca")
+                resultat = finances[latest_year].get("resultat_net")
+                if ca is not None:
+                    company_data["chiffre_affaires"] = ca
+                    company_data["ca_annee"] = latest_year
+                if resultat is not None:
+                    company_data["resultat_net"] = resultat
+
+        # Tranche effectif salarié (official employee count code)
+        effectif = company.get("tranche_effectif_salarie")
+        if effectif:
+            company_data["tranche_effectif"] = effectif
+
+        # Catégorie entreprise (PME, ETI, GE)
+        cat = company.get("categorie_entreprise")
+        if cat:
+            company_data["categorie_entreprise"] = cat
+
+        # Nature juridique (legal form code — more precise than SIRENE)
+        nature = company.get("nature_juridique")
+        if nature:
+            company_data["nature_juridique"] = nature
+
+        # ── Extract dirigeants from the response ───────────────────
         dirigeants_raw = company.get("dirigeants", [])
         dirigeants: list[dict[str, Any]] = []
 
         for d in dirigeants_raw:
+            # Skip personne morale entries (auditors etc.)
+            if d.get("type_dirigeant") == "personne morale":
+                continue
+
             nom = (d.get("nom") or "").strip().upper()
             prenom = (d.get("prenoms") or d.get("prenom") or "").strip().title()
             qualite = (d.get("qualite") or d.get("fonction") or "Dirigeant").strip()
@@ -100,12 +136,14 @@ async def fetch_dirigeants(
             siren=siren,
             count=len(dirigeants),
             names=[f"{d.get('prenom', '')} {d['nom']}" for d in dirigeants[:3]],
+            ca=company_data.get("chiffre_affaires"),
+            effectif=company_data.get("tranche_effectif"),
         )
 
         # Rate limit delay
         await asyncio.sleep(_RATE_DELAY)
 
-        return dirigeants
+        return dirigeants, company_data
 
     except CurlClientError as exc:
         log.debug(
@@ -113,14 +151,14 @@ async def fetch_dirigeants(
             siren=siren,
             error=str(exc),
         )
-        return []
+        return [], {}
     except Exception as exc:
         log.debug(
             "recherche_entreprises.unexpected_error",
             siren=siren,
             error=str(exc),
         )
-        return []
+        return [], {}
     finally:
         if own_client:
             await curl_client.close()
