@@ -293,24 +293,37 @@ function _renderByUpload(data, rootContainer) {
                         <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Fichier</th>
                         <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">SIRENs</th>
                         <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Date</th>
+                        <th style="width:40px"></th>
                     </tr>
                 </thead>
                 <tbody>
                     ${uploads.map(u => `
-                        <tr style="cursor:pointer; transition:background 0.15s"
-                            onmouseover="this.style.background='var(--bg-hover)'"
-                            onmouseout="this.style.background=''"
-                            onclick="window.location.hash='#/job/${encodeURIComponent(u.batch_id || '')}'">
+                        <tr class="upload-row clickable-row" data-batch-id="${escapeHtml(u.batch_id || '')}" style="cursor:pointer; transition:background 0.15s">
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500">${escapeHtml(u.source_file || '—')}</td>
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--accent); font-weight:700; text-align:right">${(u.siren_count || 0).toLocaleString('fr-FR')}</td>
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-muted); text-align:right; white-space:nowrap">${formatDateTime(u.uploaded_at)}</td>
+                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); text-align:center; color:var(--accent)">👁️</td>
                         </tr>
                     `).join('')}
                 </tbody>
             </table>
         </div>
     `;
+
+    // Wire clicks
+    view.querySelectorAll('.upload-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const bid = row.dataset.batchId;
+            if (bid) {
+                window.location.hash = `#/job/${encodeURIComponent(bid)}`;
+            }
+        });
+        row.addEventListener('mouseover', () => row.style.background = 'var(--bg-hover)');
+        row.addEventListener('mouseout', () => row.style.background = '');
+    });
 }
+
+
 
 
 // ── All Data View — searchable + paginated table of all enriched entities ──
