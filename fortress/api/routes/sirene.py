@@ -7,7 +7,8 @@ Performance safeguards:
   - Minimum 3 characters for name search (prevent full table scan)
   - Maximum 50 results per page
   - 5-second SQL statement timeout
-  - Uses existing indexes: PK(siren), idx_companies_dept_naf_statut, idx_companies_naf_statut
+  - Uses existing indexes: PK(siren), idx_companies_dept_naf_statut,
+    idx_companies_naf_statut, idx_companies_denomination_trgm (GIN trigram)
 """
 
 import psycopg
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/api/sirene", tags=["sirene"])
 
 @router.get("/search")
 async def search_sirene(
-    q: str = Query(..., min_length=1, description="Search by name, SIREN, or NAF code"),
+    q: str = Query(None, description="Search by name, SIREN, or NAF code"),
     limit: int = Query(50, ge=1, le=50),
     offset: int = Query(0, ge=0),
     department: str = Query(None, description="Filter by department code (e.g. 66, 31)"),
@@ -32,15 +33,29 @@ async def search_sirene(
 
     Returns SIRENE data only — no enriched fields (phone, email, website).
     For enriched data, use /api/companies/search instead.
+
+    Supports:
+      - Exact SIREN lookup (9 digits)
+      - Fuzzy name search via trigram similarity (GIN index)
+      - NAF code prefix search
+      - Department / NAF / status filters (work without a text query)
     """
-    clean_q = q.strip()
+    clean_q = (q or "").strip()
+    has_filters = bool(department or naf_code)
+
+    # Nothing to search — need either a query or at least one filter
+    if not clean_q and not has_filters:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Saisissez un terme de recherche ou sélectionnez un filtre"},
+        )
 
     # Classify query type
     clean_digits = clean_q.replace(" ", "")
     is_siren = clean_digits.isdigit() and len(clean_digits) == 9
-    is_naf = len(clean_q) >= 2 and clean_q[0].isdigit()
+    is_naf = len(clean_q) >= 2 and clean_q[0].isdigit() and not is_siren
 
-    if not is_siren and not is_naf and len(clean_q) < 3:
+    if clean_q and not is_siren and not is_naf and len(clean_q) < 3 and not has_filters:
         return JSONResponse(
             status_code=400,
             content={"error": "Minimum 3 caractères pour une recherche par nom"},
@@ -63,19 +78,26 @@ async def search_sirene(
                         WHERE siren = %s
                     """, (clean_digits,))
                     results = await cur.fetchall()
+                return {"results": results, "total": len(results), "count": len(results), "offset": offset, "limit": limit}
             else:
-                # Name / NAF search with optional filters
-                where_parts = []
+                # Build WHERE clause from query + filters
+                where_parts: list[str] = []
                 params: list = []
+                similarity_q = None  # track for ORDER BY
 
-                if is_naf:
-                    # NAF code search — uses idx_companies_naf_statut
-                    where_parts.append("naf_code ILIKE %s")
-                    params.append(f"{clean_q}%")
-                else:
-                    # Name search — UPPER + LIKE
-                    where_parts.append("UPPER(denomination) LIKE UPPER(%s)")
-                    params.append(f"%{clean_q}%")
+                if clean_q:
+                    if is_naf:
+                        # NAF code search — uses idx_companies_naf_statut
+                        where_parts.append("naf_code ILIKE %s")
+                        params.append(f"{clean_q}%")
+                    else:
+                        # Fuzzy name search via trigram similarity
+                        # Uses idx_companies_denomination_trgm (GIN index)
+                        # Set a low threshold to be permissive (e.g. "cev" → "CEVA")
+                        await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
+                        where_parts.append("denomination %% %s")
+                        params.append(clean_q)
+                        similarity_q = clean_q
 
                 # Optional filters
                 if department:
@@ -90,8 +112,23 @@ async def search_sirene(
                     where_parts.append("statut = %s")
                     params.append(statut.strip())
 
-                where_clause = " AND ".join(where_parts)
-                params.extend([limit, offset])
+                where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
+
+                # ── COUNT query — get total matching rows ──
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"SELECT COUNT(*) FROM companies WHERE {where_clause}",
+                        tuple(params),
+                    )
+                    total = (await cur.fetchone())[0]
+
+                # ── Data query — fetch page ──
+                if similarity_q:
+                    order_clause = "ORDER BY similarity(denomination, %s) DESC"
+                    data_params = list(params) + [similarity_q, limit, offset]
+                else:
+                    order_clause = "ORDER BY denomination"
+                    data_params = list(params) + [limit, offset]
 
                 async with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
                     await cur.execute(f"""
@@ -101,12 +138,12 @@ async def search_sirene(
                                EXISTS(SELECT 1 FROM contacts ct WHERE ct.siren = companies.siren) AS is_enriched
                         FROM companies
                         WHERE {where_clause}
-                        ORDER BY denomination
+                        {order_clause}
                         LIMIT %s OFFSET %s
-                    """, tuple(params))
+                    """, tuple(data_params))
                     results = await cur.fetchall()
 
-            return {"results": results, "count": len(results), "offset": offset, "limit": limit}
+                return {"results": results, "total": total, "count": len(results), "offset": offset, "limit": limit}
 
     except RuntimeError as exc:
         # Database offline
@@ -122,3 +159,4 @@ async def search_sirene(
             status_code=500,
             content={"error": f"Erreur de recherche: {error_str}"},
         )
+

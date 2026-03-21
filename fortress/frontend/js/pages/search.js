@@ -108,8 +108,7 @@ export async function renderSearch(container) {
                         filterNaf.value = '';
                     }
                     updateFilterPills();
-                    const q = input.value.trim();
-                    if (q) doSearch(q);
+                    doSearch(input.value.trim());
                 });
             });
         } else {
@@ -120,7 +119,8 @@ export async function renderSearch(container) {
 
     // ── Search function ──────────────────────────────────────────
     async function doSearch(q, offset = 0) {
-        if (!q || q.length < 2) {
+        const hasFilters = !!(currentDepartment || currentNafCode);
+        if ((!q || q.length < 2) && !hasFilters) {
             resultsEl.innerHTML = '';
             return;
         }
@@ -165,10 +165,11 @@ export async function renderSearch(container) {
         }
 
         if (!data.results || data.results.length === 0) {
+            const emptyLabel = q ? `Aucun résultat pour "${escapeHtml(q)}"` : 'Aucun résultat pour ces filtres';
             resultsEl.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">🔍</div>
-                    <div class="empty-state-text">Aucun résultat pour "${escapeHtml(q)}"</div>
+                    <div class="empty-state-text">${emptyLabel}</div>
                     <p style="color: var(--text-muted)">Essayez un autre terme, un numéro SIREN (9 chiffres) ou un code NAF</p>
                 </div>
             `;
@@ -271,8 +272,7 @@ export async function renderSearch(container) {
         currentDepartment = filterDept.value;
         currentOffset = 0;
         updateFilterPills();
-        const q = input.value.trim();
-        if (q) doSearch(q, 0);
+        doSearch(input.value.trim(), 0);
     });
 
     // NAF code filter (debounced)
@@ -283,8 +283,7 @@ export async function renderSearch(container) {
             currentNafCode = filterNaf.value.trim();
             currentOffset = 0;
             updateFilterPills();
-            const q = input.value.trim();
-            if (q) doSearch(q, 0);
+            doSearch(input.value.trim(), 0);
         }, 500);
     });
 

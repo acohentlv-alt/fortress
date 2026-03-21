@@ -297,7 +297,10 @@ function _renderByUpload(data, rootContainer) {
                 </thead>
                 <tbody>
                     ${uploads.map(u => `
-                        <tr>
+                        <tr style="cursor:pointer; transition:background 0.15s"
+                            onmouseover="this.style.background='var(--bg-hover)'"
+                            onmouseout="this.style.background=''"
+                            onclick="window.location.hash='#/job/${encodeURIComponent(u.batch_id || '')}'">
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500">${escapeHtml(u.source_file || '—')}</td>
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--accent); font-weight:700; text-align:right">${(u.siren_count || 0).toLocaleString('fr-FR')}</td>
                             <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-muted); text-align:right; white-space:nowrap">${formatDateTime(u.uploaded_at)}</td>
