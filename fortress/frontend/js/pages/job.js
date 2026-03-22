@@ -4,7 +4,7 @@
 
 import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, resumeBatch, untagCompany, enrichCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
-import { GlobalSelection } from '../app.js';
+import { GlobalSelection } from '../state.js';
 
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;

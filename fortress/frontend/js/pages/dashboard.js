@@ -7,7 +7,7 @@
 
 import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser, apiFetch } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal, renderContactCards } from '../components.js';
-import { GlobalSelection } from '../app.js';
+import { GlobalSelection } from '../state.js';
 
 let _dashboardData = null;
 let _currentTab = 'stats'; // stats, all, missing_web, missing_phone

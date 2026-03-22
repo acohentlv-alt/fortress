@@ -1,5 +1,5 @@
 import { startDeepEnrich } from './api.js';
-import { GlobalSelection } from './app.js';
+import { GlobalSelection } from './state.js';
 import { showToast } from './components.js';
 
 export async function openLiveEnrichModal(sirens) {

@@ -17,9 +17,6 @@ import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 
-// ── Global State ─────────────────────────────────────────────────
-export const GlobalSelection = new Set();
-
 // ── Page Cleanup System ──────────────────────────────────────────
 // Pages register cleanup functions (e.g. clearInterval) that must
 // run before navigating away. Without this, polling intervals from
