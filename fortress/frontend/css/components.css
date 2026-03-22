@@ -826,6 +826,18 @@
     margin-bottom: var(--space-lg);
 }
 
+/* ── Company Detail Header — prevent flex blowout ────────────── */
+.company-detail-header {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.company-detail-name-block {
+    min-width: 0;
+    overflow: hidden;
+    flex: 1;
+}
+
 .company-detail-siren {
     font-size: var(--font-base);
     color: var(--text-muted);
@@ -833,6 +845,12 @@
     display: flex;
     align-items: center;
     gap: var(--space-md);
+    flex-wrap: wrap;
+    max-width: 100%;
+}
+
+.company-detail-actions {
+    flex-shrink: 0;
 }
 
 .company-detail-data {

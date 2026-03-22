@@ -421,6 +421,7 @@ a:hover { color: var(--accent); }
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    overflow-x: hidden;
     transition: margin-left var(--transition);
 }
 
@@ -500,6 +501,8 @@ a:hover { color: var(--accent); }
     flex: 1;
     max-width: 1400px;
     width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .page-title {
