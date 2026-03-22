@@ -5,9 +5,14 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
-import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser, apiFetch } from '../api.js';
+import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal, renderContactCards } from '../components.js';
+import { GlobalSelection } from '../app.js';
 
+let _dashboardData = null;
+let _currentTab = 'stats'; // stats, all, missing_web, missing_phone
+let _selected = GlobalSelection;
+let _searchTerm = '';
 const API_BASE = '/api';
 
 export async function renderDashboard(container) {
@@ -461,9 +466,9 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
         // Wire checkboxes
         resultsEl.querySelectorAll('.alldata-cb').forEach(cb => {
             cb.addEventListener('change', () => {
-                if (cb.checked) _selected.add(cb.dataset.siren);
-                else _selected.delete(cb.dataset.siren);
-                _updateBulkExportBar(_selected);
+                if (cb.checked) GlobalSelection.add(cb.dataset.siren);
+                else GlobalSelection.delete(cb.dataset.siren);
+                _updateBulkExportBar(GlobalSelection);
             });
         });
 
@@ -473,8 +478,8 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
             selectAll.addEventListener('change', () => {
                 resultsEl.querySelectorAll('.alldata-cb').forEach(cb => {
                     cb.checked = selectAll.checked;
-                    if (selectAll.checked) _selected.add(cb.dataset.siren);
-                    else _selected.delete(cb.dataset.siren);
+                    if (selectAll.checked) GlobalSelection.add(cb.dataset.siren);
+                    else GlobalSelection.delete(cb.dataset.siren);
                 });
                 _updateBulkExportBar(_selected);
             });
@@ -513,8 +518,17 @@ function _updateBulkExportBar(selected) {
     const n = selected.size;
     bar.innerHTML = `
         <span style="font-weight:600; color:var(--text-primary)">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
-        <button class="btn btn-primary" id="alldata-bulk-export">📥 Exporter CSV</button>
+        <div style="display:flex; gap:10px">
+            <button class="btn btn-primary" id="alldata-bulk-export">📥 Exporter CSV</button>
+            <button class="btn" style="background:var(--accent); color:white; border:none" id="alldata-bulk-enrich">⚡ Enrichir Profond</button>
+        </div>
     `;
+    
+    document.getElementById('alldata-bulk-enrich').addEventListener('click', () => {
+        const sirens = [...selected];
+        import('../live-enrich.js').then(m => m.openLiveEnrichModal(sirens));
+    });
+    
     document.getElementById('alldata-bulk-export').addEventListener('click', async () => {
         const sirens = [...selected];
         showToast(`⏳ Export de ${sirens.length} entreprise(s)…`, 'info');

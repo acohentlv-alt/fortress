@@ -4,10 +4,11 @@
 
 import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, resumeBatch, untagCompany, enrichCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
+import { GlobalSelection } from '../app.js';
 
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;
-const selectedSirens = new Set();
+let selectedSirens = GlobalSelection;
 let _currentBatchId = null;
 let _currentPage = 1;
 let _currentSort = 'completude';

@@ -75,6 +75,22 @@ async function patchJSON(path, body) {
     });
 }
 
+export async function mergeCompanies(targetSiren, sourceSiren) {
+    return request(`/companies/${targetSiren}/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_siren: sourceSiren })
+    });
+}
+
+export async function startDeepEnrich(sirens) {
+    return request('/companies/deep-enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sirens })
+    });
+}
+
 /**
  * Extract a human-readable error string from an API response.
  * Handles: Pydantic 422 detail arrays, generic error/message fields, fallback.
