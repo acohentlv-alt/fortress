@@ -315,8 +315,8 @@ app.include_router(contacts_list.router)
 app.include_router(contact.router)
 app.include_router(activity.router)
 
-from fortress.api.routes import websocket
-app.include_router(websocket.router)
+from fortress.api.routes.websocket import router as websocket_router
+app.include_router(websocket_router)
 
 # Serve frontend static files
 _frontend_dir = Path(__file__).parent.parent / "frontend"
