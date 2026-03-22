@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     rating          NUMERIC(3, 1),
     review_count    INTEGER,
     maps_url        TEXT,
+    match_confidence VARCHAR(10),         -- 'high', 'low', 'none' — Maps vs SIRENE match quality
     collected_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 

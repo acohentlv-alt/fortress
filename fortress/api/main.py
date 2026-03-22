@@ -114,6 +114,7 @@ async def lifespan(app: FastAPI):
                 # Social media columns — ensure Instagram + TikTok exist
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT")
+                await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS match_confidence VARCHAR(10)")
 
                 # ── Table + column rename migration ─────────────────────────
                 # scrape_jobs → batch_data, scrape_audit → batch_log, query_tags → batch_tags

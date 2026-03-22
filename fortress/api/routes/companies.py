@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -811,14 +811,18 @@ async def untag_company_all(siren: str):
 
 
 @router.get("/{siren}")
-async def get_company(siren: str):
+async def get_company(siren: str, request: Request):
     """Full company detail with enriched data, contacts, and officers."""
-    import traceback
     try:
         return await _get_company_impl(siren)
     except Exception as e:
         import traceback, logging
-        logging.getLogger("fortress").error("get_company(%s) failed: %s\n%s", siren, e, traceback.format_exc())
+        tb = traceback.format_exc()
+        logging.getLogger("fortress").error("get_company(%s) failed: %s\n%s", siren, e, tb)
+        # Show traceback only to admin users for debugging
+        user = getattr(request.state, "user", None)
+        if user and getattr(user, "is_admin", False):
+            return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 async def _get_company_impl(siren: str):
@@ -830,6 +834,7 @@ async def _get_company_impl(siren: str):
             co.departement, co.region, co.statut,
             co.date_creation, co.tranche_effectif, co.effectif_exact,
             co.latitude, co.longitude, co.fortress_id,
+            # ⚠️ DO NOT REMOVE co.resultat_net — column created by schema.sql on startup
             co.chiffre_affaires, co.resultat_net, co.annee_ca, co.tranche_ca,
             co.date_fondation, co.type_etablissement,
             co.extra_data,
@@ -1146,6 +1151,16 @@ def _merge_contacts(contacts: list[dict]) -> dict:
             siren_match_status = sm
             break  # First non-null wins (highest priority source)
     merged["siren_match"] = siren_match_status
+
+    # ── Extract match_confidence status ────────────────────────────────
+    # Find the highest-priority match_confidence from contact sources.
+    match_conf = None
+    for c in sorted_contacts:
+        mc = c.get("match_confidence")
+        if mc is not None:
+            match_conf = mc
+            break  # First non-null wins (highest priority source)
+    merged["match_confidence"] = match_conf
 
     return merged
 

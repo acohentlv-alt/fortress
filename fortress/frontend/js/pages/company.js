@@ -361,6 +361,22 @@ export async function renderCompany(container, siren) {
                         </span>
                     </div>
                     ` : ''}
+                    ${mc.match_confidence === 'low' ? `
+                    <div style="
+                        background: rgba(255,152,0,0.10);
+                        border: 1px solid rgba(255,152,0,0.35);
+                        border-radius: var(--radius-md);
+                        padding: var(--space-sm) var(--space-lg);
+                        margin-bottom: var(--space-md);
+                        display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap;
+                    ">
+                        <span style="font-size:1.1rem">🟡</span>
+                        <span style="flex:1; color:var(--text-secondary); font-size:var(--font-sm)">
+                            <strong>Correspondance incertaine</strong> — Le nom ou l'adresse Maps ne correspond pas exactement aux données SIRENE.
+                            Vérifiez que les données de contact appartiennent bien à cette entreprise.
+                        </span>
+                    </div>
+                    ` : ''}
                     ${detailRow('Téléphone', mc.phone
                         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
                         : unenrichedField('contact_web'), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}

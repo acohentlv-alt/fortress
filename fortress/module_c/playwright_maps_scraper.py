@@ -610,7 +610,10 @@ class PlaywrightMapsScraper:
                     await page.wait_for_timeout(1000)
 
                 # Small settle for all data elements to load
-                await page.wait_for_timeout(800)
+                # NOTE: 1500ms needed because Maps JS renders website/phone
+                # buttons AFTER domcontentloaded, especially for hospitality
+                # businesses that show availability widgets first.
+                await page.wait_for_timeout(1500)
 
                 # Extract all data from the fully loaded business page
                 data = await self._extract_from_page(card_label, "", "discovery")
@@ -1005,26 +1008,60 @@ class PlaywrightMapsScraper:
 
         # ── Website: aria-label "Visiter le site Web de ..." ─────────────
         # Race condition fix: domcontentloaded fires before Maps JS renders
-        # the website button in the side panel. We wait up to 3s for it.
+        # the website button in the side panel. We wait up to 5s for it.
         # Google Maps 2024+ uses aria-label on the <a>, not data-item-id.
         _WEBSITE_SELECTOR = (
             'a[aria-label*="site Web" i], '
             'a[aria-label*="website" i], '
             'a.lcr4fd[href^="http"], '
-            'a[data-item-id="authority"]'
+            'a[data-item-id="authority"], '
+            'div.rogA2c a[href^="http"]'           # newer Maps layout
         )
+        # Domains to exclude when extracting website URLs
+        _WEBSITE_BLACKLIST = {
+            "google", "gstatic", "googleapis", "youtube", "youtu.be",
+            "facebook", "instagram", "twitter", "tripadvisor",
+            "booking", "yelp", "maps", "play.google",
+        }
         try:
-            await page.wait_for_selector(_WEBSITE_SELECTOR, timeout=3000)
+            await page.wait_for_selector(_WEBSITE_SELECTOR, timeout=5000)
             website_el = await page.query_selector(_WEBSITE_SELECTOR)
             if website_el:
                 href = await website_el.get_attribute("href")
-                if href and href.startswith("http") and "google" not in href:
-                    result["website"] = href
+                if href and href.startswith("http"):
+                    domain = href.split("//")[-1].split("/")[0].lower()
+                    if not any(bl in domain for bl in _WEBSITE_BLACKLIST):
+                        result["website"] = href
         except Exception:
-            # Timeout = business has no website, or Maps didn't render it.
-            # Graceful: log and continue with the other 4 fields.
-            log.debug("maps_scraper.website_not_found",
+            # Timeout — try raw HTML fallback for website links
+            log.debug("maps_scraper.website_selector_timeout",
                        denomination=denomination, siren=siren)
+
+        # ── Website fallback: parse raw HTML for non-Google hrefs ─────
+        if "website" not in result:
+            try:
+                html_content = await page.content()
+                # Look for data-item-id="authority" href in raw HTML
+                authority_match = re.search(
+                    r'data-item-id="authority"[^>]*href="(https?://[^"]+)"',
+                    html_content,
+                )
+                if not authority_match:
+                    # Try aria-label pattern
+                    authority_match = re.search(
+                        r'aria-label="[^"]*(?:site [Ww]eb|website)[^"]*"[^>]*href="(https?://[^"]+)"',
+                        html_content,
+                    )
+                if authority_match:
+                    href = authority_match.group(1)
+                    domain = href.split("//")[-1].split("/")[0].lower()
+                    if not any(bl in domain for bl in _WEBSITE_BLACKLIST):
+                        result["website"] = href
+                        log.debug("maps_scraper.website_html_fallback",
+                                   website=href, siren=siren)
+            except Exception as exc:
+                log.debug("maps_scraper.website_fallback_error",
+                           error=str(exc), siren=siren)
 
         # ── Address: data-item-id="address" ───────────────────────────
         try:
