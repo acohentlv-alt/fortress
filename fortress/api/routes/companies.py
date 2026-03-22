@@ -817,9 +817,9 @@ async def get_company(siren: str):
     try:
         return await _get_company_impl(siren)
     except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[ERROR] get_company({siren}): {e}\n{tb}")
-        return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
+        import traceback, logging
+        logging.getLogger("fortress").error("get_company(%s) failed: %s\n%s", siren, e, traceback.format_exc())
+        return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 async def _get_company_impl(siren: str):
     company = await fetch_one("""
@@ -830,7 +830,7 @@ async def _get_company_impl(siren: str):
             co.departement, co.region, co.statut,
             co.date_creation, co.tranche_effectif, co.effectif_exact,
             co.latitude, co.longitude, co.fortress_id,
-            co.chiffre_affaires, co.annee_ca, co.tranche_ca,
+            co.chiffre_affaires, co.resultat_net, co.annee_ca, co.tranche_ca,
             co.date_fondation, co.type_etablissement,
             co.extra_data,
             co.created_at, co.updated_at,
