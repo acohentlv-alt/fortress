@@ -146,8 +146,8 @@ async def update_company_fields(siren: str, body: dict):
             else:
                 log_entry = f"{field}={value}"
             await conn.execute("""
-                INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
-                VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', %s, NOW())
+                INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+                VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', NULL, NOW(), %s)
             """, (siren, log_entry))
 
         await conn.commit()
@@ -610,9 +610,9 @@ async def crawl_website_sync(siren: str):
 
         # Log to batch_log (always log, even if some data was rejected/protected)
         await conn.execute("""
-            INSERT INTO batch_log (batch_id, siren, action, result, source_url, duration_ms, timestamp)
-            VALUES ('SYNC_CRAWL', %s, 'website_crawl', %s, %s, %s, NOW())
-        """, (siren, 'success' if extracted else 'filtered', found_data, duration))
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, duration_ms, timestamp, detail)
+            VALUES ('SYNC_CRAWL', %s, 'website_crawl', %s, %s, %s, NOW(), %s)
+        """, (siren, 'success' if extracted else 'filtered', website, duration, found_data))
 
         await conn.commit()
 
@@ -1193,8 +1193,8 @@ async def link_entity(siren: str, body: LinkBody):
         """, (body.target_siren, siren))
 
         await conn.execute("""
-            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
-            VALUES ('ENTITY_LINK', %s, 'link', 'success', %s, NOW())
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+            VALUES ('ENTITY_LINK', %s, 'link', 'success', NULL, NOW(), %s)
         """, (siren, f"Linked to {body.target_siren} ({target.get('denomination')})"))
 
         await conn.commit()
@@ -1272,8 +1272,8 @@ async def merge_entity(siren: str, body: LinkBody):
 
         # 7. Log the merge event
         await conn.execute("""
-            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
-            VALUES ('ENTITY_MERGE', %s, 'merge', 'success', %s, NOW())
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+            VALUES ('ENTITY_MERGE', %s, 'merge', 'success', NULL, NOW(), %s)
         """, (target_siren, f"Merged from {siren}"))
 
         # 8. Delete the MAPS entity
