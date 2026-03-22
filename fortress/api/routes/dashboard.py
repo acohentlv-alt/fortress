@@ -514,10 +514,10 @@ async def get_batch_analysis(request: Request):
         batch_name = b["batch_name"] or ""
         is_upload = batch_name.startswith("Import:")
         total = b["total_companies"] or 0
-        qualified = b["companies_qualified"] or 0
         scraped = b["companies_scraped"] or 0
+        reused = total - scraped if total >= scraped else 0
 
-        # ── Per-step actions from batch_log ────────────────────────
+        # ── 1. Direct synchronous actions (Upload, Maps) ───────────
         actions = await fetch_all("""
             SELECT action, COUNT(*) AS total,
                    COUNT(*) FILTER (WHERE result = 'success') AS success
@@ -527,7 +527,19 @@ async def get_batch_analysis(request: Request):
         """, (batch_id,))
         action_map = {a["action"]: a for a in (actions or [])}
 
-        # ── Hit rates from contacts (real enriched data) ───────────
+        # ── 2. Async actions across the company lifecycle ───────────
+        # Finding all actions that ever happened to companies in this batch
+        async_actions = await fetch_all("""
+            SELECT bl.action, COUNT(DISTINCT qt.siren) AS total,
+                   COUNT(DISTINCT qt.siren) FILTER (WHERE bl.result = 'success' OR bl.result = 'filtered') AS success
+            FROM batch_log bl
+            JOIN batch_tags qt ON bl.siren = qt.siren
+            WHERE UPPER(qt.batch_name) = UPPER(%s)
+            GROUP BY bl.action
+        """, (batch_name,))
+        async_map = {a["action"]: a for a in (async_actions or [])}
+
+        # ── 3. Final Hit rates from contacts ───────────────────────
         hit = await fetch_one("""
             SELECT
                 COUNT(DISTINCT qt.siren) AS tagged,
@@ -548,12 +560,12 @@ async def get_batch_analysis(request: Request):
         email_pct = round(100 * with_email / max(tagged, 1))
         web_pct = round(100 * with_website / max(tagged, 1))
 
-        # ── Build pipeline steps based on batch type ──────────────
+        # ── Build pipeline steps ───────────────────────────────────
         steps = []
         summary_parts = []
 
         if is_upload:
-            # Upload pipeline: Import → SIRENE Match → Data
+            # Upload pipeline: Import → SIRENE → Données
             upload_action = action_map.get("upload", {})
             sirene_action = action_map.get("sirene", {})
             upload_success = upload_action.get("success", 0) or 0
@@ -569,7 +581,7 @@ async def get_batch_analysis(request: Request):
             })
             steps.append({
                 "label": "🔍 Match SIRENE",
-                "detail": f"{sirene_success} matchés sur {upload_success}",
+                "detail": f"{sirene_success} matchés",
                 "value": sirene_success,
                 "total": upload_success,
                 "pct": round(100 * sirene_success / max(upload_success, 1)),
@@ -582,16 +594,28 @@ async def get_batch_analysis(request: Request):
                 "pct": round((phone_pct + email_pct + web_pct) / 3),
             })
 
-            summary_parts.append(f"{upload_success} lignes importées")
+            summary_parts.append(f"{upload_success} lignes importées avec succès")
             if sirene_success > 0:
-                summary_parts.append(f"{sirene_success} matchées avec SIRENE ({round(100 * sirene_success / max(upload_success, 1))}%)")
-            summary_parts.append(f"Données: {phone_pct}% avec tél, {email_pct}% avec email, {web_pct}% avec site")
+                summary_parts.append(f"{sirene_success} entreprises parfaitement matchées avec SIRENE ({round(100 * sirene_success / max(upload_success, 1))}%)")
+            else:
+                summary_parts.append(f"Erreur ou en attente du matching SIRENE")
+            summary_parts.append(f"Résultat: {phone_pct}% avec téléphone, {email_pct}% avec email")
 
         else:
-            # Enrichment pipeline: SIRENE → Maps → Data
+            # Discovery pipeline: SIRENE → Maps → Crawl → Dirigeants → Finances → Données
             maps_action = action_map.get("maps_lookup", {})
+            # Maps total is scraped, but we found `total` companies in SIRENE.
             maps_total = maps_action.get("total", 0) or scraped
             maps_success = maps_action.get("success", 0) or 0
+
+            crawl_t = async_map.get("website_crawl", {}).get("total", 0)
+            crawl_s = async_map.get("website_crawl", {}).get("success", 0)
+
+            off_t = async_map.get("officers_found", {}).get("total", 0)
+            off_s = async_map.get("officers_found", {}).get("success", 0)
+
+            fin_t = async_map.get("financial_data", {}).get("total", 0)
+            fin_s = async_map.get("financial_data", {}).get("success", 0)
 
             steps.append({
                 "label": "📋 SIRENE",
@@ -602,10 +626,31 @@ async def get_batch_analysis(request: Request):
             })
             steps.append({
                 "label": "🗺️ Maps",
-                "detail": f"{maps_success}/{maps_total} trouvées",
+                "detail": f"{maps_success}/{maps_total} traitées",
                 "value": maps_success,
                 "total": maps_total,
                 "pct": round(100 * maps_success / max(maps_total, 1)),
+            })
+            steps.append({
+                "label": "🕸️ Crawl",
+                "detail": f"{crawl_s}/{crawl_t} sites" if crawl_t > 0 else "En attente...",
+                "value": crawl_s,
+                "total": crawl_t,
+                "pct": round(100 * crawl_s / max(crawl_t, 1)) if crawl_t > 0 else 0,
+            })
+            steps.append({
+                "label": "👔 Dirigeants",
+                "detail": f"{off_s}/{off_t} trouvés" if off_t > 0 else "En attente...",
+                "value": off_s,
+                "total": off_t,
+                "pct": round(100 * off_s / max(off_t, 1)) if off_t > 0 else 0,
+            })
+            steps.append({
+                "label": "💶 Finances",
+                "detail": f"{fin_s}/{fin_t} bilans" if fin_t > 0 else "En attente...",
+                "value": fin_s,
+                "total": fin_t,
+                "pct": round(100 * fin_s / max(fin_t, 1)) if fin_t > 0 else 0,
             })
             steps.append({
                 "label": "📊 Données",
@@ -615,10 +660,17 @@ async def get_batch_analysis(request: Request):
                 "pct": round((phone_pct + email_pct + web_pct) / 3),
             })
 
-            summary_parts.append(f"{total} entreprises SIRENE")
+            summary_parts.append(f"{total} entreprises extraites de SIRENE")
+            if reused > 0:
+                summary_parts.append(f"({reused} déjà en base de données, économie de requêtes)")
+            
             if maps_total > 0:
-                summary_parts.append(f"Maps: {maps_success}/{maps_total} trouvées ({round(100 * maps_success / max(maps_total, 1))}%)")
-            summary_parts.append(f"Résultats: {phone_pct}% tél, {email_pct}% email, {web_pct}% site web")
+                summary_parts.append(f"Google Maps a trouvé {maps_success} correspondances")
+            
+            if crawl_t > 0:
+                summary_parts.append(f"Le Crawler a analysé {crawl_s} sites web")
+            if off_s > 0 or fin_s > 0:
+                summary_parts.append(f"Enrichissement profond: {off_s} dirigeants et {fin_s} données financières récupérés")
 
         summary = ". ".join(summary_parts) + "." if summary_parts else "Aucune donnée."
 
