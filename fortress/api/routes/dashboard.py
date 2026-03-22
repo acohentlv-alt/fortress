@@ -513,6 +513,7 @@ async def get_batch_analysis(request: Request):
         batch_id = b["batch_id"]
         batch_name = b["batch_name"] or ""
         is_upload = batch_name.startswith("Import:")
+        is_manual_enrich = batch_id.startswith("MANUAL_ENRICH_")
         total = b["total_companies"] or 0
         scraped = b["companies_scraped"] or 0
         reused = total - scraped if total >= scraped else 0
@@ -601,6 +602,52 @@ async def get_batch_analysis(request: Request):
                 summary_parts.append(f"Erreur ou en attente du matching SIRENE")
             summary_parts.append(f"Résultat: {phone_pct}% avec téléphone, {email_pct}% avec email")
 
+        elif is_manual_enrich:
+            # Manual Enrich pipeline: Crawl → Dirigeants → Finances → Données
+            crawl_t = async_map.get("website_crawl", {}).get("total", 0)
+            crawl_s = async_map.get("website_crawl", {}).get("success", 0)
+
+            off_t = async_map.get("officers_found", {}).get("total", 0)
+            off_s = async_map.get("officers_found", {}).get("success", 0)
+
+            fin_t = async_map.get("financial_data", {}).get("total", 0)
+            fin_s = async_map.get("financial_data", {}).get("success", 0)
+
+            steps.append({
+                "label": "🕸️ Crawl",
+                "detail": f"{crawl_s}/{crawl_t} sites" if crawl_t > 0 else "En attente...",
+                "value": crawl_s,
+                "total": crawl_t,
+                "pct": round(100 * crawl_s / max(crawl_t, 1)) if crawl_t > 0 else 0,
+            })
+            steps.append({
+                "label": "👔 Dirigeants",
+                "detail": f"{off_s}/{off_t} trouvés" if off_t > 0 else "En attente...",
+                "value": off_s,
+                "total": off_t,
+                "pct": round(100 * off_s / max(off_t, 1)) if off_t > 0 else 0,
+            })
+            steps.append({
+                "label": "💶 Finances",
+                "detail": f"{fin_s}/{fin_t} bilans" if fin_t > 0 else "En attente...",
+                "value": fin_s,
+                "total": fin_t,
+                "pct": round(100 * fin_s / max(fin_t, 1)) if fin_t > 0 else 0,
+            })
+            steps.append({
+                "label": "📊 Données",
+                "detail": f"📞 {phone_pct}%  ✉️ {email_pct}%  🌐 {web_pct}%",
+                "value": with_phone + with_email + with_website,
+                "total": tagged * 3,
+                "pct": round((phone_pct + email_pct + web_pct) / 3),
+            })
+            
+            summary_parts.append(f"Action manuelle sur {total} entreprise(s)")
+            if crawl_t > 0:
+                summary_parts.append(f"Crawler a analysé {crawl_s} cibles")
+            if off_s > 0 or fin_s > 0:
+                summary_parts.append(f"{off_s} dirigeants et {fin_s} liasses financières extraits")
+                
         else:
             # Discovery pipeline: SIRENE → Maps → Crawl → Dirigeants → Finances → Données
             maps_action = action_map.get("maps_lookup", {})
