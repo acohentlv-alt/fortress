@@ -34,7 +34,7 @@ async def _ensure_table():
                     target_type VARCHAR(50),
                     target_id   TEXT,
                     details     TEXT,
-                    created_at  TIMESTAMP DEFAULT NOW()
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
             await conn.execute(

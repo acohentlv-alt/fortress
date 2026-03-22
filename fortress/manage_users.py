@@ -46,8 +46,8 @@ async def create_user(username, password, role, display_name=""):
                 password_hash   TEXT            NOT NULL,
                 role            VARCHAR(20)     NOT NULL DEFAULT 'user',
                 display_name    TEXT,
-                created_at      TIMESTAMP       NOT NULL DEFAULT NOW(),
-                last_login      TIMESTAMP
+                created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+                last_login      TIMESTAMPTZ
             )
         """)
         await conn.commit()

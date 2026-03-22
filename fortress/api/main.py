@@ -45,6 +45,34 @@ async def lifespan(app: FastAPI):
             await _ensure_table()
         except Exception as e:
             logger.warning("Could not ensure activity_log table at startup: %s", e)
+        # ── One-time migration: TIMESTAMP → TIMESTAMPTZ ────────────────────
+        # Existing columns stored naive timestamps (no timezone info).
+        # This converts them so the frontend can correctly display local time.
+        # Idempotent: only runs ALTER if the column is still 'timestamp without time zone'.
+        try:
+            from fortress.api.db import get_conn, fetch_all
+            cols_to_migrate = await fetch_all("""
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND data_type = 'timestamp without time zone'
+                ORDER BY table_name, column_name
+            """)
+            if cols_to_migrate:
+                async with get_conn() as conn:
+                    for col in cols_to_migrate:
+                        tbl = col['table_name']
+                        cname = col['column_name']
+                        await conn.execute(
+                            f'ALTER TABLE "{tbl}" ALTER COLUMN "{cname}" TYPE TIMESTAMPTZ'
+                        )
+                        logger.info("  ✅ %s.%s → TIMESTAMPTZ", tbl, cname)
+                    await conn.commit()
+                logger.info("✅ Timezone migration complete — %d columns upgraded", len(cols_to_migrate))
+            else:
+                logger.info("✅ Timezone migration: all columns already TIMESTAMPTZ")
+        except Exception as e:
+            logger.warning("Timezone migration failed (non-fatal): %s", e)
         # Ensure pg_trgm extension + trigram index for fast ILIKE search
         try:
             from fortress.api.db import get_conn
@@ -69,7 +97,7 @@ async def lifespan(app: FastAPI):
                         email VARCHAR(200) NOT NULL,
                         company VARCHAR(200) DEFAULT '',
                         message TEXT NOT NULL,
-                        created_at TIMESTAMP DEFAULT NOW()
+                        created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
                 await conn.execute("""
@@ -79,7 +107,7 @@ async def lifespan(app: FastAPI):
                         user_id INTEGER,
                         username VARCHAR(100),
                         text TEXT NOT NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                 """)
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_siren ON company_notes (siren)")

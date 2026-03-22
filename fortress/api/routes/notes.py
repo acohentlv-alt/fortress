@@ -78,7 +78,7 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
             "user_id": user_id,
             "username": username,
             "text": body.text.strip(),
-            "created_at": str(row[1]),
+            "created_at": row[1].isoformat() if hasattr(row[1], 'isoformat') else str(row[1]),
         }
     except Exception as e:
         import logging

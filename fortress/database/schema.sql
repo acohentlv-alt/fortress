@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS companies (
     latitude            NUMERIC(10, 7),
     longitude           NUMERIC(10, 7),
     fortress_id         SERIAL,                                 -- permanent unique ID, assigned on first insert
-    created_at          TIMESTAMP       NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMP       NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_companies_naf        ON companies (naf_code);
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     rating          NUMERIC(3, 1),
     review_count    INTEGER,
     maps_url        TEXT,
-    collected_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+    collected_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 -- Unique per (siren, source) so ON CONFLICT upserts work correctly
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS officers (
     prenom          TEXT,
     role            TEXT,
     source          VARCHAR(30)     NOT NULL DEFAULT 'inpi',
-    collected_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+    collected_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 -- Unique per (siren, nom, prenom) — DO NOTHING on duplicate officers
@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_officers_siren ON officers (siren);
 CREATE TABLE IF NOT EXISTS batch_tags (
     siren           VARCHAR(9)      NOT NULL REFERENCES companies (siren) ON DELETE CASCADE,
     batch_name      TEXT            NOT NULL,
-    tagged_at       TIMESTAMP       NOT NULL DEFAULT NOW(),
+    tagged_at       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     PRIMARY KEY (siren, batch_name)
 );
 
@@ -133,8 +133,8 @@ CREATE TABLE IF NOT EXISTS batch_data (
     companies_qualified     INTEGER         DEFAULT 0,            -- companies with confirmed phone (MVP field)
     strategy                VARCHAR(10)     NOT NULL DEFAULT 'sirene', -- 'sirene' or 'maps'
     search_queries          JSONB,                                 -- Maps-first: JSON array of search terms
-    created_at              TIMESTAMP       NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMP       NOT NULL DEFAULT NOW()
+    created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_data_batch_id ON batch_data (batch_id);
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS blacklisted_sirens (
     siren       VARCHAR(9)      PRIMARY KEY,
     reason      TEXT,
     added_by    VARCHAR(50),
-    added_at    TIMESTAMP       NOT NULL DEFAULT NOW()
+    added_at    TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 -- ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS company_notes (
     user_id     INTEGER,
     username    VARCHAR(100),
     text        TEXT            NOT NULL,
-    created_at  TIMESTAMP       NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_notes_siren ON company_notes (siren);
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS batch_log (
     source_url      TEXT,
     search_query    TEXT,                        -- the exact Maps search term that found this entity
     duration_ms     INTEGER,
-    timestamp       TIMESTAMP       NOT NULL DEFAULT NOW()
+    timestamp       TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_log_batch_id  ON batch_log (batch_id);
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS rejected_sirens (
     naf_prefix      VARCHAR(5)      NOT NULL,   -- e.g. '52' for logistique
     departement     VARCHAR(3)      NOT NULL,   -- e.g. '33'
     reason          TEXT,                        -- e.g. 'no_maps_data', 'false_positive'
-    rejected_at     TIMESTAMP       NOT NULL DEFAULT NOW(),
+    rejected_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     PRIMARY KEY (siren, naf_prefix, departement)
 );
 
@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS client_sirens (
     siren           VARCHAR(9)      PRIMARY KEY,
     client_id       VARCHAR(50)     NOT NULL DEFAULT 'default',  -- future multi-tenancy
     source_file     TEXT,                                        -- original CSV filename
-    uploaded_at     TIMESTAMP       NOT NULL DEFAULT NOW()
+    uploaded_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_client_sirens_client ON client_sirens (client_id);
@@ -269,8 +269,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash   TEXT            NOT NULL,
     role            VARCHAR(20)     NOT NULL DEFAULT 'user',  -- 'admin' | 'user'
     display_name    TEXT,
-    created_at      TIMESTAMP       NOT NULL DEFAULT NOW(),
-    last_login      TIMESTAMP
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    last_login      TIMESTAMPTZ
 );
 
 -- Add user_id to batch_data so we can filter "my batches" per user
@@ -318,7 +318,7 @@ CREATE TABLE IF NOT EXISTS company_notes (
     user_id     INTEGER         NOT NULL REFERENCES users(id),
     username    VARCHAR(50)     NOT NULL,
     text        TEXT            NOT NULL,
-    created_at  TIMESTAMP       NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_company_notes_siren ON company_notes(siren);
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
     target_type VARCHAR(50),
     target_id   TEXT,
     details     TEXT,
-    created_at  TIMESTAMP       DEFAULT NOW()
+    created_at  TIMESTAMPTZ     DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_log_time ON activity_log (created_at DESC);
