@@ -830,7 +830,7 @@ async def _get_company_impl(siren: str):
             co.departement, co.region, co.statut,
             co.date_creation, co.tranche_effectif, co.effectif_exact,
             co.latitude, co.longitude, co.fortress_id,
-            co.chiffre_affaires, co.resultat_net, co.annee_ca, co.tranche_ca,
+            co.chiffre_affaires, co.annee_ca, co.tranche_ca,
             co.date_fondation, co.type_etablissement,
             co.extra_data,
             co.created_at, co.updated_at,
