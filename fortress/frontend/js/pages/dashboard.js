@@ -1031,12 +1031,11 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
             <h3 class="analysis-panel-title">🎯 Succès par batch</h3>
             <div style="display:flex; flex-direction:column; gap:var(--space-md)">
                 ${batches.map(b => {
-                    const mapsRate = b.maps_rate || 0;
-                    const crawlRate = b.crawl_rate || 0;
-                    const mapsColor = mapsRate >= 60 ? 'var(--success)' : mapsRate >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
-                    const crawlColor = crawlRate >= 60 ? 'var(--success)' : crawlRate >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
                     const batchLabel = b.batch_name || b.batch_id || '—';
                     const dateStr = b.created_at ? new Date(b.created_at).toLocaleDateString('fr-FR') : '';
+                    const isUpload = b.is_upload;
+                    const steps = b.steps || [];
+                    
                     return `
                         <div style="
                             background: var(--bg-secondary, rgba(255,255,255,0.04));
@@ -1044,29 +1043,31 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
                             padding: var(--space-md) var(--space-lg);
                             cursor: pointer;
                         " onclick="window.location.hash='#/job/${encodeURIComponent(b.batch_id)}'" title="Cliquer pour voir le détail">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xs)">
-                                <span style="font-weight:600; font-size:var(--font-sm)">${escapeHtml(batchLabel)}</span>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
+                                <span style="font-weight:600; font-size:var(--font-sm)">${isUpload ? '📥' : '⚡'} ${escapeHtml(batchLabel)}</span>
                                 <span style="color:var(--text-muted); font-size:var(--font-xs)">${dateStr}</span>
                             </div>
-                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:var(--space-md)">
-                                <div>
-                                    <div style="display:flex; justify-content:space-between; font-size:var(--font-xs); margin-bottom:2px">
-                                        <span>🗺️ Maps</span>
-                                        <span style="color:${mapsColor}; font-weight:600">${mapsRate}% (${b.maps_success || 0}/${b.maps_total || 0})</span>
+                            
+                            <div style="display:grid; grid-template-columns: repeat(${steps.length}, 1fr); gap:var(--space-md); margin-bottom:var(--space-sm)">
+                                ${steps.map(s => {
+                                    const pct = s.pct || 0;
+                                    const color = pct >= 60 ? 'var(--success)' : pct >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
+                                    return `
+                                    <div>
+                                        <div style="display:flex; justify-content:space-between; font-size:var(--font-xs); margin-bottom:4px">
+                                            <span style="font-weight:500">${escapeHtml(s.label)}</span>
+                                            <span style="color:${color}; font-weight:600">${pct}%</span>
+                                        </div>
+                                        <div style="background:rgba(255,255,255,0.06); border-radius:4px; height:6px; overflow:hidden; margin-bottom:4px">
+                                            <div style="width:${pct}%; height:100%; background:${color}; border-radius:4px; transition:width 0.4s"></div>
+                                        </div>
+                                        <div style="font-size:10px; color:var(--text-secondary)">${escapeHtml(s.detail)}</div>
                                     </div>
-                                    <div style="background:rgba(255,255,255,0.06); border-radius:4px; height:6px; overflow:hidden">
-                                        <div style="width:${mapsRate}%; height:100%; background:${mapsColor}; border-radius:4px; transition:width 0.4s"></div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <div style="display:flex; justify-content:space-between; font-size:var(--font-xs); margin-bottom:2px">
-                                        <span>🌐 Crawl</span>
-                                        <span style="color:${crawlColor}; font-weight:600">${crawlRate}% (${b.crawl_success || 0}/${b.crawl_total || 0})</span>
-                                    </div>
-                                    <div style="background:rgba(255,255,255,0.06); border-radius:4px; height:6px; overflow:hidden">
-                                        <div style="width:${crawlRate}%; height:100%; background:${crawlColor}; border-radius:4px; transition:width 0.4s"></div>
-                                    </div>
-                                </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                            <div style="font-size:var(--font-xs); color:var(--text-secondary); border-top:1px solid rgba(255,255,255,0.05); padding-top:var(--space-sm); margin-top:var(--space-sm)">
+                                📝 ${escapeHtml(b.summary)}
                             </div>
                         </div>
                     `;
