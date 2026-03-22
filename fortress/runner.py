@@ -349,7 +349,7 @@ async def run(batch_id: str) -> None:
                         batch_name=batch_name,
                         companies=qr.company_count,
                     )
-                    triage = await triage_companies(qr.sample, qr.raw_query, pool)
+                    triage = await triage_companies(qr.sample, qr.raw_query, pool, batch_id=batch_id)
 
                     # Cap the scrape queue at the user's requested size
                     scrape_list = triage.yellow + triage.red
@@ -387,9 +387,20 @@ async def run(batch_id: str) -> None:
                     )
 
                     if scrape_count == 0:
-                        # All GREEN — nothing to scrape
-                        log.info("runner_all_green", batch_name=batch_name)
-                        await _update_job_safe(conn_holder, batch_id, status="completed")
+                        # All GREEN — no new Maps-naive companies to scrape.
+                        # batch_log is already populated by triage so the job card
+                        # will show the GREEN companies with a ♻️ cached badge.
+                        log.info(
+                            "runner_all_green",
+                            batch_name=batch_name,
+                            green_count=triage.green_count,
+                        )
+                        await _update_job_safe(
+                            conn_holder, batch_id,
+                            status="completed",
+                            companies_scraped=triage.green_count,
+                            companies_qualified=triage.green_count,
+                        )
                         return
 
                     # ── Step 3: enrich + batch process ──────────────────────

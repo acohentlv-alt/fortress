@@ -343,7 +343,20 @@ async def _query_companies(
         where_parts.append("date_creation <= %s")
         params.append(date_to)
 
+    # Exclude companies already successfully enriched by Google Maps.
+    # A company is considered "Maps-enriched" if it has a contacts row with
+    # source='google_maps' AND at least a phone or website (not just an attempt).
+    # This ensures new batch runs always return truly new candidates.
+    where_parts.append("""
+        siren NOT IN (
+            SELECT siren FROM contacts
+            WHERE source = 'google_maps'
+            AND (phone IS NOT NULL OR website IS NOT NULL)
+        )
+    """)
+
     where_sql = " AND ".join(where_parts)
+
 
     count_sql = f"SELECT COUNT(*) FROM companies WHERE {where_sql}"
     # Build sample SQL — omit LIMIT clause when limit is None (fetch all)

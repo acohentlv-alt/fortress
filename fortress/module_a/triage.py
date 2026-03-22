@@ -30,6 +30,7 @@ async def triage_companies(
     companies: list[Company],
     batch_name: str,
     pool: Any,  # psycopg_pool.AsyncConnectionPool
+    batch_id: str | None = None,  # When set, writes all companies to batch_log
 ) -> TriageResult:
     """Classify companies into BLACK / GREEN / YELLOW / RED.
 
@@ -99,6 +100,12 @@ async def triage_companies(
         # --- 4. Tag GREEN companies in batch_tags ------------------------
         if result.green:
             await _tag_green_companies(conn, result.green, batch_name)
+
+        # --- 5. Write ALL non-black companies to batch_log if batch_id given
+        # This ensures the job card company list is always populated, including
+        # GREEN companies that won't go through the enricher's on_save callback.
+        if batch_id:
+            await _write_triage_to_batch_log(conn, result, batch_id)
 
     _print_preview(batch_name, result)
     log.info(
@@ -197,6 +204,45 @@ async def _tag_green_companies(
             ON CONFLICT (siren, batch_name) DO NOTHING
             """,
             [(c.siren, batch_name, now) for c in companies],
+        )
+
+
+async def _write_triage_to_batch_log(
+    conn: Any,
+    result: Any,  # TriageResult
+    batch_id: str,
+) -> None:
+    """Write all non-BLACK companies to batch_log so the job card shows them.
+
+    GREEN  → action='maps_lookup', result='cached'  (data already in bank)
+    YELLOW → action='maps_lookup', result='cached'  (partial data exists)
+    RED    → action='maps_lookup', result='queued'  (will be scraped)
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(tz=timezone.utc)
+    rows = []
+
+    for company in result.green:
+        rows.append((batch_id, company.siren, "maps_lookup", "cached", "♻️ Données existantes — toutes les informations Maps sont déjà dans la base.", now))
+
+    for company in result.yellow:
+        rows.append((batch_id, company.siren, "maps_lookup", "cached", "♻️ Données partielles — enrichissement Maps en cours.", now))
+
+    for company in result.red:
+        rows.append((batch_id, company.siren, "maps_lookup", "queued", "En attente d'enrichissement Maps.", now))
+
+    if not rows:
+        return
+
+    async with conn.cursor() as cur:
+        await cur.executemany(
+            """
+            INSERT INTO batch_log (batch_id, siren, action, result, detail, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            rows,
         )
 
 

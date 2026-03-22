@@ -76,8 +76,8 @@ export async function renderJob(container, batchId) {
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-weight:600">Progression — ${batchSize} entreprises</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
-                    <span style="color:var(--text-secondary)">${qualified}/${batchSize} qualifiées (${scraped} tentées)</span>
-                    <button id="toggle-provenance" title="D'où viennent ces données ?" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
+                    <span style="color:var(--text-secondary); font-weight:500">${qualified} entreprise${qualified !== 1 ? 's' : ''} trouvée${qualified !== 1 ? 's' : ''}</span>
+                    <button id="toggle-provenance" title="Détails du traitement" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
                 </div>
             </div>
             ${job.status === 'in_progress' ? `
@@ -86,8 +86,14 @@ export async function renderJob(container, batchId) {
             </div>` : ''}
             <div id="provenance-panel" style="display:none; margin-top:var(--space-lg); padding:var(--space-lg); background:var(--bg-secondary); border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
                 <div style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
-                    Sources des données
+                    Détails du traitement
                 </div>
+                ${scraped > 0 ? `<div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md)">
+                    🔍 <strong>${scraped}</strong> entreprises évaluées — <strong>${qualified}</strong> retenues, <strong>${scraped - qualified}</strong> ignorées car déjà enrichies par Maps ou sans correspondance.
+                </div>` : ''}
+                ${(job.triage_green || 0) > 0 ? `<div style="font-size:var(--font-sm); color:rgb(34,197,94); margin-bottom:var(--space-md)">
+                    ♻️ <strong>${job.triage_green}</strong> entreprise${job.triage_green > 1 ? 's étaient' : ' était'} déjà dans la base de données avec des données Maps complètes.
+                </div>` : ''}
                 <div id="provenance-sources" style="display:flex; gap:var(--space-xl); flex-wrap:wrap; font-size:var(--font-sm)">
                     <span style="color:var(--text-secondary)">Chargement…</span>
                 </div>
@@ -305,12 +311,37 @@ async function loadCompanies(batchId, page, sort) {
 
     const data = await getJobCompanies(batchId, { page, pageSize: 20, sort });
     if (!data || !data.companies || data.companies.length === 0) {
-        companiesContainer.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
-                <div class="empty-state-text">Aucune entreprise trouvée</div>
-            </div>
-        `;
+        // Context-aware empty state
+        const job = await getJob(batchId).catch(() => null);
+        const greenCount = job?.triage_green || 0;
+        const batchName = job?.batch_name || '';
+
+        if (greenCount > 0) {
+            // All-green: all companies were already Maps-enriched
+            companiesContainer.innerHTML = `
+                <div style="padding:var(--space-2xl); background:var(--bg-secondary); border-radius:var(--radius-md); border:1px solid rgba(34,197,94,0.3); text-align:center; max-width:560px; margin:0 auto">
+                    <div style="font-size:2.5rem; margin-bottom:var(--space-lg)">✅</div>
+                    <div style="font-size:var(--font-lg); font-weight:600; color:rgb(34,197,94); margin-bottom:var(--space-md)">
+                        Toutes les entreprises sont déjà enrichies
+                    </div>
+                    <p style="color:var(--text-secondary); margin-bottom:var(--space-lg)">
+                        Les <strong>${greenCount}</strong> entreprises trouvées pour <em>${escapeHtml(batchName)}</em> ont déjà été enrichies par Google Maps dans notre base de données.
+                    </p>
+                    <p style="color:var(--text-muted); font-size:var(--font-sm); margin-bottom:var(--space-xl)">
+                        Pour rechercher de nouvelles entreprises, essayez un secteur ou un département différent,
+                        ou attendez que de nouvelles entreprises s'enregistrent dans SIRENE.
+                    </p>
+                    <a href="#/new-batch" class="btn btn-primary">🚀 Nouvelle recherche</a>
+                </div>
+            `;
+        } else {
+            companiesContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div class="empty-state-text">Aucune entreprise trouvée</div>
+                </div>
+            `;
+        }
         return;
     }
 
