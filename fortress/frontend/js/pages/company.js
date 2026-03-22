@@ -409,44 +409,18 @@ export async function renderCompany(container, siren) {
                     `}
                 </div>
 
-                <!-- Meta Data: Tags & Sources -->
-                ${tags.length > 0 || mc.sources?.length > 0 ? `
-                <div class="detail-section" style="display:flex; flex-direction:column; gap:var(--space-lg)">
 
-                    ${tags.length > 0 ? `
-                        <div>
-                            <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
-                                Trouvé dans
-                            </span>
-                            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-xs)">
-                                ${tags.map(t => `<span class="badge badge-accent">${escapeHtml(t.batch_name)}</span>`).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    ${mc.sources && mc.sources.length > 0 ? `
-                        <div>
-                            <span style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em">
-                                Sources de données
-                            </span>
-                            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-top:var(--space-xs)">
-                                ${mc.sources.map(s => `<span class="badge badge-muted">${escapeHtml(s)}</span>`).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-                </div>
-                ` : ''}
             </div>
 
-            <!-- Right Column: CRM Notes -->
-            <div class="bento-col-right" style="display:flex; flex-direction:column; height:100%">
-                <!-- Notes Card (sticky constraint) -->
-                <div class="detail-section" style="display:flex; flex-direction:column; height:100%; margin-bottom:0">
+            <!-- Right Column: CRM Notes (compact) -->
+            <div class="bento-col-right" style="display:flex; flex-direction:column">
+                <!-- Notes Card -->
+                <div class="detail-section" style="display:flex; flex-direction:column; margin-bottom:0">
                     <h3 class="detail-section-title">📝 Notes CRM</h3>
-                    <div id="notes-list" style="flex:1; overflow-y:auto; margin-bottom:var(--space-md); padding-right:var(--space-xs)">
+                    <div id="notes-list" style="margin-bottom:var(--space-md)">
                         ${renderNotesDirect(data.notes || [], 3)}
                     </div>
-                    <div style="display:flex; gap:var(--space-sm); margin-top:auto">
+                    <div style="display:flex; gap:var(--space-sm)">
                         <textarea id="note-input" placeholder="Ajouter une note…"
                             style="flex:1; min-height:44px; padding:var(--space-sm) var(--space-md);
                             background:var(--bg-input); border:1px solid var(--border-default);

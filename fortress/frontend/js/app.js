@@ -5,7 +5,7 @@
 import { renderDashboard } from './pages/dashboard.js';
 import { renderDepartment } from './pages/department.js';
 import { renderJob } from './pages/job.js';
-import { renderCompany } from './pages/company.js?v=11';
+import { renderCompany } from './pages/company.js?v=13';
 import { renderSearch } from './pages/search.js';
 import { renderMonitor } from './pages/monitor.js';
 import { renderNewBatch } from './pages/new-batch.js';
