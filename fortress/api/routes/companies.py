@@ -813,6 +813,15 @@ async def untag_company_all(siren: str):
 @router.get("/{siren}")
 async def get_company(siren: str):
     """Full company detail with enriched data, contacts, and officers."""
+    import traceback
+    try:
+        return await _get_company_impl(siren)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[ERROR] get_company({siren}): {e}\n{tb}")
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
+
+async def _get_company_impl(siren: str):
     company = await fetch_one("""
         SELECT
             co.siren, co.siret_siege, co.denomination, co.enseigne,
