@@ -829,12 +829,12 @@
 /* ── Company Detail Header — prevent flex blowout ────────────── */
 .company-detail-header {
     min-width: 0;
-    overflow: hidden;
+    overflow: visible; /* allow info-tip tooltips to escape */
 }
 
 .company-detail-name-block {
     min-width: 0;
-    overflow: hidden;
+    overflow: visible; /* allow info-tip tooltips to escape */
     flex: 1;
 }
 
@@ -868,7 +868,7 @@
 
 .detail-top-row .detail-section {
     min-width: 0;  /* prevent grid blowout */
-    overflow: hidden;
+    overflow: visible; /* allow info-tip tooltips to escape */
 }
 
 .detail-section {

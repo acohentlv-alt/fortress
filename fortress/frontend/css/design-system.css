@@ -502,7 +502,8 @@ a:hover { color: var(--accent); }
     max-width: 1400px;
     width: 100%;
     box-sizing: border-box;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: visible;
 }
 
 .page-title {
