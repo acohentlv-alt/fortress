@@ -281,8 +281,19 @@ function _buildBreadcrumb(co, tags) {
     return breadcrumb(items);
 }
 
+// ── AbortController — cancel stale renders on rapid navigation ───
+let _companyAbortCtrl = null;
+
 export async function renderCompany(container, siren) {
+    // Cancel any in-flight render from a previous company
+    if (_companyAbortCtrl) _companyAbortCtrl.abort();
+    _companyAbortCtrl = new AbortController();
+    const thisCtrl = _companyAbortCtrl;
+
     const data = await getCompany(siren);
+
+    // If user navigated away while we were fetching, bail silently
+    if (thisCtrl.signal.aborted) return;
 
     if (!data || data.error) {
         container.innerHTML = `
