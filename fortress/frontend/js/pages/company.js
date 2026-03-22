@@ -1065,23 +1065,43 @@ function _loadEnrichHistory(siren, history) {
                         </div>
                     `;
                 } else {
-                    const icon = h.action === 'manual_edit' ? '✏️' : h.action === 'crawl-website' ? '🌐' : (h.action === 'link' ? '🔗' : '⚙️');
-                    const color = h.result === 'success' ? 'var(--success)' : (h.result === 'error' ? 'var(--error)' : 'var(--text-secondary)');
+                    const ACTION_MAP = {
+                        'maps_lookup': { icon: '🗺️', label: 'Recherche Google Maps' },
+                        'website_crawl': { icon: '🕸️', label: 'Analyse de site web' },
+                        'officers_found': { icon: '👥', label: 'Dirigeants identifiés' },
+                        'financial_data': { icon: '💶', label: 'Données financières' },
+                        'siren_verified': { icon: '✅', label: 'Correspondance SIREN' },
+                        'siren_mismatch': { icon: '⚠️', label: 'Alerte SIREN' },
+                        'manual_edit': { icon: '✏️', label: 'Édition manuelle' },
+                        'link': { icon: '🔗', label: 'Liaison automatique' },
+                        'merge': { icon: '🔀', label: 'Fusion de données' },
+                    };
+                    const act = ACTION_MAP[h.action] || { icon: '⚙️', label: h.action };
+                    const isSuccess = h.result === 'success';
+                    const isAlert = h.action === 'siren_mismatch' || h.result === 'fail' || h.result === 'error';
+                    const color = isSuccess ? 'var(--success)' : (isAlert ? 'var(--error)' : 'var(--text-secondary)');
+                    const resultLabel = isSuccess ? 'Succès' : (h.result === 'fail' || h.result === 'error' ? 'Échec' : h.result);
                     
                     return `
                         <div style="display:flex; gap:var(--space-md); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
-                            <div style="font-size:1.2rem; flex-shrink:0">${icon}</div>
+                            <div style="font-size:1.2rem; flex-shrink:0; opacity:${isAlert ? '1' : '0.8'}">${act.icon}</div>
                             <div style="flex:1; min-width:0">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
                                     <span style="font-weight:600; color:var(--text-primary); font-size:var(--font-xs); text-transform:uppercase; letter-spacing:0.02em">
-                                        ${escapeHtml(h.action)}
+                                        ${escapeHtml(act.label)}
                                     </span>
                                     <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
-                                <div style="font-size:var(--font-sm); color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(h.detail || '')}">
-                                    <span style="color:${color}; font-weight:700">${escapeHtml(h.result)}</span>
-                                    ${h.detail ? ` · ${escapeHtml(h.detail)}` : ''}
-                                    ${h.duration ? ` · ${h.duration}ms` : ''}
+                                <div style="font-size:var(--font-sm); line-height:1.4">
+                                    ${h.detail 
+                                        ? `<div style="color:var(--text-primary); margin-bottom:4px; font-weight:${isAlert ? '500' : 'normal'}">${escapeHtml(h.detail)}</div>` 
+                                        : ''}
+                                    <div style="color:var(--text-secondary); font-size:calc(var(--font-sm) - 1px); display:flex; gap:var(--space-xs); align-items:center; flex-wrap:wrap">
+                                        <span style="color:${color}; font-weight:700">${escapeHtml(resultLabel)}</span>
+                                        ${h.search_query ? `<span style="opacity:0.6">•</span><span style="font-style:italic">🔍 "${escapeHtml(h.search_query)}"</span>` : ''}
+                                        ${h.source_url ? `<span style="opacity:0.6">•</span><a href="${h.source_url.startsWith('http') ? h.source_url : 'https://'+h.source_url}" target="_blank" style="color:var(--accent); text-decoration:none">🔗 Voir la source</a>` : ''}
+                                        ${h.duration ? `<span style="opacity:0.6">•</span><span>${h.duration}ms</span>` : ''}
+                                    </div>
                                 </div>
                             </div>
                         </div>
