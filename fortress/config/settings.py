@@ -5,10 +5,15 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 
 
+import os
+
 class Settings(BaseSettings):
     """Application settings, loaded from environment variables and .env file."""
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env" if os.access(".env", os.R_OK) else None,
+        "env_file_encoding": "utf-8"
+    }
 
     # Paths
     data_dir: Path = Path("data")

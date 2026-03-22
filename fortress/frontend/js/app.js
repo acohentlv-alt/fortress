@@ -48,6 +48,8 @@ const routes = [
     { pattern: /^#\/upload$/, handler: renderUpload, nav: 'upload' },
     { pattern: /^#\/contacts$/, handler: renderContacts, nav: 'contacts' },
     { pattern: /^#\/activity$/, handler: renderActivity, nav: 'activity' },
+    { pattern: /^#\/login$/, handler: renderLogin, nav: 'none' },
+    { pattern: /^#\/intro$/, handler: renderIntro, nav: 'none' },
 ];
 
 function getPageContent() {
