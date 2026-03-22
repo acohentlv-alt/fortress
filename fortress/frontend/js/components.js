@@ -77,9 +77,9 @@ export function statusBadge(status) {
 
 // ── Company Statut Badge ─────────────────────────────────────────
 export function statutBadge(statut) {
-    if (statut === 'A') return '<span class="badge badge-success">Actif</span>';
-    if (statut === 'C') return '<span class="badge badge-danger">Cessé</span>';
-    return `<span class="badge badge-muted">${statut || '—'}</span>`;
+    if (statut === 'A') return '<span class="glass-badge glass-badge--green">✅ Actif</span>';
+    if (statut === 'C') return '<span class="glass-badge glass-badge--red">🚫 Cessé</span>';
+    return `<span class="glass-badge">${statut || '—'}</span>`;
 }
 
 // ── Forme Juridique Badge ────────────────────────────────────────
@@ -94,7 +94,7 @@ const FORME_LABELS = {
 export function formeJuridiqueBadge(code) {
     const label = FORME_LABELS[code] || code || '';
     if (!label) return '';
-    return `<span class="badge badge-accent">${label}</span>`;
+    return `<span class="glass-badge glass-badge--violet">⚖️ ${label}</span>`;
 }
 
 // ── Contact Indicators (enhanced — shows actual values) ─────────

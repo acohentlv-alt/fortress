@@ -353,3 +353,8 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_youtube TEXT;
 -- SIREN mismatch flag — enricher sets this when mentions-légales SIREN ≠ company SIREN
 -- ---------------------------------------------------------------------------
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS siren_match BOOLEAN;
+
+-- ---------------------------------------------------------------------------
+-- Financial data — resultat_net from Recherche Entreprises API
+-- ---------------------------------------------------------------------------
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS resultat_net BIGINT;

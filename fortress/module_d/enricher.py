@@ -752,6 +752,9 @@ async def enrich_companies(
                         if "chiffre_affaires" in re_company_data:
                             _update_parts.append("chiffre_affaires = %s")
                             _update_vals.append(re_company_data["chiffre_affaires"])
+                        if "resultat_net" in re_company_data:
+                            _update_parts.append("resultat_net = %s")
+                            _update_vals.append(re_company_data["resultat_net"])
                         if "tranche_effectif" in re_company_data:
                             _update_parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
                             _update_vals.append(re_company_data["tranche_effectif"])
