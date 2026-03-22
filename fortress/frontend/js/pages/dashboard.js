@@ -35,9 +35,9 @@ export async function renderDashboard(container) {
     // Helper: check if a response is an API error (not a valid data payload)
     const isErr = (r) => !r || (r._ok === false);
 
-    // Check if ALL calls failed (503, network error, etc.)
-    const allFailed = isErr(stats) && isErr(departments) && isErr(jobs);
-    if (allFailed) {
+    // If the primary stats endpoint fails (e.g. 503 Neon sleeping), fail the whole dashboard
+    const dataFailed = isErr(stats);
+    if (dataFailed) {
         const errorMsg = extractApiError(stats || departments);
         container.innerHTML = `
             <h1 class="page-title">Dashboard</h1>
