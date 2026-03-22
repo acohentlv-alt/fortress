@@ -692,11 +692,15 @@ async def enrich_companies(
         if on_progress:
             await on_progress(len(tried_sirens), replaced_count, len(contacts))
 
-        # ── Step 3: Officer upserts (mentions légales + Recherche Entreprises)
+        # ── Step 3: Officer upserts & Logging (mentions légales + Recherche Entreprises)
         # These need DB access, so they run in the caller, not _enrich_one().
         if has_enrichment:
             try:
                 async with pool.connection() as conn:
+                    from fortress.module_d.deduplicator import log_audit
+                    total_officers = 0
+                    officer_sources = []
+                    
                     # 3a: Mentions Légales director
                     if ml_result and ml_result.get("director_name"):
                         from fortress.models import Officer, ContactSource
@@ -725,6 +729,8 @@ async def enrich_companies(
                             siren=company.siren,
                             name=ml_result["director_name"],
                         )
+                        total_officers += 1
+                        officer_sources.append("Site web (Mentions légales)")
 
                     # 3b: Recherche Entreprises API — official directors
                     from fortress.module_b.recherche_entreprises import fetch_dirigeants
@@ -744,6 +750,14 @@ async def enrich_companies(
                             source=ContactSource.RECHERCHE_ENTREPRISES,
                         )
                         await upsert_officer(conn, officer)
+                    
+                    if dirigeants:
+                        total_officers += len(dirigeants)
+                        officer_sources.append("Registre National (API INPI)")
+                        
+                    if total_officers > 0:
+                        det = f"{total_officers} dirigeant(s) identifié(s). Sources: {', '.join(officer_sources)}."
+                        await log_audit(conn, batch_id=batch_id, siren=company.siren, action="officers_found", result="success", detail=det)
 
                     # Store company-level data from API (revenue, effectif)
                     if re_company_data:
@@ -766,6 +780,21 @@ async def enrich_companies(
                                 f"UPDATE companies SET {', '.join(_update_parts)} WHERE siren = %s",
                                 tuple(_update_vals),
                             )
+                            
+                        # Log financial data events
+                        fin_details = []
+                        if re_company_data.get("chiffre_affaires"):
+                            ca_val = re_company_data["chiffre_affaires"]
+                            fin_details.append(f"CA: {ca_val} €")
+                        if re_company_data.get("resultat_net"):
+                            rn_val = re_company_data["resultat_net"]
+                            fin_details.append(f"Résultat net: {rn_val} €")
+                        if re_company_data.get("tranche_effectif"):
+                            fin_details.append(f"Effectif INSEE: {re_company_data['tranche_effectif']}")
+                            
+                        if fin_details:
+                            fin_text = " • ".join(fin_details) + ". Source: API INPI"
+                            await log_audit(conn, batch_id=batch_id, siren=company.siren, action="financial_data", result="success", detail=fin_text)
 
                     if dirigeants:
                         log.info(
@@ -774,6 +803,12 @@ async def enrich_companies(
                             count=len(dirigeants),
                             ca=re_company_data.get("chiffre_affaires"),
                         )
+                        
+                    # SIREN Match Validation Logging
+                    if contact.siren_match is True:
+                        await log_audit(conn, batch_id=batch_id, siren=company.siren, action="siren_verified", result="success", detail=f"SIREN vérifié sur le site web ({contact.website}).")
+                    elif contact.siren_match is False:
+                        await log_audit(conn, batch_id=batch_id, siren=company.siren, action="siren_mismatch", result="fail", detail="Alerte : Le numéro SIREN extrait des mentions légales du site web ne correspond pas à l'entité recherchée.")
 
                     await conn.commit()
             except Exception as officer_exc:

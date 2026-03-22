@@ -771,7 +771,7 @@ async def get_enrich_history(siren: str):
     """
     rows = await fetch_all("""
         SELECT
-            action, result, source_url, duration_ms, timestamp
+            action, result, source_url, detail, search_query, duration_ms, timestamp
         FROM batch_log
         WHERE siren = %s
         ORDER BY timestamp DESC
@@ -881,10 +881,9 @@ async def _get_company_impl(siren: str):
         ORDER BY tagged_at DESC
     """, (siren,))
 
-    # Enrichment audit trail (which agents enriched this company)
     enrichment_history = await fetch_all("""
         SELECT
-            action, result, source_url, duration_ms, timestamp
+            action, result, source_url, detail, search_query, duration_ms, timestamp
         FROM batch_log
         WHERE siren = %s
         ORDER BY timestamp DESC
@@ -965,7 +964,9 @@ async def _get_company_impl(siren: str):
             "type": "enrichment",
             "action": h["action"],
             "result": h["result"],
-            "detail": h["source_url"],
+            "source_url": h["source_url"],
+            "detail": h["detail"],
+            "search_query": h["search_query"],
             "duration": h["duration_ms"],
             "timestamp": str(h["timestamp"]),
         })

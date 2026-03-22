@@ -175,13 +175,17 @@ CREATE TABLE IF NOT EXISTS batch_log (
     id              SERIAL          PRIMARY KEY,
     batch_id        TEXT            NOT NULL,
     siren           VARCHAR(9)      NOT NULL,
-    action          VARCHAR(50)     NOT NULL,   -- 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
-    result          VARCHAR(20)     NOT NULL,   -- 'success' | 'fail' | 'blocked' | 'skipped'
+    action          VARCHAR(50)     NOT NULL,   -- 'maps_lookup' | 'website_crawl' | 'officers_found' | 'financial_data' | 'siren_verified' | 'siren_mismatch' | 'manual_edit' | 'link' | 'merge'
+    result          VARCHAR(20)     NOT NULL,   -- 'success' | 'fail' | 'blocked' | 'skipped' | 'filtered'
     source_url      TEXT,
+    detail          TEXT,                        -- structured event detail (values, sources, counts)
     search_query    TEXT,                        -- the exact Maps search term that found this entity
     duration_ms     INTEGER,
     timestamp       TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+-- Migration: add detail column to existing batch_log
+ALTER TABLE batch_log ADD COLUMN IF NOT EXISTS detail TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_batch_log_batch_id  ON batch_log (batch_id);
 CREATE INDEX IF NOT EXISTS idx_batch_log_siren  ON batch_log (siren);

@@ -461,146 +461,184 @@ async def get_analysis(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Per-batch Pipeline Step Analysis + Plain English Summary
+# Per-batch Pipeline Success — full user-journey analysis
 # ---------------------------------------------------------------------------
 
 @router.get("/batch-analysis")
-async def get_batch_analysis(request: Request, batch_id: str = ""):
-    """Per-step success breakdown for a specific batch (or last 5 batches).
+async def get_batch_analysis(request: Request):
+    """Pipeline success per batch — shows the FULL user journey for each batch.
 
-    Returns per-step stats: SIRENE → Maps → Website Crawl, with plain English summary.
+    For enrichment batches (e.g. "camping 33"):
+        Step 1: SIRENE → How many companies were available
+        Step 2: Maps   → How many Maps found data for
+        Step 3: Data   → Phone / Email / Website hit rates
+
+    For import/upload batches (e.g. "Import: Base_Transport.xlsx"):
+        Step 1: Import  → How many rows were ingested
+        Step 2: SIRENE  → How many matched to a SIREN
+        Step 3: Data    → Phone / Email / Website hit rates
+
+    System batches (SYNC_CRAWL, ENTITY_MERGE, MANUAL_EDIT) are excluded.
     """
-    if batch_id:
-        # Single batch analysis
-        steps = await fetch_all("""
-            SELECT
-                action,
-                COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE result = 'success') AS success,
-                COUNT(*) FILTER (WHERE result = 'fail') AS fail,
-                COUNT(*) FILTER (WHERE result = 'skipped') AS skipped,
-                COUNT(*) FILTER (WHERE result = 'blocked') AS blocked,
-                ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
+    # ── Get last 10 user-facing batches from batch_data ─────────────────
+    batches = await fetch_all("""
+        SELECT
+            bd.batch_id,
+            bd.batch_name,
+            bd.status,
+            bd.total_companies,
+            bd.batch_size,
+            bd.companies_scraped,
+            bd.companies_qualified,
+            bd.companies_failed,
+            bd.replaced_count,
+            bd.triage_green,
+            bd.triage_yellow,
+            bd.triage_red,
+            bd.triage_black,
+            bd.created_at
+        FROM batch_data bd
+        WHERE bd.status != 'deleted'
+          AND bd.batch_name IS NOT NULL
+          AND bd.batch_name != ''
+        ORDER BY bd.created_at DESC
+        LIMIT 10
+    """)
+
+    if not batches:
+        return {"batches": []}
+
+    results = []
+    for b in batches:
+        batch_id = b["batch_id"]
+        batch_name = b["batch_name"] or ""
+        is_upload = batch_name.startswith("Import:")
+        total = b["total_companies"] or 0
+        qualified = b["companies_qualified"] or 0
+        scraped = b["companies_scraped"] or 0
+
+        # ── Per-step actions from batch_log ────────────────────────
+        actions = await fetch_all("""
+            SELECT action, COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE result = 'success') AS success
             FROM batch_log
             WHERE batch_id = %s
             GROUP BY action
-            ORDER BY
-                CASE action
-                    WHEN 'sirene_lookup' THEN 1
-                    WHEN 'maps_lookup' THEN 2
-                    WHEN 'website_crawl' THEN 3
-                    ELSE 4
-                END
         """, (batch_id,))
+        action_map = {a["action"]: a for a in (actions or [])}
 
-        # Hit rates for this batch
-        hit_rates = await fetch_one("""
+        # ── Hit rates from contacts (real enriched data) ───────────
+        hit = await fetch_one("""
             SELECT
-                COUNT(DISTINCT el.siren) AS total_companies,
-                COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) AS with_phone,
-                COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) AS with_website,
-                COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) AS with_email
-            FROM enrichment_log el
-            WHERE el.batch_id = %s
-        """, (batch_id,))
+                COUNT(DISTINCT qt.siren) AS tagged,
+                COUNT(DISTINCT qt.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
+                COUNT(DISTINCT qt.siren) FILTER (WHERE ct.email IS NOT NULL) AS with_email,
+                COUNT(DISTINCT qt.siren) FILTER (WHERE ct.website IS NOT NULL) AS with_website
+            FROM batch_tags qt
+            LEFT JOIN contacts ct ON ct.siren = qt.siren
+            WHERE UPPER(qt.batch_name) = UPPER(%s)
+        """, (batch_name,))
+        h = hit or {}
+        tagged = h.get("tagged", 0) or 0
+        with_phone = h.get("with_phone", 0) or 0
+        with_email = h.get("with_email", 0) or 0
+        with_website = h.get("with_website", 0) or 0
 
-        hr = hit_rates or {}
-        total_co = hr.get("total_companies", 0) or 0
+        phone_pct = round(100 * with_phone / max(tagged, 1))
+        email_pct = round(100 * with_email / max(tagged, 1))
+        web_pct = round(100 * with_website / max(tagged, 1))
 
-        # Generate plain English summary
+        # ── Build pipeline steps based on batch type ──────────────
+        steps = []
         summary_parts = []
-        step_map = {s["action"]: s for s in (steps or [])}
 
-        maps = step_map.get("maps_lookup", {})
-        maps_total = maps.get("total", 0) or 0
-        maps_success = maps.get("success", 0) or 0
-        if maps_total > 0:
-            maps_rate = round(100 * maps_success / maps_total)
-            summary_parts.append(f"Google Maps a trouvé {maps_success}/{maps_total} entreprises ({maps_rate}%)")
+        if is_upload:
+            # Upload pipeline: Import → SIRENE Match → Data
+            upload_action = action_map.get("upload", {})
+            sirene_action = action_map.get("sirene", {})
+            upload_success = upload_action.get("success", 0) or 0
+            upload_total = upload_action.get("total", 0) or total
+            sirene_success = sirene_action.get("success", 0) or 0
 
-        crawl = step_map.get("website_crawl", {})
-        crawl_total = crawl.get("total", 0) or 0
-        crawl_success = crawl.get("success", 0) or 0
-        if crawl_total > 0:
-            crawl_rate = round(100 * crawl_success / crawl_total)
-            summary_parts.append(f"Crawl de sites web: {crawl_success}/{crawl_total} réussis ({crawl_rate}%)")
-
-        if total_co > 0:
-            phone_pct = round(100 * (hr.get("with_phone", 0) or 0) / total_co)
-            email_pct = round(100 * (hr.get("with_email", 0) or 0) / total_co)
-            web_pct = round(100 * (hr.get("with_website", 0) or 0) / total_co)
-            summary_parts.append(f"Résultats: {phone_pct}% avec téléphone, {email_pct}% avec email, {web_pct}% avec site web")
-
-        summary = ". ".join(summary_parts) + "." if summary_parts else "Aucune donnée pour ce batch."
-
-        return {
-            "batch_id": batch_id,
-            "steps": steps or [],
-            "hit_rates": hr,
-            "summary": summary,
-        }
-
-    else:
-        # Last 5 batches — compact overview
-        batches = await fetch_all("""
-            SELECT
-                bl.batch_id,
-                bd.batch_name,
-                bd.created_at,
-                COUNT(*) FILTER (WHERE bl.action = 'maps_lookup') AS maps_total,
-                COUNT(*) FILTER (WHERE bl.action = 'maps_lookup' AND bl.result = 'success') AS maps_success,
-                COUNT(*) FILTER (WHERE bl.action = 'website_crawl') AS crawl_total,
-                COUNT(*) FILTER (WHERE bl.action = 'website_crawl' AND bl.result = 'success') AS crawl_success
-            FROM batch_log bl
-            LEFT JOIN batch_data bd ON bd.batch_id = bl.batch_id
-            GROUP BY bl.batch_id, bd.batch_name, bd.created_at
-            ORDER BY MAX(bl.timestamp) DESC
-            LIMIT 5
-        """)
-
-        result = []
-        for b in (batches or []):
-            maps_t = b.get("maps_total", 0) or 0
-            maps_s = b.get("maps_success", 0) or 0
-            crawl_t = b.get("crawl_total", 0) or 0
-            crawl_s = b.get("crawl_success", 0) or 0
-            result.append({
-                **b,
-                "maps_rate": round(100 * maps_s / max(maps_t, 1)),
-                "crawl_rate": round(100 * crawl_s / max(crawl_t, 1)),
+            steps.append({
+                "label": "📥 Import",
+                "detail": f"{upload_success} lignes importées",
+                "value": upload_success,
+                "total": upload_total,
+                "pct": round(100 * upload_success / max(upload_total, 1)),
+            })
+            steps.append({
+                "label": "🔍 Match SIRENE",
+                "detail": f"{sirene_success} matchés sur {upload_success}",
+                "value": sirene_success,
+                "total": upload_success,
+                "pct": round(100 * sirene_success / max(upload_success, 1)),
+            })
+            steps.append({
+                "label": "📊 Données",
+                "detail": f"📞 {phone_pct}%  ✉️ {email_pct}%  🌐 {web_pct}%",
+                "value": with_phone + with_email + with_website,
+                "total": tagged * 3,
+                "pct": round((phone_pct + email_pct + web_pct) / 3),
             })
 
-        return {"batches": result}
+            summary_parts.append(f"{upload_success} lignes importées")
+            if sirene_success > 0:
+                summary_parts.append(f"{sirene_success} matchées avec SIRENE ({round(100 * sirene_success / max(upload_success, 1))}%)")
+            summary_parts.append(f"Données: {phone_pct}% avec tél, {email_pct}% avec email, {web_pct}% avec site")
 
+        else:
+            # Enrichment pipeline: SIRENE → Maps → Data
+            maps_action = action_map.get("maps_lookup", {})
+            maps_total = maps_action.get("total", 0) or scraped
+            maps_success = maps_action.get("success", 0) or 0
 
-@router.get("/hit-rates")
-async def get_hit_rates(request: Request):
-    """Per-batch hit rates for phone, email, website — for the Analyze section.
+            steps.append({
+                "label": "📋 SIRENE",
+                "detail": f"{total} entreprises trouvées",
+                "value": total,
+                "total": b["batch_size"] or total,
+                "pct": round(100 * total / max(b["batch_size"] or total, 1)),
+            })
+            steps.append({
+                "label": "🗺️ Maps",
+                "detail": f"{maps_success}/{maps_total} trouvées",
+                "value": maps_success,
+                "total": maps_total,
+                "pct": round(100 * maps_success / max(maps_total, 1)),
+            })
+            steps.append({
+                "label": "📊 Données",
+                "detail": f"📞 {phone_pct}%  ✉️ {email_pct}%  🌐 {web_pct}%",
+                "value": with_phone + with_email + with_website,
+                "total": tagged * 3,
+                "pct": round((phone_pct + email_pct + web_pct) / 3),
+            })
 
-    Returns the last 10 batches with their hit rates for each data field.
-    """
-    rows = await fetch_all("""
-        SELECT
-            el.batch_id,
-            bd.batch_name,
-            bd.created_at,
-            COUNT(DISTINCT el.siren) AS total,
-            COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) AS with_phone,
-            COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) AS with_website,
-            COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) AS with_email,
-            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) /
-                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS phone_rate,
-            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) /
-                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS website_rate,
-            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) /
-                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS email_rate
-        FROM enrichment_log el
-        LEFT JOIN batch_data bd ON bd.batch_id = el.batch_id
-        GROUP BY el.batch_id, bd.batch_name, bd.created_at
-        ORDER BY MAX(el.created_at) DESC
-        LIMIT 10
-    """)
-    return rows or []
+            summary_parts.append(f"{total} entreprises SIRENE")
+            if maps_total > 0:
+                summary_parts.append(f"Maps: {maps_success}/{maps_total} trouvées ({round(100 * maps_success / max(maps_total, 1))}%)")
+            summary_parts.append(f"Résultats: {phone_pct}% tél, {email_pct}% email, {web_pct}% site web")
+
+        summary = ". ".join(summary_parts) + "." if summary_parts else "Aucune donnée."
+
+        results.append({
+            "batch_id": batch_id,
+            "batch_name": batch_name,
+            "created_at": str(b["created_at"]) if b["created_at"] else None,
+            "status": b["status"],
+            "is_upload": is_upload,
+            "steps": steps,
+            "hit_rates": {
+                "total": tagged,
+                "with_phone": with_phone, "phone_pct": phone_pct,
+                "with_email": with_email, "email_pct": email_pct,
+                "with_website": with_website, "website_pct": web_pct,
+            },
+            "summary": summary,
+        })
+
+    return {"batches": results}
 
 
 # ---------------------------------------------------------------------------

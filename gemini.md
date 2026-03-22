@@ -31,12 +31,18 @@ Logic: `while len(contacts) < target_count` (strict `<`). Already enforced.
 4.  **Optimized Crawling**: Wave cap 5× → 2×.
 5.  **Social Expansion**: WhatsApp & YouTube fields (full stack).
 6.  **Glass Badge UI**: `statutBadge` + `formeJuridiqueBadge` → glass-badge design system.
+7.  **Info-Tip Fixes**: Z-index clipping and clipping chains fixed for badges layout.
+8.  **Full-Stack Audit**: H1, H2, C1, C2 fixed (AbortControllers, tracebacks, seq scans, resultat_net schema collisions).
 
 ### Next Objectives
-- [ ] Implement "Lier à l'autre entreprise" action for SIREN mismatch cases _(no plan yet — needs /deep-explore)_
-- [x] ~~Verify Merge Dialog visually on live Render deployment~~ _(merge conflict UI is live)_
-- [ ] Monitor hit-rate improvements with financial data capture _(ongoing — review after next batch)_
-- [ ] Pipeline Success Analysis dashboard _(needs /spec — user requested per-step success chart + batch summary)_
+- [x] Full-Stack Audit execution (`/audit-fullstack` complete, fixes deployed)
+- [/] **Enrichment History Upgrade** (Currently Executing)
+  - [x] Schema: Add `detail` column to `batch_log`
+  - [ ] Backend: Log officers, financials, and correct SIREN matches in `batch_log`
+  - [ ] API: Expose `detail` + `search_query` in `get_enrich_history` 
+  - [ ] Frontend: Display human-readable timeline with icons and detailed text
+- [ ] Implement "Lier à l'autre entreprise" action for SIREN mismatch cases
+- [ ] Pipeline Success Analysis dashboard
 
 ### 🔑 Context Keys
 - **Test SIREN**: `399817626` (has known multi-source conflicts)

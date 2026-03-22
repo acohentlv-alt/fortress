@@ -246,20 +246,21 @@ async def log_audit(
     action: str,
     result: str,
     source_url: str | None = None,
+    detail: str | None = None,
     duration_ms: int | None = None,
     search_query: str | None = None,
 ) -> None:
     """Write one row to the batch_log table.
 
-    action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup'
-    result: 'success' | 'fail' | 'blocked' | 'skipped'
+    action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup' | 'officers_found' | 'financial_data' | 'siren_verified' | 'siren_mismatch'
+    result: 'success' | 'fail' | 'blocked' | 'skipped' | 'filtered'
     search_query: the exact Maps search term that found this entity (optional)
     """
     await conn.execute(
         """
         INSERT INTO batch_log
-            (batch_id, siren, action, result, source_url, duration_ms, search_query)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (batch_id, siren, action, result, source_url, detail, duration_ms, search_query)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (batch_id, siren, action, result, source_url, duration_ms, search_query),
+        (batch_id, siren, action, result, source_url, detail, duration_ms, search_query),
     )
