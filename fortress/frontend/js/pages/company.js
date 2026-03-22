@@ -49,9 +49,9 @@ function unenrichedField(module) {
 // ── Enrichment Panel — Crawl only (Maps already ran in batch) ────
 function enrichmentPanelHTML() {
     return `
-        <button class="btn btn-primary enrich-submit" id="enrich-submit-btn" style="display:inline-flex; align-items:center; gap:var(--space-sm); font-weight:600; padding:var(--space-sm) var(--space-xl); border-radius:var(--radius-lg)">
-            <span class="enrich-spinner" style="display:none; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite"></span>
-            <span class="enrich-submit-text">🚀 Enrichir via site web</span>
+        <button class="btn-liquid enrich-submit" id="enrich-submit-btn">
+            <span class="liquid-spinner"></span>
+            <span class="liquid-text enrich-submit-text">🚀 Enrichir via site web</span>
         </button>
     `;
 }
@@ -312,15 +312,24 @@ export async function renderCompany(container, siren) {
         <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
             <div class="company-detail-name-block">
                 <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">${escapeHtml(co.denomination)}</div>
-                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-xs);">
-                    ${formatSiren(co.siren)}
-                    <span style="margin: 0 var(--space-2xs)">·</span>
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
+                    <span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span>
+                    </span>
                     ${statutBadge(co.statut)}
-                    ${co.forme_juridique ? `<span style="margin: 0 var(--space-2xs)">·</span>${formeJuridiqueBadge(co.forme_juridique)}` : ''}
-                    ${co.naf_code ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted" title="${escapeHtml(co.naf_libelle || '')}">📋 ${escapeHtml(co.naf_code)}</span>` : ''}
-                    ${effectifLabel(co.tranche_effectif) ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted">👥 ${effectifLabel(co.tranche_effectif)}</span>` : ''}
-                    ${co.departement ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-muted">📍 ${escapeHtml(co.departement)}</span>` : ''}
-                    ${mc.rating ? `<span style="margin: 0 var(--space-2xs)">·</span><span class="badge badge-accent">⭐ ${mc.rating}</span>` : ''}
+                    ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
+                    ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>Code d'activité principale (NAF/APE) classifiant le secteur économique de l'entreprise.<span class="info-tip-source">Source : INSEE</span></span></span>
+                    </span>` : ''}
+                    ${effectifLabel(co.tranche_effectif) ? `<span class="glass-badge glass-badge--green">👥 ${effectifLabel(co.tranche_effectif)}
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>Tranche d'effectif</strong><br>Nombre de salariés déclarés par l'entreprise selon la nomenclature INSEE.<span class="info-tip-source">Source : INSEE</span></span></span>
+                    </span>` : ''}
+                    ${co.departement ? `<span class="glass-badge glass-badge--cyan">📍 ${escapeHtml(co.departement)}</span>` : ''}
+                    ${co.chiffre_affaires ? `<span class="glass-badge glass-badge--gold">💰 ${formatCurrency(co.chiffre_affaires)}
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>Chiffre d'affaires</strong><br>Revenu annuel déclaré de l'entreprise.<span class="info-tip-source">Source : Comptes annuels</span></span></span>
+                    </span>` : ''}
+                    ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}</span>` : ''}
+                    ${mc.maps_url ? `<a href="${mc.maps_url}" target="_blank" rel="noopener" class="glass-badge glass-badge--lg glass-badge--cyan" style="text-decoration:none">🗺️ Google Maps ↗</a>` : ''}
                 </div>
             </div>
             <div class="company-detail-actions">
@@ -401,18 +410,8 @@ export async function renderCompany(container, siren) {
                 </div>
 
                 <!-- Meta Data: Tags & Sources -->
-                ${tags.length > 0 || mc.sources?.length > 0 || mc.maps_url ? `
+                ${tags.length > 0 || mc.sources?.length > 0 ? `
                 <div class="detail-section" style="display:flex; flex-direction:column; gap:var(--space-lg)">
-                    ${mc.maps_url ? `
-                        <a href="${mc.maps_url}" target="_blank" rel="noopener"
-                           style="display:inline-flex; align-items:center; justify-content:center; gap:var(--space-sm);
-                                  padding:var(--space-sm) var(--space-md);
-                                  background:var(--surface-raised); border:1px solid var(--border-subtle);
-                                  border-radius:var(--radius-sm); color:var(--accent);
-                                  font-weight:600; text-decoration:none; transition:all 0.2s; font-size:var(--font-sm);">
-                            🗺️ Voir l'entreprise sur Google Maps ↗
-                        </a>
-                    ` : ''}
 
                     ${tags.length > 0 ? `
                         <div>
@@ -445,7 +444,7 @@ export async function renderCompany(container, siren) {
                 <div class="detail-section" style="display:flex; flex-direction:column; height:100%; margin-bottom:0">
                     <h3 class="detail-section-title">📝 Notes CRM</h3>
                     <div id="notes-list" style="flex:1; overflow-y:auto; margin-bottom:var(--space-md); padding-right:var(--space-xs)">
-                        ${renderNotesDirect(data.notes || [], 2)}
+                        ${renderNotesDirect(data.notes || [], 3)}
                     </div>
                     <div style="display:flex; gap:var(--space-sm); margin-top:auto">
                         <textarea id="note-input" placeholder="Ajouter une note…"
