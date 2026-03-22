@@ -36,11 +36,11 @@ Logic: `while len(contacts) < target_count` (strict `<`). Already enforced.
 
 ### Next Objectives
 - [x] Full-Stack Audit execution (`/audit-fullstack` complete, fixes deployed)
-- [/] **Enrichment History Upgrade** (Currently Executing)
+- [x] **Enrichment History Upgrade** (`92d7cb4`)
   - [x] Schema: Add `detail` column to `batch_log`
-  - [ ] Backend: Log officers, financials, and correct SIREN matches in `batch_log`
-  - [ ] API: Expose `detail` + `search_query` in `get_enrich_history` 
-  - [ ] Frontend: Display human-readable timeline with icons and detailed text
+  - [x] Backend: Log officers, financials, and correct SIREN matches in `batch_log`
+  - [x] API: Expose `detail` + `search_query` in `get_enrich_history` 
+  - [x] Frontend: Display human-readable timeline with icons and detailed text
 - [ ] Implement "Lier à l'autre entreprise" action for SIREN mismatch cases
 - [ ] Pipeline Success Analysis dashboard
 
