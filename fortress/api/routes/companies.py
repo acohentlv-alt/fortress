@@ -196,48 +196,193 @@ async def start_deep_enrich(body: DeepEnrichRequest, background_tasks: Backgroun
     return {"batch_id": batch_id, "sirens": sirens}
 
 async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
-    # This worker runs the 3 specific steps (Crawl, Officers, Financials) 
-    # sequentially for each SIREN and broadcasts real-time WS updates.
+    """Re-crawl the known website for each SIREN to pick up fresh contact data.
+
+    This is the backend for the 'Enrichir' button on the company card.
+    It does NOT call Maps or INPI — those run during Discovery batches.
+
+    Flow per SIREN:
+      1. Fetch the company's known website from contacts table
+      2. Re-crawl that website (email, phones, socials)
+      3. Insert/update a contacts row with source='website_crawl'
+      4. Log to batch_log (action='website_crawl')
+      5. _merge_contacts() dedup + conflict UI handles the rest on next card load
+    """
     from fortress.api.routes.websocket import manager
-    from fortress.module_d.enricher import company_enrich_pipeline
-    
+    from fortress.module_c.curl_client import CurlClient, CurlClientError
+    from fortress.module_b.contact_parser import (
+        extract_emails, extract_phones, extract_social_links,
+        _is_valid_french_phone, is_junk_email,
+    )
+    from fortress.module_d.deduplicator import log_audit
+    from urllib.parse import urlparse, urljoin
+    import re as _re
+    import time
+
+    _CONTACT_KEYWORDS = _re.compile(
+        r"contact|mention|legal|propos|equipe|coordonn|societe|qui-sommes|nous-contacter|impressum",
+        _re.IGNORECASE,
+    )
+
     async with get_conn() as conn:
         for siren in sirens:
-            # Broadcast start
             await manager.broadcast(batch_id, {"siren": siren, "status": "started"})
-            
+
             try:
-                company = await fetch_one("SELECT * FROM companies WHERE siren = %s", (siren,))
-                if not company:
-                    await manager.broadcast(batch_id, {"siren": siren, "step": "all", "status": "error", "detail": "Company not found"})
+                # 1. Fetch company's known website
+                contact_row = await conn.execute(
+                    "SELECT website FROM contacts WHERE siren = %s AND website IS NOT NULL ORDER BY collected_at DESC LIMIT 1",
+                    (siren,),
+                )
+                row = await contact_row.fetchone()
+                if not row or not row[0]:
+                    await manager.broadcast(batch_id, {"siren": siren, "step": "crawl", "status": "skipped", "detail": "Aucun site web connu"})
+                    await log_audit(conn, batch_id=batch_id, siren=siren, action="website_crawl", result="skipped", detail="Aucun site web connu pour ce SIREN.")
+                    await conn.commit()
                     continue
-                
-                # In a real implementation this might call the specific modules.
-                # Right now, company_enrich_pipeline covers financials, officers, etc.
-                # We will trigger it without Maps lookup if possible, or fully.
-                # Since the user asked for precise control:
-                
-                # 1. CRAWL (contact_web)
-                await manager.broadcast(batch_id, {"siren": siren, "step": "crawl", "status": "running"})
-                crawler_result = await company_enrich_pipeline(conn, company, modules={"contact_web"}, batch_id=batch_id)
-                # Since pipeline is robust, we just report success if no exception
-                await manager.broadcast(batch_id, {"siren": siren, "step": "crawl", "status": "success", "detail": f"Crawler OK"})
-                
-                # 2. DIRIGEANTS / INPI
-                await manager.broadcast(batch_id, {"siren": siren, "step": "officers", "status": "running"})
-                # Currently officers might be part of 'financials' or separate in pipeline.
-                # But we call specific logic if needed, or pipeline with generic param.
-                _ = await company_enrich_pipeline(conn, company, modules={"financials"}, batch_id=batch_id)
-                await manager.broadcast(batch_id, {"siren": siren, "step": "officers", "status": "success", "detail": "Dirigeants récupérés"})
-                
-                # 3. FINANCES
-                await manager.broadcast(batch_id, {"siren": siren, "step": "financials", "status": "running"})
-                # Finances and Officers are bundled in the same pipeline currently
-                await manager.broadcast(batch_id, {"siren": siren, "step": "financials", "status": "success", "detail": "Données financières à jour"})
-                
+
+                website = row[0]
+                await manager.broadcast(batch_id, {"siren": siren, "step": "crawl", "status": "running", "detail": website})
+
+                # 2. Re-crawl the website
+                try:
+                    parsed = urlparse(website)
+                    root_url = f"{parsed.scheme}://{parsed.netloc}"
+                except Exception:
+                    root_url = website
+
+                all_emails: list[str] = []
+                all_phones: list[str] = []
+                all_social: dict = {}
+                crawled_urls: set[str] = set()
+                t0 = time.monotonic()
+                WALL_CLOCK_LIMIT = 13.0
+                MAX_PAGES = 8
+
+                curl_client = CurlClient(timeout=5.0, max_retries=1, delay_min=0.2, delay_max=0.4, delay_jitter=0.0)
+                async with curl_client as client:
+                    seed_pages = [root_url, f"{root_url}/contact", f"{root_url}/mentions-legales"]
+                    discovered: list[str] = []
+
+                    try:
+                        resp = await client.get(root_url)
+                        crawled_urls.add(root_url)
+                        if resp.status_code == 200 and len(resp.text) > 500:
+                            all_emails.extend(extract_emails(resp.text))
+                            all_phones.extend(extract_phones(resp.text))
+                            all_social.update(extract_social_links(resp.text))
+                            for href_match in _re.finditer(r'href=["\']([\S]+)["\']', resp.text):
+                                href = href_match.group(1)
+                                if _CONTACT_KEYWORDS.search(href):
+                                    abs_url = urljoin(root_url, href)
+                                    if abs_url.startswith(root_url) and abs_url not in crawled_urls:
+                                        discovered.append(abs_url)
+                    except CurlClientError:
+                        pass
+
+                    pages_to_crawl = [u for u in seed_pages[1:] if u not in crawled_urls]
+                    pages_to_crawl += [u for u in discovered if u not in crawled_urls and u not in pages_to_crawl]
+
+                    for url in pages_to_crawl[:MAX_PAGES]:
+                        if time.monotonic() - t0 > WALL_CLOCK_LIMIT:
+                            break
+                        try:
+                            r = await client.get(url)
+                            crawled_urls.add(url)
+                            if r.status_code == 200 and len(r.text) > 200:
+                                all_emails.extend(extract_emails(r.text))
+                                all_phones.extend(extract_phones(r.text))
+                                all_social.update(extract_social_links(r.text))
+                        except CurlClientError:
+                            continue
+
+                # 3. Deduplicate harvested data
+                seen_phones: set[str] = set()
+                clean_phones = []
+                for p in all_phones:
+                    if _is_valid_french_phone(p) and p not in seen_phones:
+                        seen_phones.add(p)
+                        clean_phones.append(p)
+
+                clean_emails = []
+                seen_emails: set[str] = set()
+                for e in all_emails:
+                    el = e.lower()
+                    if not is_junk_email(el) and el not in seen_emails:
+                        seen_emails.add(el)
+                        clean_emails.append(e)
+
+                best_phone = clean_phones[0] if clean_phones else None
+                best_email = clean_emails[0] if clean_emails else None
+
+                # 4. Persist as a website_crawl contact row — _merge_contacts() detects conflicts
+                cols = ["siren", "source", "website"]
+                vals: list = [siren, "website_crawl", website]
+
+                if best_phone:
+                    cols.append("phone")
+                    vals.append(best_phone)
+                if best_email:
+                    cols.append("email")
+                    vals.append(best_email)
+
+                social_fields = {
+                    "social_linkedin": "social_linkedin",
+                    "social_facebook": "social_facebook",
+                    "social_twitter": "social_twitter",
+                    "social_instagram": "social_instagram",
+                    "social_tiktok": "social_tiktok",
+                    "social_whatsapp": "social_whatsapp",
+                    "social_youtube": "social_youtube",
+                }
+                for key, col in social_fields.items():
+                    v = all_social.get(key)
+                    if v:
+                        cols.append(col)
+                        vals.append(v)
+
+                phs = ["%s"] * len(cols)
+                conflict_clause = ", ".join(
+                    f"{c} = EXCLUDED.{c}" for c in cols if c not in ("siren", "source")
+                )
+
+                await conn.execute(
+                    f"""INSERT INTO contacts ({', '.join(cols)}, collected_at)
+                        VALUES ({', '.join(phs)}, NOW())
+                        ON CONFLICT (siren, source) DO UPDATE SET {conflict_clause}, collected_at = NOW()
+                    """,
+                    tuple(vals),
+                )
+
+                # 5. Log to batch_log
+                found_items = []
+                if best_phone:
+                    found_items.append(f"📞 {best_phone}")
+                if best_email:
+                    found_items.append(f"✉️ {best_email}")
+                social_count = sum(1 for v in all_social.values() if v)
+                if social_count:
+                    found_items.append(f"{social_count} réseaux sociaux")
+
+                if found_items:
+                    detail = f"Re-crawl de {website} : {', '.join(found_items)}."
+                    result_status = "success"
+                else:
+                    detail = f"Re-crawl de {website} : aucune nouvelle donnée trouvée."
+                    result_status = "skipped"
+
+                await log_audit(conn, batch_id=batch_id, siren=siren, action="website_crawl", result=result_status, detail=detail)
+                await conn.commit()
+
+                await manager.broadcast(batch_id, {
+                    "siren": siren, "step": "crawl",
+                    "status": "success" if result_status == "success" else "skipped",
+                    "detail": detail,
+                })
+
             except Exception as e:
                 await manager.broadcast(batch_id, {"siren": siren, "step": "all", "status": "error", "detail": str(e)})
-                
+
         # Finalize Batch
         await conn.execute("UPDATE batch_data SET status = 'completed' WHERE batch_id = %s", (batch_id,))
         await conn.commit()

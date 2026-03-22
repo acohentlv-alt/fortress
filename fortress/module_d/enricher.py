@@ -692,131 +692,133 @@ async def enrich_companies(
         if on_progress:
             await on_progress(len(tried_sirens), replaced_count, len(contacts))
 
-        # ── Step 3: Officer upserts & Logging (mentions légales + Recherche Entreprises)
-        # These need DB access, so they run in the caller, not _enrich_one().
-        if has_enrichment:
-            try:
-                async with pool.connection() as conn:
-                    from fortress.module_d.deduplicator import log_audit
-                    total_officers = 0
-                    officer_sources = []
-                    
-                    # 3a: Mentions Légales director
-                    if ml_result and ml_result.get("director_name"):
-                        from fortress.models import Officer, ContactSource
-                        from fortress.module_d.deduplicator import upsert_officer
-                        # Split name into nom/prenom (best effort)
-                        name_parts = ml_result["director_name"].split()
-                        if len(name_parts) >= 2:
-                            prenom = name_parts[0].title()
-                            nom = " ".join(name_parts[1:]).upper()
-                        else:
-                            prenom = None
-                            nom = name_parts[0].upper()
+        # ── Step 3: INPI — Officers + Financials (ALWAYS — only needs SIREN)
+        # Decoupled from Maps/crawl: the INPI API only requires a 9-digit SIREN.
+        # Every Discovery batch company gets officers and financials, regardless
+        # of whether Maps found a website or phone number.
+        try:
+            async with pool.connection() as conn:
+                from fortress.module_d.deduplicator import log_audit
+                total_officers = 0
+                officer_sources = []
 
-                        officer = Officer(
-                            siren=company.siren,
-                            nom=nom,
-                            prenom=prenom,
-                            role=ml_result.get("director_role"),
-                            civilite=ml_result.get("director_civilite"),
-                            email_direct=ml_result.get("director_email"),
-                            source=ContactSource.MENTIONS_LEGALES,
-                        )
-                        await upsert_officer(conn, officer)
-                        log.info(
-                            "enricher.officer_from_mentions_legales",
-                            siren=company.siren,
-                            name=ml_result["director_name"],
-                        )
-                        total_officers += 1
-                        officer_sources.append("Site web (Mentions légales)")
+                # 3a: Mentions Légales director (only if Maps found a website)
+                if has_enrichment and ml_result and ml_result.get("director_name"):
+                    from fortress.models import Officer, ContactSource
+                    from fortress.module_d.deduplicator import upsert_officer
+                    # Split name into nom/prenom (best effort)
+                    name_parts = ml_result["director_name"].split()
+                    if len(name_parts) >= 2:
+                        prenom = name_parts[0].title()
+                        nom = " ".join(name_parts[1:]).upper()
+                    else:
+                        prenom = None
+                        nom = name_parts[0].upper()
 
-                    # 3b: Recherche Entreprises API — official directors
-                    from fortress.module_b.recherche_entreprises import fetch_dirigeants
-                    dirigeants, re_company_data = await fetch_dirigeants(
-                        company.siren,
-                        curl_client=curl_client,
+                    officer = Officer(
+                        siren=company.siren,
+                        nom=nom,
+                        prenom=prenom,
+                        role=ml_result.get("director_role"),
+                        civilite=ml_result.get("director_civilite"),
+                        email_direct=ml_result.get("director_email"),
+                        source=ContactSource.MENTIONS_LEGALES,
                     )
-                    for d in dirigeants:
-                        from fortress.models import Officer, ContactSource
-                        from fortress.module_d.deduplicator import upsert_officer
-                        officer = Officer(
-                            siren=company.siren,
-                            nom=d["nom"],
-                            prenom=d.get("prenom"),
-                            role=d.get("qualite"),
-                            civilite=d.get("civilite"),
-                            source=ContactSource.RECHERCHE_ENTREPRISES,
-                        )
-                        await upsert_officer(conn, officer)
-                    
-                    if dirigeants:
-                        total_officers += len(dirigeants)
-                        officer_sources.append("Registre National (API INPI)")
-                        
-                    if total_officers > 0:
-                        det = f"{total_officers} dirigeant(s) identifié(s). Sources: {', '.join(officer_sources)}."
-                        await log_audit(conn, batch_id=batch_id, siren=company.siren, action="officers_found", result="success", detail=det)
+                    await upsert_officer(conn, officer)
+                    log.info(
+                        "enricher.officer_from_mentions_legales",
+                        siren=company.siren,
+                        name=ml_result["director_name"],
+                    )
+                    total_officers += 1
+                    officer_sources.append("Site web (Mentions légales)")
 
-                    # Store company-level data from API (revenue, effectif)
-                    if re_company_data:
-                        _update_parts = []
-                        _update_vals = []
-                        if "chiffre_affaires" in re_company_data:
-                            _update_parts.append("chiffre_affaires = %s")
-                            _update_vals.append(re_company_data["chiffre_affaires"])
-                        if "resultat_net" in re_company_data:
-                            _update_parts.append("resultat_net = %s")
-                            _update_vals.append(re_company_data["resultat_net"])
-                        if "tranche_effectif" in re_company_data:
-                            _update_parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
-                            _update_vals.append(re_company_data["tranche_effectif"])
-                        if _update_parts:
-                            _update_vals.append(company.siren)
-                            # chiffre_affaires = direct overwrite (API has latest fiscal year)
-                            # tranche_effectif = COALESCE (keep SIRENE data if already set)
-                            await conn.execute(
-                                f"UPDATE companies SET {', '.join(_update_parts)} WHERE siren = %s",
-                                tuple(_update_vals),
-                            )
-                            
-                        # Log financial data events
-                        fin_details = []
-                        if re_company_data.get("chiffre_affaires"):
-                            ca_val = re_company_data["chiffre_affaires"]
-                            fin_details.append(f"CA: {ca_val} €")
-                        if re_company_data.get("resultat_net"):
-                            rn_val = re_company_data["resultat_net"]
-                            fin_details.append(f"Résultat net: {rn_val} €")
-                        if re_company_data.get("tranche_effectif"):
-                            fin_details.append(f"Effectif INSEE: {re_company_data['tranche_effectif']}")
-                            
-                        if fin_details:
-                            fin_text = " • ".join(fin_details) + ". Source: API INPI"
-                            await log_audit(conn, batch_id=batch_id, siren=company.siren, action="financial_data", result="success", detail=fin_text)
+                # 3b: Recherche Entreprises API — official directors (always runs)
+                from fortress.module_b.recherche_entreprises import fetch_dirigeants
+                from fortress.models import Officer, ContactSource
+                from fortress.module_d.deduplicator import upsert_officer
+                dirigeants, re_company_data = await fetch_dirigeants(
+                    company.siren,
+                    curl_client=curl_client,
+                )
+                for d in dirigeants:
+                    officer = Officer(
+                        siren=company.siren,
+                        nom=d["nom"],
+                        prenom=d.get("prenom"),
+                        role=d.get("qualite"),
+                        civilite=d.get("civilite"),
+                        source=ContactSource.RECHERCHE_ENTREPRISES,
+                    )
+                    await upsert_officer(conn, officer)
 
-                    if dirigeants:
-                        log.info(
-                            "enricher.officers_from_api",
-                            siren=company.siren,
-                            count=len(dirigeants),
-                            ca=re_company_data.get("chiffre_affaires"),
+                if dirigeants:
+                    total_officers += len(dirigeants)
+                    officer_sources.append("Registre National (API INPI)")
+
+                if total_officers > 0:
+                    det = f"{total_officers} dirigeant(s) identifié(s). Sources: {', '.join(officer_sources)}."
+                    await log_audit(conn, batch_id=batch_id, siren=company.siren, action="officers_found", result="success", detail=det)
+
+                # Store company-level financial data from API (revenue, effectif)
+                if re_company_data:
+                    _update_parts = []
+                    _update_vals = []
+                    if "chiffre_affaires" in re_company_data:
+                        _update_parts.append("chiffre_affaires = %s")
+                        _update_vals.append(re_company_data["chiffre_affaires"])
+                    if "resultat_net" in re_company_data:
+                        _update_parts.append("resultat_net = %s")
+                        _update_vals.append(re_company_data["resultat_net"])
+                    if "tranche_effectif" in re_company_data:
+                        _update_parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                        _update_vals.append(re_company_data["tranche_effectif"])
+                    if _update_parts:
+                        _update_vals.append(company.siren)
+                        # chiffre_affaires = direct overwrite (API has latest fiscal year)
+                        # tranche_effectif = COALESCE (keep SIRENE data if already set)
+                        await conn.execute(
+                            f"UPDATE companies SET {', '.join(_update_parts)} WHERE siren = %s",
+                            tuple(_update_vals),
                         )
-                        
-                    # SIREN Match Validation Logging
+
+                    # Log financial data events
+                    fin_details = []
+                    if re_company_data.get("chiffre_affaires"):
+                        ca_val = re_company_data["chiffre_affaires"]
+                        fin_details.append(f"CA: {ca_val} €")
+                    if re_company_data.get("resultat_net"):
+                        rn_val = re_company_data["resultat_net"]
+                        fin_details.append(f"Résultat net: {rn_val} €")
+                    if re_company_data.get("tranche_effectif"):
+                        fin_details.append(f"Effectif INSEE: {re_company_data['tranche_effectif']}")
+
+                    if fin_details:
+                        fin_text = " • ".join(fin_details) + ". Source: API INPI"
+                        await log_audit(conn, batch_id=batch_id, siren=company.siren, action="financial_data", result="success", detail=fin_text)
+
+                if dirigeants:
+                    log.info(
+                        "enricher.officers_from_api",
+                        siren=company.siren,
+                        count=len(dirigeants),
+                        ca=re_company_data.get("chiffre_affaires") if re_company_data else None,
+                    )
+
+                # SIREN Match Validation Logging (only if Maps found a website)
+                if has_enrichment:
                     if contact.siren_match is True:
                         await log_audit(conn, batch_id=batch_id, siren=company.siren, action="siren_verified", result="success", detail=f"SIREN vérifié sur le site web ({contact.website}).")
                     elif contact.siren_match is False:
                         await log_audit(conn, batch_id=batch_id, siren=company.siren, action="siren_mismatch", result="fail", detail="Alerte : Le numéro SIREN extrait des mentions légales du site web ne correspond pas à l'entité recherchée.")
 
-                    await conn.commit()
-            except Exception as officer_exc:
-                log.debug(
-                    "enricher.officer_upsert_error",
-                    siren=company.siren,
-                    error=str(officer_exc),
-                )
+                await conn.commit()
+        except Exception as officer_exc:
+            log.debug(
+                "enricher.officer_upsert_error",
+                siren=company.siren,
+                error=str(officer_exc),
+            )
 
         # Log for admin
         outcome = "qualified" if has_enrichment else "sirene_only"
