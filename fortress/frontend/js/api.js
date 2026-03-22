@@ -370,6 +370,15 @@ export async function getAnalysis() {
     return await request('/dashboard/analysis');
 }
 
+export async function getBatchAnalysis(batchId = '') {
+    const q = batchId ? `?batch_id=${encodeURIComponent(batchId)}` : '';
+    return await request(`/dashboard/batch-analysis${q}`);
+}
+
+export async function getHitRates() {
+    return await request('/dashboard/hit-rates');
+}
+
 export async function deleteSectorTags(sector) {
     return await request(`/dashboard/sector/${encodeURIComponent(sector)}/tags`, { method: 'DELETE' });
 }

@@ -461,6 +461,149 @@ async def get_analysis(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Per-batch Pipeline Step Analysis + Plain English Summary
+# ---------------------------------------------------------------------------
+
+@router.get("/batch-analysis")
+async def get_batch_analysis(request: Request, batch_id: str = ""):
+    """Per-step success breakdown for a specific batch (or last 5 batches).
+
+    Returns per-step stats: SIRENE → Maps → Website Crawl, with plain English summary.
+    """
+    if batch_id:
+        # Single batch analysis
+        steps = await fetch_all("""
+            SELECT
+                action,
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE result = 'success') AS success,
+                COUNT(*) FILTER (WHERE result = 'fail') AS fail,
+                COUNT(*) FILTER (WHERE result = 'skipped') AS skipped,
+                COUNT(*) FILTER (WHERE result = 'blocked') AS blocked,
+                ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms
+            FROM batch_log
+            WHERE batch_id = %s
+            GROUP BY action
+            ORDER BY
+                CASE action
+                    WHEN 'sirene_lookup' THEN 1
+                    WHEN 'maps_lookup' THEN 2
+                    WHEN 'website_crawl' THEN 3
+                    ELSE 4
+                END
+        """, (batch_id,))
+
+        # Hit rates for this batch
+        hit_rates = await fetch_one("""
+            SELECT
+                COUNT(DISTINCT el.siren) AS total_companies,
+                COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) AS with_phone,
+                COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) AS with_website,
+                COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) AS with_email
+            FROM enrichment_log el
+            WHERE el.batch_id = %s
+        """, (batch_id,))
+
+        hr = hit_rates or {}
+        total_co = hr.get("total_companies", 0) or 0
+
+        # Generate plain English summary
+        summary_parts = []
+        step_map = {s["action"]: s for s in (steps or [])}
+
+        maps = step_map.get("maps_lookup", {})
+        maps_total = maps.get("total", 0) or 0
+        maps_success = maps.get("success", 0) or 0
+        if maps_total > 0:
+            maps_rate = round(100 * maps_success / maps_total)
+            summary_parts.append(f"Google Maps a trouvé {maps_success}/{maps_total} entreprises ({maps_rate}%)")
+
+        crawl = step_map.get("website_crawl", {})
+        crawl_total = crawl.get("total", 0) or 0
+        crawl_success = crawl.get("success", 0) or 0
+        if crawl_total > 0:
+            crawl_rate = round(100 * crawl_success / crawl_total)
+            summary_parts.append(f"Crawl de sites web: {crawl_success}/{crawl_total} réussis ({crawl_rate}%)")
+
+        if total_co > 0:
+            phone_pct = round(100 * (hr.get("with_phone", 0) or 0) / total_co)
+            email_pct = round(100 * (hr.get("with_email", 0) or 0) / total_co)
+            web_pct = round(100 * (hr.get("with_website", 0) or 0) / total_co)
+            summary_parts.append(f"Résultats: {phone_pct}% avec téléphone, {email_pct}% avec email, {web_pct}% avec site web")
+
+        summary = ". ".join(summary_parts) + "." if summary_parts else "Aucune donnée pour ce batch."
+
+        return {
+            "batch_id": batch_id,
+            "steps": steps or [],
+            "hit_rates": hr,
+            "summary": summary,
+        }
+
+    else:
+        # Last 5 batches — compact overview
+        batches = await fetch_all("""
+            SELECT
+                bl.batch_id,
+                bd.batch_name,
+                bd.created_at,
+                COUNT(*) FILTER (WHERE bl.action = 'maps_lookup') AS maps_total,
+                COUNT(*) FILTER (WHERE bl.action = 'maps_lookup' AND bl.result = 'success') AS maps_success,
+                COUNT(*) FILTER (WHERE bl.action = 'website_crawl') AS crawl_total,
+                COUNT(*) FILTER (WHERE bl.action = 'website_crawl' AND bl.result = 'success') AS crawl_success
+            FROM batch_log bl
+            LEFT JOIN batch_data bd ON bd.batch_id = bl.batch_id
+            GROUP BY bl.batch_id, bd.batch_name, bd.created_at
+            ORDER BY MAX(bl.timestamp) DESC
+            LIMIT 5
+        """)
+
+        result = []
+        for b in (batches or []):
+            maps_t = b.get("maps_total", 0) or 0
+            maps_s = b.get("maps_success", 0) or 0
+            crawl_t = b.get("crawl_total", 0) or 0
+            crawl_s = b.get("crawl_success", 0) or 0
+            result.append({
+                **b,
+                "maps_rate": round(100 * maps_s / max(maps_t, 1)),
+                "crawl_rate": round(100 * crawl_s / max(crawl_t, 1)),
+            })
+
+        return {"batches": result}
+
+
+@router.get("/hit-rates")
+async def get_hit_rates(request: Request):
+    """Per-batch hit rates for phone, email, website — for the Analyze section.
+
+    Returns the last 10 batches with their hit rates for each data field.
+    """
+    rows = await fetch_all("""
+        SELECT
+            el.batch_id,
+            bd.batch_name,
+            bd.created_at,
+            COUNT(DISTINCT el.siren) AS total,
+            COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) AS with_phone,
+            COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) AS with_website,
+            COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) AS with_email,
+            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_phone IS NOT NULL) /
+                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS phone_rate,
+            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.maps_website IS NOT NULL) /
+                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS website_rate,
+            ROUND(100.0 * COUNT(DISTINCT el.siren) FILTER (WHERE el.emails_found > 0) /
+                  NULLIF(COUNT(DISTINCT el.siren), 0)) AS email_rate
+        FROM enrichment_log el
+        LEFT JOIN batch_data bd ON bd.batch_id = el.batch_id
+        GROUP BY el.batch_id, bd.batch_name, bd.created_at
+        ORDER BY MAX(el.created_at) DESC
+        LIMIT 10
+    """)
+    return rows or []
+
+
+# ---------------------------------------------------------------------------
 # All Data — browse all enriched entities with contact info
 # ---------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 
 const API_BASE = '/api';
@@ -178,13 +178,16 @@ export async function renderDashboard(container) {
 async function _loadAnalysisView(rootContainer) {
     const view = document.getElementById('dashboard-view');
     view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-    const data = await getAnalysis();
+    const [data, batchData] = await Promise.all([
+        getAnalysis(),
+        getBatchAnalysis(),
+    ]);
     if (!data || data._ok === false) {
         view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
         return;
     }
     const isAdmin = getCachedUser()?.role === 'admin';
-    renderAnalysis(data, isAdmin, rootContainer);
+    renderAnalysis(data, isAdmin, rootContainer, batchData);
 }
 
 function setActiveToggle(activeId) {
@@ -862,8 +865,8 @@ function renderBySector(jobs, rootContainer) {
     });
 }
 
-// ── Data Analysis View (redesigned — 4 focused panels) ──────────
-function renderAnalysis(data, isAdmin) {
+// ── Data Analysis View (redesigned — 4 focused panels + batch success) ──────────
+function renderAnalysis(data, isAdmin, rootContainer, batchData) {
     const view = document.getElementById('dashboard-view');
     const q = data.quality || {};
     const gaps = data.gaps || {};
@@ -1021,6 +1024,57 @@ function renderAnalysis(data, isAdmin) {
         </div>
     `;
 
+    // ── 5. Batch Pipeline Success panel ──────────────────────────
+    const batches = (batchData && batchData.batches) || [];
+    const batchSuccessPanel = batches.length > 0 ? `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">🎯 Succès par batch</h3>
+            <div style="display:flex; flex-direction:column; gap:var(--space-md)">
+                ${batches.map(b => {
+                    const mapsRate = b.maps_rate || 0;
+                    const crawlRate = b.crawl_rate || 0;
+                    const mapsColor = mapsRate >= 60 ? 'var(--success)' : mapsRate >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
+                    const crawlColor = crawlRate >= 60 ? 'var(--success)' : crawlRate >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
+                    const batchLabel = b.batch_name || b.batch_id || '—';
+                    const dateStr = b.created_at ? new Date(b.created_at).toLocaleDateString('fr-FR') : '';
+                    return `
+                        <div style="
+                            background: var(--bg-secondary, rgba(255,255,255,0.04));
+                            border-radius: var(--radius-md);
+                            padding: var(--space-md) var(--space-lg);
+                            cursor: pointer;
+                        " onclick="window.location.hash='#/job/${encodeURIComponent(b.batch_id)}'" title="Cliquer pour voir le détail">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xs)">
+                                <span style="font-weight:600; font-size:var(--font-sm)">${escapeHtml(batchLabel)}</span>
+                                <span style="color:var(--text-muted); font-size:var(--font-xs)">${dateStr}</span>
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:var(--space-md)">
+                                <div>
+                                    <div style="display:flex; justify-content:space-between; font-size:var(--font-xs); margin-bottom:2px">
+                                        <span>🗺️ Maps</span>
+                                        <span style="color:${mapsColor}; font-weight:600">${mapsRate}% (${b.maps_success || 0}/${b.maps_total || 0})</span>
+                                    </div>
+                                    <div style="background:rgba(255,255,255,0.06); border-radius:4px; height:6px; overflow:hidden">
+                                        <div style="width:${mapsRate}%; height:100%; background:${mapsColor}; border-radius:4px; transition:width 0.4s"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div style="display:flex; justify-content:space-between; font-size:var(--font-xs); margin-bottom:2px">
+                                        <span>🌐 Crawl</span>
+                                        <span style="color:${crawlColor}; font-weight:600">${crawlRate}% (${b.crawl_success || 0}/${b.crawl_total || 0})</span>
+                                    </div>
+                                    <div style="background:rgba(255,255,255,0.06); border-radius:4px; height:6px; overflow:hidden">
+                                        <div style="width:${crawlRate}%; height:100%; background:${crawlColor}; border-radius:4px; transition:width 0.4s"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    ` : '';
+
     // ── Assemble ────────────────────────────────────────────────
     view.innerHTML = `
         <div class="analysis-grid">
@@ -1028,6 +1082,7 @@ function renderAnalysis(data, isAdmin) {
             ${gapsPanel}
             ${enricherPanel}
             ${pipelinePanel}
+            ${batchSuccessPanel}
         </div>
     `;
 }
