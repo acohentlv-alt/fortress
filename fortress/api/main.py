@@ -178,6 +178,7 @@ async def lifespan(app: FastAPI):
                     ("linked_siren", "TEXT"),
                     ("link_confidence", "TEXT"),
                     ("link_method", "TEXT"),
+                    ("resultat_net", "BIGINT"),
                 ]:
                     try:
                         await conn.execute(
