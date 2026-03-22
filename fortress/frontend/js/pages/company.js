@@ -1043,7 +1043,7 @@ function _loadEnrichHistory(siren, history) {
                             <div style="flex:1; min-width:0">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
                                     <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">Note par ${escapeHtml(h.username)}</span>
-                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
                                 <div style="font-size:var(--font-sm); color:var(--text-primary); white-space:pre-wrap; word-break:break-word">${escapeHtml(h.text)}</div>
                             </div>
@@ -1058,7 +1058,7 @@ function _loadEnrichHistory(siren, history) {
                             <div style="flex:1; min-width:0">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
                                     <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">${escapeHtml(h.action)} par ${escapeHtml(h.username)}</span>
-                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
                                 ${h.detail ? `<div style="font-size:var(--font-sm); color:var(--text-secondary)">${escapeHtml(h.detail)}</div>` : ''}
                             </div>
@@ -1076,7 +1076,7 @@ function _loadEnrichHistory(siren, history) {
                                     <span style="font-weight:600; color:var(--text-primary); font-size:var(--font-xs); text-transform:uppercase; letter-spacing:0.02em">
                                         ${escapeHtml(h.action)}
                                     </span>
-                                    <span style="font-size:10px; color:var(--text-disabled)">${formatTimestamp(h.timestamp)}</span>
+                                    <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
                                 <div style="font-size:var(--font-sm); color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis" title="${escapeHtml(h.detail || '')}">
                                     <span style="color:${color}; font-weight:700">${escapeHtml(h.result)}</span>
