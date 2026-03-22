@@ -617,12 +617,14 @@ a:hover { color: var(--accent); }
 .glass-badge--green { border-color: rgba(34, 197, 94, 0.3);  color: #4ADE80; }
 .glass-badge--gold  { border-color: rgba(245, 158, 11, 0.3); color: #FBBF24; }
 .glass-badge--cyan  { border-color: rgba(6, 182, 212, 0.3);  color: #22D3EE; }
+.glass-badge--red   { border-color: rgba(239, 68, 68, 0.3);  color: #F87171; }
 
 .glass-badge--blue:hover  { box-shadow: 0 0 12px rgba(37, 99, 235, 0.2); }
 .glass-badge--violet:hover{ box-shadow: 0 0 12px rgba(124, 58, 237, 0.2); }
 .glass-badge--green:hover { box-shadow: 0 0 12px rgba(34, 197, 94, 0.2); }
 .glass-badge--gold:hover  { box-shadow: 0 0 12px rgba(245, 158, 11, 0.2); }
 .glass-badge--cyan:hover  { box-shadow: 0 0 12px rgba(6, 182, 212, 0.2); }
+.glass-badge--red:hover   { box-shadow: 0 0 12px rgba(239, 68, 68, 0.2); }
 
 /* Large Maps badge */
 .glass-badge--lg {
@@ -661,24 +663,26 @@ a:hover { color: var(--accent); }
 }
 .info-tip-card {
     position: absolute;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 8px);
     left: 50%;
-    transform: translateX(-50%) translateY(4px);
-    background: rgba(12, 30, 58, 0.92);
+    transform: translateX(-50%) translateY(-4px);
+    background: rgba(12, 30, 58, 0.95);
     backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: var(--radius);
     padding: 10px 14px;
     min-width: 220px;
     max-width: 320px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     opacity: 0;
     pointer-events: none;
     transition: opacity 150ms ease, transform 150ms ease;
-    z-index: 100;
+    z-index: 1000;
     font-size: var(--font-xs);
     color: var(--text-secondary);
     line-height: 1.5;
+    white-space: normal;
+    text-align: left;
 }
 .info-tip:hover .info-tip-card {
     opacity: 1;
@@ -690,6 +694,7 @@ a:hover { color: var(--accent); }
     font-weight: 600;
 }
 .info-tip-card .info-tip-source {
+    display: block;
     margin-top: 6px;
     font-size: 10px;
     color: var(--text-muted);
