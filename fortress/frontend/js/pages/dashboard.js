@@ -6,7 +6,7 @@
  */
 
 import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
-import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal, renderContactCards } from '../components.js';
+import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { GlobalSelection } from '../state.js';
 
 let _dashboardData = null;
