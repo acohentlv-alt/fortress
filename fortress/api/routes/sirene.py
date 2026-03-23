@@ -120,6 +120,11 @@ async def search_sirene(
             if use_similarity_order:
                 order_clause = "ORDER BY similarity(denomination, %s) DESC"
                 data_params = list(params) + [clean_q.upper(), fetch_limit, offset]
+            elif not clean_q and has_filters:
+                # Filter-only (no text): no explicit sort — use natural index order.
+                # Sorting by name or SIREN forces a costly sort on large result sets (e.g. Paris).
+                order_clause = ""
+                data_params = list(params) + [fetch_limit, offset]
             else:
                 order_clause = "ORDER BY denomination"
                 data_params = list(params) + [fetch_limit, offset]
