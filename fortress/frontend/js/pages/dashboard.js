@@ -648,6 +648,7 @@ function _wireJobGroupDeleteButtons(view, rootContainer) {
 
 function _renderGroupCard(g, idx) {
     const batches = g.batches || [];
+    const uniqueCompanies = g.unique_companies || 0;
     const totalScraped = batches.reduce((s, b) => s + (b.companies_scraped || 0), 0);
     const totalTarget = (batches[0] || {}).total_companies || 0;
     const overallPct = Math.min(100, Math.round((totalScraped / Math.max(totalTarget, 1)) * 100));
@@ -670,7 +671,7 @@ function _renderGroupCard(g, idx) {
                     <div class="job-group-meta">
                         <span>${batchCount} batch${batchCount > 1 ? 'es' : ''}</span>
                         <span>·</span>
-                        <span>${totalScraped}/${totalTarget} scrapées</span>
+                        <span>${uniqueCompanies} entreprise${uniqueCompanies !== 1 ? 's' : ''}</span>
                         <span>·</span>
                         <span>Dernier : ${formatDateTime(latest.created_at)}</span>
                     </div>
@@ -814,13 +815,13 @@ function renderBySector(jobs, rootContainer) {
     for (const j of jobs) {
         const sector = (j.sector || (j.batch_name || '').split(' ')[0]).toUpperCase().trim();
         if (!sector) continue;
-        if (!sectors[sector]) sectors[sector] = { name: sector, batches: [], totalScraped: 0 };
+        if (!sectors[sector]) sectors[sector] = { name: sector, batches: [], totalCompanies: 0 };
         sectors[sector].batches.push(j);
-        sectors[sector].totalScraped += (j.companies_scraped || 0);
+        sectors[sector].totalCompanies += (j.unique_companies || j.companies_qualified || j.companies_scraped || 0);
     }
 
     // Sort by total scraped (most data first)
-    const sorted = Object.values(sectors).sort((a, b) => b.totalScraped - a.totalScraped);
+    const sorted = Object.values(sectors).sort((a, b) => b.totalCompanies - a.totalCompanies);
 
     view.innerHTML = `
         <div class="dept-grid">
@@ -834,12 +835,12 @@ function renderBySector(jobs, rootContainer) {
 
                 return `
                     <div class="dept-card" style="position:relative" data-sector="${escapeHtml(s.name)}">
-                        <button class="card-delete-btn" data-delete-type="sector" data-delete-id="${escapeHtml(s.name)}" data-delete-label="${escapeHtml(s.name)} (${s.totalScraped} entreprises)"
+                        <button class="card-delete-btn" data-delete-type="sector" data-delete-id="${escapeHtml(s.name)}" data-delete-label="${escapeHtml(s.name)} (${s.totalCompanies} entreprises)"
                             onclick="event.stopPropagation()" title="Supprimer ce secteur">✕</button>
                         <div onclick="window.location.hash='#/search?q=${encodeURIComponent(s.name)}'" style="cursor:pointer">
                             <div class="dept-card-header">
                                 <span class="dept-card-number">🏭</span>
-                                <span class="dept-card-count">${s.totalScraped} entreprise${s.totalScraped > 1 ? 's' : ''}</span>
+                                <span class="dept-card-count">${s.totalCompanies} entreprise${s.totalCompanies > 1 ? 's' : ''}</span>
                             </div>
                             <div class="dept-card-name">${escapeHtml(s.name)}</div>
                             <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs)">

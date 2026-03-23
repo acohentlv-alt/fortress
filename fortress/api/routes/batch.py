@@ -52,7 +52,12 @@ async def run_batch(body: BatchRunRequest, request: Request):
     """
     sector = body.sector.strip().lower()
     dept = body.department.strip()
-    batch_name = f"{sector} {dept}"
+    # Use the user's original search query as the display name if available,
+    # so "camping perpignan" stays as-is instead of becoming "camping 66"
+    if body.search_queries and body.search_queries[0]:
+        batch_name = body.search_queries[0].strip()
+    else:
+        batch_name = f"{sector} {dept}"
 
     # Build base_id for batch numbering
     base_id = _build_batch_id(sector, dept)
@@ -195,72 +200,4 @@ async def run_batch(body: BatchRunRequest, request: Request):
     }
 
 
-@router.post("/{batch_id}/resume")
-async def resume_batch(batch_id: str, request: Request):
-    """Resume an interrupted or failed batch job. Admin only."""
-    user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
-
-    job = await fetch_one(
-        """SELECT batch_id, batch_name, status, filters_json, strategy,
-                  EXTRACT(EPOCH FROM (NOW() - updated_at)) AS seconds_stale
-           FROM batch_data WHERE batch_id = %s LIMIT 1""",
-        (batch_id,),
-    )
-    if not job:
-        return JSONResponse(status_code=404, content={"error": "Job not found"})
-
-    status = job["status"]
-    seconds_stale = job.get("seconds_stale", 0) or 0
-
-    # Allow resume for: interrupted, failed, or stale in_progress (runner crashed)
-    resumable = status in ("interrupted", "failed")
-    stale_in_progress = status == "in_progress" and seconds_stale > 180
-
-    if not resumable and not stale_in_progress:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"Cannot resume job with status '{status}'. Only interrupted, failed, or stale jobs can be resumed."},
-        )
-
-    # Reset status to in_progress
-    await fetch_one(
-        "UPDATE batch_data SET status = 'queued', updated_at = NOW() WHERE batch_id = %s RETURNING batch_id",
-        (batch_id,),
-    )
-
-    # Determine runner module from strategy column
-    strategy = job.get("strategy") or "sirene"
-
-    if strategy == "maps":
-        runner_module = "fortress.maps_discovery_runner"
-    else:
-        runner_module = "fortress.runner"
-
-    runner_cmd = [sys.executable, "-m", runner_module, batch_id]
-
-    fortress_root = Path(__file__).resolve().parent.parent.parent
-    try:
-        process = subprocess.Popen(
-            runner_cmd,
-            cwd=str(fortress_root.parent),
-            stdout=None,
-            stderr=None,
-            close_fds=False,
-            start_new_session=True,
-        )
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to spawn runner: {exc}"},
-        )
-
-    return {
-        "batch_id": batch_id,
-        "status": "resumed",
-        "pid": process.pid,
-        "message": f"Job {batch_id} resumed (PID {process.pid}). Already-processed companies will be skipped.",
-    }
 

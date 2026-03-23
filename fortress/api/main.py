@@ -180,13 +180,9 @@ async def lifespan(app: FastAPI):
                     ("link_method", "TEXT"),
                     ("resultat_net", "BIGINT"),
                 ]:
-                    try:
-                        await conn.execute(
-                            f"ALTER TABLE companies ADD COLUMN {col} {col_type} DEFAULT NULL"
-                        )
-                        logger.info("✅ Added companies.%s column", col)
-                    except Exception:
-                        pass  # Column already exists
+                    await conn.execute(
+                        f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col} {col_type} DEFAULT NULL"
+                    )
 
                 # Index for fast address matching on 14.7M rows
                 await conn.execute("""

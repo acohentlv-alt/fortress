@@ -209,16 +209,16 @@ export function companyCard(company, opts = {}) {
     // Full card for enriched companies
     return `
         <div class="company-card${opts.checked ? ' card-selected' : ''}" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'">
+            ${removeBtn}
             <div class="company-card-header">
-                <div style="display:flex; align-items:flex-start; gap:var(--space-sm)">
+                <div style="display:flex; align-items:flex-start; gap:var(--space-sm); min-width:0; flex:1">
                     ${checkbox}
-                    <div>
+                    <div style="min-width:0">
                         <div class="company-card-name">${escapeHtml(company.denomination || '—')}</div>
                         <div class="company-card-siren">${formatSiren(siren)}</div>
                     </div>
                 </div>
-                <div style="display:flex; gap:6px; align-items:center;">
-                    ${removeBtn}
+                <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
                     ${statutBadge(company.statut)}
                     ${formeJuridiqueBadge(company.forme_juridique)}
                 </div>
@@ -395,6 +395,7 @@ export function renderTriageBar(triage) {
 export function renderPipelineStages(activeStage) {
     const stages = [
         { id: 'maps', icon: '🗺️', label: 'Maps' },
+        { id: 'inpi', icon: '🏛️', label: 'INPI' },
         { id: 'save', icon: '💾', label: 'Sauvegarde' },
     ];
 

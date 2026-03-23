@@ -312,12 +312,15 @@ async def run(batch_id: str) -> None:
                         batch_offset=batch_offset,
                     )
                     try:
-                        # Fetch 2× requested size so the qualify-or-replace
-                        # loop has enough candidates without extra DB queries.
+                        # Fetch requested_size + small buffer for BLACK exclusions.
+                        # Triage writes all non-BLACK candidates to batch_log,
+                        # so we cap the triage input to requested_size after
+                        # removing BLACK companies (see cap below triage).
+                        _fetch_size = requested_size + 10  # buffer for blacklisted/unnamed
                         qr = await interpret_query(
                             batch_name, pool,
                             filters=query_filters,
-                            limit=requested_size * 2,
+                            limit=_fetch_size,
                             offset=batch_offset,
                         )
                     except Exception as exc:
@@ -344,12 +347,17 @@ async def run(batch_id: str) -> None:
                         return
 
                     # ── Step 2: triage → TriageResult ───────────────────────
+                    # Cap candidates to requested_size before triage.
+                    # Triage writes all non-BLACK companies to batch_log,
+                    # so we must limit input to avoid inflating the count.
+                    candidates = qr.sample[:requested_size]
                     log.info(
                         "runner_triage",
                         batch_name=batch_name,
-                        companies=qr.company_count,
+                        candidates=len(candidates),
+                        sirene_total=qr.company_count,
                     )
-                    triage = await triage_companies(qr.sample, qr.raw_query, pool, batch_id=batch_id)
+                    triage = await triage_companies(candidates, qr.raw_query, pool, batch_id=batch_id)
 
                     # Cap the scrape queue at the user's requested size
                     scrape_list = triage.yellow + triage.red
@@ -360,9 +368,6 @@ async def run(batch_id: str) -> None:
                             original=len(triage.yellow) + len(triage.red),
                             capped_to=requested_size,
                         )
-                        # Update triage lists so batch_processor only sees
-                        # the capped companies (it builds its own queue from
-                        # triage.yellow + triage.red internally).
                         yellow_count = min(len(triage.yellow), requested_size)
                         triage.yellow = scrape_list[:yellow_count]
                         triage.red = scrape_list[yellow_count:]

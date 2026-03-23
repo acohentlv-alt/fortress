@@ -87,6 +87,11 @@ async def get_stats_by_job(request: Request):
     user_filter = ""
 
     groups = await fetch_all(f"""
+        WITH tag_counts AS (
+            SELECT UPPER(batch_name) AS batch_key, COUNT(DISTINCT siren) AS unique_companies
+            FROM batch_tags
+            GROUP BY UPPER(batch_name)
+        )
         SELECT
             UPPER(sj.batch_name) AS batch_name,
             COUNT(*) AS batch_count,
@@ -96,8 +101,10 @@ async def get_stats_by_job(request: Request):
             SUM(COALESCE(sj.triage_yellow, 0)) AS total_yellow,
             SUM(COALESCE(sj.triage_red, 0)) AS total_red,
             SUM(COALESCE(sj.triage_black, 0)) AS total_black,
-            MAX(sj.updated_at) AS last_updated
+            MAX(sj.updated_at) AS last_updated,
+            COALESCE(MAX(tc.unique_companies), 0) AS unique_companies
         FROM batch_data sj
+        LEFT JOIN tag_counts tc ON tc.batch_key = UPPER(sj.batch_name)
         WHERE sj.status != 'deleted'
         {user_filter}
         GROUP BY UPPER(sj.batch_name)

@@ -173,6 +173,14 @@ async def _match_to_sirene(
     if not rows:
         return None
 
+    # Extract city from Maps address for cross-checking
+    maps_city_tokens = set()
+    if maps_address:
+        # Maps address typically ends with "NNNNN City, France"
+        addr_norm = _normalize_name(maps_address)
+        # All meaningful tokens from the Maps address
+        maps_city_tokens = {t for t in addr_norm.split() if len(t) > 3}
+
     # Score each candidate
     best_company: Company | None = None
     best_score = 0.0
@@ -180,21 +188,45 @@ async def _match_to_sirene(
     for row in rows:
         denom = row[2] or ""
         enseigne = row[3] or ""
+        db_ville = row[9] or ""  # row[9] = ville
+        db_addr = row[7] or ""   # row[7] = adresse
 
         # Score against both enseigne and denomination
         score_enseigne = _name_match_score(maps_name, enseigne)
         score_denom = _name_match_score(maps_name, denom)
         score = max(score_enseigne, score_denom)
 
-        # Boost if address matches
-        if maps_address and row[7]:  # row[7] = adresse
-            addr_norm = _normalize_name(maps_address)
-            db_addr_norm = _normalize_name(row[7])
-            # Check city overlap from address
-            if any(t in addr_norm for t in db_addr_norm.split() if len(t) > 3):
-                score += 0.15
+        # City cross-check: does the SIRENE city appear in the Maps address?
+        city_match = False
+        if maps_city_tokens and db_ville:
+            db_ville_norm = _normalize_name(db_ville)
+            db_ville_tokens = {t for t in db_ville_norm.split() if len(t) > 3}
+            city_match = bool(db_ville_tokens & maps_city_tokens)
 
-        if score > best_score and score >= 0.6:
+        if maps_city_tokens and db_addr:
+            db_addr_norm = _normalize_name(db_addr)
+            if any(t in db_addr_norm for t in maps_city_tokens):
+                city_match = True
+
+        # Boost if city matches, penalize if cities are clearly different
+        if city_match:
+            score += 0.15
+        elif maps_city_tokens and db_ville:
+            # Maps has a city, SIRENE has a city, but they don't match
+            # Strong penalty — same name in a different town is likely a
+            # different business (e.g., "Les Fontaines" camping vs farm)
+            score -= 0.25
+
+        # Short/generic names need a city match to be trusted
+        # Names with ≤2 meaningful tokens are too common to match on name alone
+        name_tokens = _normalize_name(maps_name).split()
+        if len(name_tokens) <= 2 and not city_match:
+            # Require a higher threshold for generic names without city match
+            threshold = 0.85
+        else:
+            threshold = 0.6
+
+        if score > best_score and score >= threshold:
             best_score = score
             best_company = Company(
                 siren=row[0],
@@ -413,6 +445,10 @@ async def run(batch_id: str) -> None:
                 async def _persist_result(maps_result: dict[str, Any]) -> None:
                     nonlocal companies_discovered, qualified
 
+                    # Stop collecting once we've reached the user's target
+                    if batch_size > 0 and companies_discovered >= batch_size:
+                        return
+
                     maps_name = maps_result.get("maps_name", "")
                     maps_address = maps_result.get("address")
                     maps_phone = maps_result.get("phone")
@@ -495,6 +531,56 @@ async def run(batch_id: str) -> None:
                             search_query=_current_search_query or None,
                         )
 
+                    # ── INPI: fetch directors + financials for real SIRENs ──
+                    if not siren.startswith("MAPS"):
+                        try:
+                            from fortress.module_b.recherche_entreprises import fetch_dirigeants
+                            from fortress.models import Officer, ContactSource as CS
+                            from fortress.module_d.deduplicator import upsert_officer
+
+                            dirigeants, re_company_data = await fetch_dirigeants(
+                                siren,
+                            )
+                            async with pool.connection() as conn:
+                                for d in dirigeants:
+                                    officer = Officer(
+                                        siren=siren,
+                                        nom=d["nom"],
+                                        prenom=d.get("prenom"),
+                                        role=d.get("qualite"),
+                                        civilite=d.get("civilite"),
+                                        source=CS.RECHERCHE_ENTREPRISES,
+                                    )
+                                    await upsert_officer(conn, officer)
+
+                                if dirigeants:
+                                    await log_audit(
+                                        conn, batch_id=batch_id, siren=siren,
+                                        action="officers_found", result="success",
+                                        detail=f"{len(dirigeants)} dirigeant(s) — Registre National (API)",
+                                    )
+
+                                # Update financial data on the company row
+                                if re_company_data:
+                                    parts, vals = [], []
+                                    if "chiffre_affaires" in re_company_data:
+                                        parts.append("chiffre_affaires = %s")
+                                        vals.append(re_company_data["chiffre_affaires"])
+                                    if "resultat_net" in re_company_data:
+                                        parts.append("resultat_net = %s")
+                                        vals.append(re_company_data["resultat_net"])
+                                    if "tranche_effectif" in re_company_data:
+                                        parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                                        vals.append(re_company_data["tranche_effectif"])
+                                    if parts:
+                                        vals.append(siren)
+                                        await conn.execute(
+                                            f"UPDATE companies SET {', '.join(parts)} WHERE siren = %s",
+                                            tuple(vals),
+                                        )
+                        except Exception as exc:
+                            log.warning("maps_discovery_runner.inpi_failed", siren=siren, error=str(exc))
+
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
                         conn_holder, batch_id,
@@ -523,7 +609,7 @@ async def run(batch_id: str) -> None:
                         break
 
                     # Check if batch_size already reached (across queries)
-                    if batch_size > 0 and qualified >= batch_size:
+                    if batch_size > 0 and companies_discovered >= batch_size:
                         log.info(
                             "maps_discovery_runner.batch_size_reached_global",
                             qualified=qualified,

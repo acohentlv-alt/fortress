@@ -168,13 +168,6 @@ export async function cancelJob(batchId) {
     return await request(`/jobs/${encodeURIComponent(batchId)}/cancel`, { method: 'POST' });
 }
 
-export async function retryJob(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}/retry`, { method: 'POST' });
-}
-
-export async function resumeBatch(batchId) {
-    return await request(`/batch/${encodeURIComponent(batchId)}/resume`, { method: 'POST' });
-}
 
 export async function untagCompany(siren, batchName) {
     return await request(`/companies/${siren}/tags/${encodeURIComponent(batchName)}`, { method: 'DELETE' });

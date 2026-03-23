@@ -176,89 +176,6 @@ async def cancel_job(batch_id: str, request: Request):
     return {"cancelled": True, "batch_id": batch_id}
 
 
-@router.post("/{batch_id}/retry")
-async def retry_job(batch_id: str, request: Request):
-    """Retry a failed or completed batch. Admin only."""
-    user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    async with get_conn() as conn:
-        row = await (await conn.execute(
-            "SELECT status, batch_name, strategy FROM batch_data WHERE batch_id = %s",
-            (batch_id,),
-        )).fetchone()
-
-        if not row:
-            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
-
-        current_status = row[0]
-        if current_status in ("in_progress", "queued", "triage", "new"):
-            return JSONResponse(status_code=409, content={
-                "error": "Le batch est déjà en cours",
-                "current_status": current_status,
-            })
-
-        # Reset the job for re-execution
-        await conn.execute(
-            """UPDATE batch_data SET
-                status = 'queued',
-                companies_scraped = 0,
-                companies_qualified = 0,
-                companies_failed = 0,
-                replaced_count = 0,
-                wave_current = 0,
-                cancel_requested = FALSE,
-                updated_at = NOW()
-            WHERE batch_id = %s""",
-            (batch_id,),
-        )
-        await conn.commit()
-
-    # Spawn a new runner subprocess (same pattern as batch.py)
-    fortress_root = Path(__file__).resolve().parent.parent.parent  # fortress/
-    log_dir = fortress_root / "data" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{batch_id}.log"
-
-    strategy = row[2] or "sirene"
-    runner_module = "fortress.maps_discovery_runner" if strategy == "maps" else "fortress.runner"
-    runner_cmd = [sys.executable, "-m", runner_module, batch_id]
-
-    # Sandbox workaround
-    launcher = Path("/tmp/fortress_launcher.py")
-    if launcher.exists():
-        runner_cmd = [sys.executable, str(launcher), "runner", batch_id]
-
-    try:
-        log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        process = subprocess.Popen(
-            runner_cmd,
-            cwd=str(fortress_root.parent),
-            stdout=log_fd,
-            stderr=log_fd,
-            close_fds=False,
-            start_new_session=True,
-        )
-        os.close(log_fd)
-    except Exception as exc:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Failed to spawn runner: {exc}", "batch_id": batch_id},
-        )
-
-    return {
-        "retried": True,
-        "batch_id": batch_id,
-        "pid": process.pid,
-        "status": "queued",
-        "message": f"Batch {batch_id} relancé (PID {process.pid})",
-    }
-
 
 @router.get("/{batch_id}")
 async def get_job(batch_id: str):
@@ -410,15 +327,29 @@ async def get_job_quality(batch_id: str):
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
     stats = await fetch_one("""
+        WITH batch_sirens AS (
+            SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s
+        ),
+        best_contact AS (
+            SELECT DISTINCT ON (c.siren)
+                c.siren, c.phone, c.email, c.website,
+                c.social_linkedin, c.social_facebook
+            FROM contacts c
+            WHERE c.siren IN (SELECT siren FROM batch_sirens)
+            ORDER BY c.siren,
+                (CASE WHEN c.phone IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c.email IS NOT NULL THEN 1 ELSE 0 END +
+                 CASE WHEN c.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+        )
         SELECT
             COUNT(DISTINCT co.siren) AS total,
-            COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN co.siren END) AS with_phone,
-            COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN co.siren END) AS with_email,
-            COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN co.siren END) AS with_website,
-            COUNT(DISTINCT CASE WHEN (ct.social_linkedin IS NOT NULL OR ct.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
-        FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
+            COUNT(DISTINCT CASE WHEN bc.phone IS NOT NULL THEN co.siren END) AS with_phone,
+            COUNT(DISTINCT CASE WHEN bc.email IS NOT NULL THEN co.siren END) AS with_email,
+            COUNT(DISTINCT CASE WHEN bc.website IS NOT NULL THEN co.siren END) AS with_website,
+            COUNT(DISTINCT CASE WHEN (bc.social_linkedin IS NOT NULL OR bc.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
+        FROM batch_sirens sa
         JOIN companies co ON co.siren = sa.siren
-        LEFT JOIN contacts ct ON co.siren = ct.siren
+        LEFT JOIN best_contact bc ON bc.siren = co.siren
     """, (batch_id,))
 
     if not stats or not stats["total"]:
@@ -443,15 +374,32 @@ async def get_job_quality(batch_id: str):
             "rate": round(100 * s["success"] / s["total"]) if s["total"] else 0,
         }
 
+    # Count companies with officers and/or financial data (INPI results)
+    inpi_stat = await fetch_one("""
+        WITH bs AS (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s)
+        SELECT
+            COUNT(DISTINCT o.siren) AS with_officers,
+            COUNT(DISTINCT CASE WHEN co.chiffre_affaires IS NOT NULL THEN co.siren END) AS with_financials
+        FROM bs
+        JOIN companies co ON co.siren = bs.siren
+        LEFT JOIN officers o ON o.siren = bs.siren
+    """, (batch_id,))
+    with_officers = (inpi_stat or {}).get("with_officers", 0)
+    with_financials = (inpi_stat or {}).get("with_financials", 0)
+
     return {
         "total": total,
         "with_phone": stats["with_phone"],
         "with_email": stats["with_email"],
         "with_website": stats["with_website"],
         "with_social": stats["with_social"],
+        "with_officers": with_officers,
+        "with_financials": with_financials,
         "phone_pct": round(100 * stats["with_phone"] / total),
         "email_pct": round(100 * stats["with_email"] / total),
         "website_pct": round(100 * stats["with_website"] / total),
         "social_pct": round(100 * stats["with_social"] / total),
+        "officers_pct": round(100 * with_officers / total),
+        "financials_pct": round(100 * with_financials / total),
         "sources": sources,
     }

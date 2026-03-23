@@ -749,35 +749,34 @@ async def crawl_website_sync(siren: str):
             protected_fields.append(f"email kept: {existing_email} (crawler found: {extracted['email']})")
             del extracted["email"]
 
-        # ── SIRET merge: link MAPS entity to real company ────────
+        # ── SIRET handling: website SIREN differs from current entity ────
         if found_siren and found_siren != siren:
           try:
             real_co = await (await conn.execute(
                 "SELECT siren, denomination FROM companies WHERE siren = %s", (found_siren,)
             )).fetchone()
-            if real_co:
-                if isinstance(real_co, tuple):
-                    real_name = real_co[1]
-                else:
-                    real_name = real_co.get("denomination")
-                siret_merge_info = {
-                    "real_siren": found_siren,
-                    "real_name": real_name,
-                }
-                # Copy crawl data to the real SIREN's contacts too
-                if extracted:
-                    merge_cols = ["siren", "source", "website"] + list(extracted.keys())
-                    merge_phs = ["%s"] * len(merge_cols)
-                    merge_vals = [found_siren, "website_crawl", website] + list(extracted.values())
-                    merge_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
-                    await conn.execute(f"""
-                        INSERT INTO contacts ({', '.join(merge_cols)}, collected_at)
-                        VALUES ({', '.join(merge_phs)}, NOW())
-                        ON CONFLICT (siren, source) DO UPDATE SET {merge_conflict}, collected_at = NOW()
-                    """, tuple(merge_vals))
 
-                # If current entity is a MAPS discovery, copy contacts to real SIREN
-                if siren.startswith("MAPS"):
+            if siren.startswith("MAPS"):
+                # --- MAPS entity: link/merge to real company ---
+                if real_co:
+                    real_name = real_co[1] if isinstance(real_co, tuple) else real_co.get("denomination")
+                    siret_merge_info = {
+                        "real_siren": found_siren,
+                        "real_name": real_name,
+                    }
+                    # Copy crawl data to the real SIREN's contacts
+                    if extracted:
+                        merge_cols = ["siren", "source", "website"] + list(extracted.keys())
+                        merge_phs = ["%s"] * len(merge_cols)
+                        merge_vals = [found_siren, "website_crawl", website] + list(extracted.values())
+                        merge_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in extracted)
+                        await conn.execute(f"""
+                            INSERT INTO contacts ({', '.join(merge_cols)}, collected_at)
+                            VALUES ({', '.join(merge_phs)}, NOW())
+                            ON CONFLICT (siren, source) DO UPDATE SET {merge_conflict}, collected_at = NOW()
+                        """, tuple(merge_vals))
+
+                    # Copy all MAPS contacts to the real SIREN
                     maps_contacts = await (await conn.execute(
                         "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, social_whatsapp, social_youtube, source FROM contacts WHERE siren = %s",
                         (siren,)
@@ -802,11 +801,33 @@ async def crawl_website_sync(siren: str):
                             """, tuple(mc_vals))
                     siret_merge_info["maps_contacts_merged"] = len(maps_contacts or [])
 
-                # Log the SIRET linkage
+                    # Log the SIRET linkage
+                    await conn.execute("""
+                        INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
+                        VALUES ('SYNC_CRAWL', %s, 'siret_match', 'success', %s, NOW())
+                    """, (siren, f"SIRET found on website → real SIREN {found_siren} ({real_name})"))
+            else:
+                # --- Real SIREN entity: website belongs to a DIFFERENT company ---
+                # Do NOT copy data to the other SIREN — the match was likely wrong.
+                # Flag siren_match=false so the company card shows a warning.
+                real_name = None
+                if real_co:
+                    real_name = real_co[1] if isinstance(real_co, tuple) else real_co.get("denomination")
+                siret_merge_info = {
+                    "real_siren": found_siren,
+                    "real_name": real_name or found_siren,
+                    "mismatch": True,
+                }
+                # Mark this contact row with siren_match=false
+                await conn.execute("""
+                    UPDATE contacts SET siren_match = FALSE
+                    WHERE siren = %s AND source = 'website_crawl'
+                """, (siren,))
+                # Log the mismatch
                 await conn.execute("""
                     INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp)
-                    VALUES ('SYNC_CRAWL', %s, 'siret_match', 'success', %s, NOW())
-                """, (siren, f"SIRET found on website → real SIREN {found_siren} ({real_name})"))
+                    VALUES ('SYNC_CRAWL', %s, 'siren_mismatch', 'warning', %s, NOW())
+                """, (siren, f"SIRET du site web ({found_siren} — {real_name or '?'}) ne correspond pas à cette entreprise ({siren})"))
           except Exception as merge_err:
                 import logging
                 logging.getLogger("fortress").warning("SIRET merge failed for %s: %s", siren, merge_err)
@@ -857,7 +878,10 @@ async def crawl_website_sync(siren: str):
     if extracted:
         message += f" — {len(extracted)} données ajoutées"
     if siret_merge_info:
-        message += f" — SIRET trouvé: lié à {siret_merge_info['real_name']} ({siret_merge_info['real_siren']})"
+        if siret_merge_info.get("mismatch"):
+            message += f" ⚠️ SIRET du site ({siret_merge_info['real_siren']}) ≠ cette entreprise — possible mauvaise correspondance"
+        else:
+            message += f" — SIRET trouvé: lié à {siret_merge_info['real_name']} ({siret_merge_info['real_siren']})"
     if warnings:
         message += f" ⚠️ {'; '.join(warnings)}"
     if not extracted and not warnings and not siret_merge_info:
@@ -1240,6 +1264,8 @@ async def _get_company_impl(siren: str):
         "batch_tags": tags,
         "history": unified_history,
         "linked_company": linked_company,
+        "link_method": company.get("link_method"),
+        "link_confidence": company.get("link_confidence"),
         "suggested_matches": suggested_matches,
         "data_conflicts": merged.get("data_conflicts", []),
         "siren_match": merged.get("siren_match"),
@@ -1326,7 +1352,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
                     # Store alternate value for UI display (if different)
                     alt_key = f"{key}_alt"
                     if alt_key in merged and merged[alt_key] is None and c[key] != merged[key]:
-                        merged[alt_key] = {"value": c[key], "source": src}
+                        cur_src = merged[f"{key}_source"] or "?"
+                        merged[alt_key] = {"value": c[key], "source": src, "current_source": cur_src}
 
         if merged["email_type"] is None and c.get("email_type"):
             merged["email_type"] = c["email_type"]
@@ -1361,15 +1388,31 @@ def _merge_contacts(contacts: list[dict]) -> dict:
 
     # ── Build data_conflicts list for interactive merge UI ─────────────
     # Each conflict = a field where two sources disagree.
+    _SOURCE_LABELS = {
+        "google_maps": "Google Maps",
+        "website_crawl": "Site web",
+        "mentions_legales": "Mentions légales",
+        "upload": "Import CSV",
+        "client_upload": "Import client",
+        "manual_edit": "Modification manuelle",
+        "recherche_entreprises": "API gouvernement",
+        "sirene": "Registre SIRENE",
+    }
     data_conflicts = []
     CONFLICT_FIELDS = ("phone", "email", "website", "address")
     for field in CONFLICT_FIELDS:
         alt = merged.get(f"{field}_alt")
         if alt and alt.get("value"):
+            cur_src = merged.get(f"{field}_source") or "?"
+            alt_src = alt["source"] or "?"
+            cur_label = _SOURCE_LABELS.get(cur_src, cur_src)
+            alt_label = _SOURCE_LABELS.get(alt_src, alt_src)
+            reason = f"{cur_label} et {alt_label} ont trouvé des valeurs différentes pour ce champ"
             data_conflicts.append({
                 "field": field,
                 "current": {"value": merged[field], "source": merged.get(f"{field}_source")},
                 "alternative": {"value": alt["value"], "source": alt["source"]},
+                "reason": reason,
             })
     merged["data_conflicts"] = data_conflicts
 

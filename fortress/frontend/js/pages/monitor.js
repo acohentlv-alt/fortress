@@ -369,7 +369,10 @@ async function renderJobMonitor(container, batchId) {
             let stage = null;
             if (isRunning) {
                 if (job.status === 'triage') stage = null;
+                else if (qualified > 0) stage = 'inpi';
                 else stage = 'maps';
+            } else if (job.status === 'completed') {
+                stage = 'save';
             }
             $.pipeline.innerHTML = renderPipelineStages(stage);
         }
@@ -406,6 +409,8 @@ async function renderJobMonitor(container, batchId) {
                 ${renderGauge(q.phone_pct || 0, '📞 Tél.')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
                 ${renderGauge(q.website_pct || 0, '🌐 Web')}
+                ${renderGauge(q.officers_pct || 0, '👤 Dirigeants')}
+                ${renderGauge(q.financials_pct || 0, '💰 Financier')}
                 ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
             `;
         } catch { /* gauges are optional */ }

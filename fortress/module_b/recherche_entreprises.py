@@ -25,7 +25,7 @@ log = structlog.get_logger(__name__)
 
 _API_URL = "https://recherche-entreprises.api.gouv.fr/search"
 _TIMEOUT = 3.0  # seconds — best-effort, never block the pipeline
-_RATE_DELAY = 0.15  # ~7 req/s
+_RATE_DELAY = 0.5  # ~2 req/s — the API claims 7/s but enforces stricter per-IP limits
 
 
 async def fetch_dirigeants(
@@ -46,21 +46,22 @@ async def fetch_dirigeants(
     url = f"{_API_URL}?q={siren}&per_page=1"
 
     own_client = curl_client is None
-    if own_client:
-        curl_client = CurlClient(timeout=_TIMEOUT, max_retries=0, delay_min=0, delay_max=0)
 
     try:
-        resp = await curl_client.get(url)
-
-        if resp.status_code != 200:
-            log.debug(
-                "recherche_entreprises.http_error",
-                siren=siren,
-                status=resp.status_code,
-            )
-            return [], {}
-
-        data = resp.json()
+        # This is a public government API — no anti-bot protection needed.
+        # Use httpx directly (reliable on all platforms) instead of curl_cffi
+        # which fails on macOS and wastes an API call before falling back.
+        import httpx
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as hx:
+            hx_resp = await hx.get(url)
+            if hx_resp.status_code == 429:
+                # Rate limited — wait longer and retry once
+                await asyncio.sleep(3.0)
+                hx_resp = await hx.get(url)
+            if hx_resp.status_code != 200:
+                log.debug("recherche_entreprises.http_error", siren=siren, status=hx_resp.status_code)
+                return [], {}
+            data = hx_resp.json()
         results = data.get("results", [])
         if not results:
             log.debug("recherche_entreprises.no_results", siren=siren)
@@ -160,5 +161,5 @@ async def fetch_dirigeants(
         )
         return [], {}
     finally:
-        if own_client:
+        if own_client and curl_client is not None:
             await curl_client.close()

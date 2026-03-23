@@ -109,17 +109,27 @@ function renderNotesDirect(notes, limit = 2) {
 // ── Context-aware breadcrumb ─────────────────────────────────────
 // ── Entity Link Banner ───────────────────────────────────────────────
 
-function _buildEntityLinkBanner(co, linkedCo, suggestedMatches) {
+function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
     if (!co.siren || !co.siren.startsWith('MAPS')) return '';
+
+    const _linkReasonLabel = (method) => {
+        if (method === 'address') return 'Même adresse détectée';
+        if (method === 'fuzzy_name') return 'Nom similaire détecté';
+        if (method === 'siret_website') return 'SIRET trouvé sur le site web';
+        if (method === 'manual') return 'Lien établi manuellement';
+        return 'Correspondance automatique';
+    };
 
     if (linkedCo) {
         // Confirmed link — show real company info with merge/unlink buttons
+        const reasonText = _linkReasonLabel(linkMethod);
         return `
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(59,130,246,0.08)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-md)">
             <div style="display:flex; align-items:center; gap:var(--space-md); flex:1; min-width:0">
                 <span style="font-size:1.5rem">🔗</span>
                 <div style="min-width:0">
                     <div style="font-weight:700; color:var(--success); font-size:var(--font-base)">Lié à ${escapeHtml(linkedCo.denomination || '')}</div>
+                    <div style="font-size:var(--font-xs); color:var(--accent); margin-top:2px; font-weight:600">${reasonText}</div>
                     <div style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-top:2px">
                         <span>SIREN: ${linkedCo.siren}</span>
                         ${linkedCo.naf_code ? `<span>· 📋 ${escapeHtml(linkedCo.naf_code)}</span>` : ''}
@@ -317,7 +327,7 @@ export async function renderCompany(container, siren) {
     container.innerHTML = `
         ${_buildBreadcrumb(co, tags)}
 
-        ${_buildEntityLinkBanner(co, linkedCo, suggestedMatches)}
+        ${_buildEntityLinkBanner(co, linkedCo, suggestedMatches, data.link_method)}
 
         <!-- Top Header Panel -->
         <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
@@ -961,6 +971,7 @@ function conflictRow(alt, field, siren, currentValue, currentSource) {
     const curSrc = sourceLabel(currentSource) || currentSource || '?';
     const dismissedKey = `dismissed_conflict_${siren}_${field}`;
     if (localStorage.getItem(dismissedKey)) return '';
+    const reason = `${curSrc} et ${altSrc} ont trouvé des valeurs différentes`;
     return `<div class="detail-row conflict-row" id="conflict-${field}" style="
         font-size:var(--font-sm);
         background: rgba(255,193,7,0.06); border-left: 3px solid var(--warning);
@@ -969,7 +980,7 @@ function conflictRow(alt, field, siren, currentValue, currentSource) {
     ">
         <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-xs)">
             <span style="color:var(--warning); font-weight:600">⚡ Conflit détecté</span>
-            <span style="color:var(--text-muted); font-size:var(--font-xs)">— deux sources différentes pour <strong>${field}</strong></span>
+            <span style="color:var(--text-muted); font-size:var(--font-xs)">— ${reason}</span>
         </div>
         <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-sm); flex-wrap:wrap">
             <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); border:1px solid rgba(16,185,129,0.2)">

@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, retryJob, resumeBatch, untagCompany, enrichCompany } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany, enrichCompany } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 
@@ -63,8 +63,6 @@ export async function renderJob(container, batchId) {
                 <a href="${getExportUrl(batchId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
                 <a href="${getExportUrl(batchId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
                 ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
-                ${job.status === 'failed' ? `<button id="btn-retry" class="btn btn-primary" title="Réessayer ce batch">🔁 Réessayer</button>` : ''}
-                ${['interrupted', 'failed'].includes(job.status) ? `<button id="btn-resume" class="btn btn-primary" title="Reprendre là où le batch s'est arrêté">▶️ Reprendre</button>` : ''}
                 <button id="btn-delete-job" class="btn btn-secondary" title="Supprimer ce batch" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
             `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
@@ -105,10 +103,12 @@ export async function renderJob(container, batchId) {
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
                 Qualité des données
             </h3>
-            <div style="display:flex; gap:var(--space-2xl); justify-content:center">
+            <div style="display:flex; gap:var(--space-2xl); justify-content:center; flex-wrap:wrap">
                 ${renderGauge(q.phone_pct || 0, '📞 Téléphone')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
                 ${renderGauge(q.website_pct || 0, '🌐 Site web')}
+                ${renderGauge(q.officers_pct || 0, '👤 Dirigeants')}
+                ${renderGauge(q.financials_pct || 0, '💰 Financier')}
                 ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
             </div>
             <div style="text-align:center; font-size:var(--font-sm); color:var(--text-muted); margin-top:var(--space-lg)">
@@ -255,52 +255,6 @@ export async function renderJob(container, batchId) {
         });
     }
 
-    // Retry button (for failed jobs — resets and re-runs same job)
-    const retryBtn = document.getElementById('btn-retry');
-    if (retryBtn) {
-        retryBtn.addEventListener('click', () => {
-            showConfirmModal({
-                title: '🔁 Réessayer ce batch ?',
-                body: `<p>Le batch <strong>${escapeHtml(job.batch_name)}</strong> sera relancé avec les mêmes paramètres.</p>
-                       <p>⚠️ La progression sera réinitialisée à 0.</p>
-                       <p>✅ Les données déjà collectées restent dans la base.</p>`,
-                confirmLabel: 'Réessayer',
-                danger: false,
-                onConfirm: async () => {
-                    const result = await retryJob(batchId);
-                    if (result && result.retried) {
-                        showToast('Batch relancé avec succès', 'success');
-                        window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
-                    } else {
-                        showToast(result?.error || 'Erreur lors du retry', 'error');
-                    }
-                },
-            });
-        });
-    }
-
-    const resumeBtn = document.getElementById('btn-resume');
-    if (resumeBtn) {
-        resumeBtn.addEventListener('click', () => {
-            showConfirmModal({
-                title: '▶️ Reprendre ce batch ?',
-                body: `<p>Le batch <strong>${escapeHtml(job.batch_name)}</strong> reprendra là où il s'est arrêté.</p>
-                       <p>✅ Les ${scraped} entreprises déjà traitées seront ignorées.</p>
-                       <p>✅ Seules les entreprises restantes seront collectées.</p>`,
-                confirmLabel: 'Reprendre',
-                danger: false,
-                onConfirm: async () => {
-                    const result = await resumeBatch(batchId);
-                    if (result && result.status === 'resumed') {
-                        showToast('Batch repris avec succès', 'success');
-                        window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
-                    } else {
-                        showToast(result?.error || 'Erreur lors de la reprise', 'error');
-                    }
-                },
-            });
-        });
-    }
 }
 
 async function loadCompanies(batchId, page, sort) {
