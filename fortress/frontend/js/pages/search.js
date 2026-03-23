@@ -176,18 +176,21 @@ export async function renderSearch(container) {
             return;
         }
 
-        const total = data.total || data.count || data.results.length;
+        const hasMore = data.has_more || false;
+        const resultCount = data.results.length;
         const currentPage = Math.floor(currentOffset / PAGE_SIZE) + 1;
-        const totalPages = Math.ceil(total / PAGE_SIZE);
-        const hasNext = currentOffset + PAGE_SIZE < total;
+        const hasNext = hasMore;
         const hasPrev = currentOffset > 0;
 
         const termLabel = q ? `pour "${escapeHtml(q)}"` : 'pour les filtres sélectionnés';
+        const countLabel = hasMore
+            ? `${(currentOffset + resultCount).toLocaleString('fr-FR')}+ résultats`
+            : `${(currentOffset + resultCount).toLocaleString('fr-FR')} résultat${(currentOffset + resultCount) > 1 ? 's' : ''}`;
         resultsEl.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-lg)">
                 <p style="font-size:var(--font-sm); color:var(--text-secondary); margin:0">
-                    <strong>${total.toLocaleString('fr-FR')}</strong> résultat${total > 1 ? 's' : ''} ${termLabel}
-                    ${totalPages > 1 ? `— page ${currentPage}/${totalPages}` : ''}
+                    <strong>${countLabel}</strong> ${termLabel}
+                    — page ${currentPage}
                 </p>
             </div>
 
@@ -203,7 +206,6 @@ export async function renderSearch(container) {
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Dépt</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Forme</th>
                             <th style="text-align:center; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Statut</th>
-                            <th style="text-align:center; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Enrichi</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -226,26 +228,20 @@ export async function renderSearch(container) {
                                         : '<span style="color:var(--text-muted)">○</span>'
                                     }
                                 </td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); text-align:center">
-                                    ${c.is_enriched
-                                        ? '<span style="background:rgba(16,185,129,0.15); color:var(--success); font-size:var(--font-xs); font-weight:600; padding:2px 8px; border-radius:var(--radius-full)">✅ Enrichi</span>'
-                                        : '<span style="color:var(--text-muted)">—</span>'
-                                    }
-                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
                 </table>
             </div>
 
-            ${totalPages > 1 ? `
+            ${(hasPrev || hasNext) ? `
                 <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-2xl)">
                     <button class="btn btn-secondary" id="pagination-prev" ${hasPrev ? '' : 'disabled'}
                         style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">
                         ← Précédent
                     </button>
                     <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">
-                        ${currentPage} / ${totalPages}
+                        Page ${currentPage}
                     </span>
                     <button class="btn btn-secondary" id="pagination-next" ${hasNext ? '' : 'disabled'}
                         style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">

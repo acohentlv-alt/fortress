@@ -16,6 +16,7 @@ import uuid
 import datetime
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
 
@@ -65,21 +66,28 @@ _SORT_COLUMNS = {
 # ---------------------------------------------------------------------------
 
 _COMPANY_FIELDS = {"denomination", "adresse", "code_postal", "ville"}
-_CONTACT_FIELDS = {"phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"}
+_CONTACT_FIELDS = {"phone", "email", "website", "address", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"}
 _EDITABLE_FIELDS = _COMPANY_FIELDS | _CONTACT_FIELDS
 
 
 @router.patch("/{siren}")
-async def update_company_fields(siren: str, body: dict):
+async def update_company_fields(siren: str, body: dict, request: Request):
     """Update individual fields on a company. Used by inline edit UI.
 
     Accepts JSON with field→value pairs, e.g. {"phone": "+33 4 68 00 00 00"}.
     Company fields update `companies` table, contact fields upsert into `contacts`.
     All edits are logged to `batch_log` with action='manual_edit'.
+
+    Conflict resolution metadata (optional):
+        _conflict_action: "accept" or "dismiss"
+        _conflict_field: which field the conflict is on
+        _conflict_rejected_value: the value that was NOT chosen
+        _conflict_rejected_source: the source of the rejected value
+        _conflict_chosen_source: the source of the chosen value
     """
     # Validate company exists
     company = await fetch_one(
-        "SELECT siren FROM companies WHERE siren = %s", (siren,)
+        "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
     )
     if not company:
         return JSONResponse(
@@ -87,8 +95,27 @@ async def update_company_fields(siren: str, body: dict):
             content={"error": "Company not found", "siren": siren},
         )
 
+    # Extract conflict metadata before filtering
+    conflict_action = body.pop("_conflict_action", None)
+    conflict_field = body.pop("_conflict_field", None)
+    conflict_rejected_value = body.pop("_conflict_rejected_value", None)
+    conflict_rejected_source = body.pop("_conflict_rejected_source", None)
+    conflict_chosen_source = body.pop("_conflict_chosen_source", None)
+
     # Filter to allowed fields only
     updates = {k: v for k, v in body.items() if k in _EDITABLE_FIELDS}
+
+    # For dismiss-only actions, no field update needed
+    if conflict_action == "dismiss" and not updates:
+        # Log the dismissal and return
+        user = getattr(request.state, "user", None)
+        username = getattr(user, "username", "?") if user else "?"
+        user_id = getattr(user, "id", None) if user else None
+        denomination = company.get("denomination", siren)
+        details = f"Conflit ignoré sur {conflict_field} pour {denomination} ({siren}) — valeur rejetée: {conflict_rejected_value} ({conflict_rejected_source})"
+        await log_activity(user_id, username, "conflict_dismissed", "company", siren, details)
+        return {"dismissed": True, "siren": siren}
+
     if not updates:
         return JSONResponse(
             status_code=422,
@@ -104,11 +131,11 @@ async def update_company_fields(siren: str, body: dict):
         before_values = {}
         if ct_updates:
             existing = await (await conn.execute(
-                "SELECT phone, email, website, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, social_whatsapp, social_youtube FROM contacts WHERE siren = %s ORDER BY collected_at DESC LIMIT 1",
+                "SELECT phone, email, website, address, social_linkedin, social_facebook, social_twitter, social_instagram, social_tiktok, social_whatsapp, social_youtube FROM contacts WHERE siren = %s ORDER BY collected_at DESC LIMIT 1",
                 (siren,),
             )).fetchone()
             if existing:
-                field_map = ["phone", "email", "website", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"]
+                field_map = ["phone", "email", "website", "address", "social_linkedin", "social_facebook", "social_twitter", "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube"]
                 for i, f in enumerate(field_map):
                     if f in ct_updates and existing[i]:
                         before_values[f] = existing[i]
@@ -155,12 +182,41 @@ async def update_company_fields(siren: str, body: dict):
                 log_entry = f"{field}: {old_val} → {value}"
             else:
                 log_entry = f"{field}={value}"
+            action_label = "conflict_resolved" if conflict_action == "accept" else "manual_edit"
             await conn.execute("""
                 INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
-                VALUES ('MANUAL_EDIT', %s, 'manual_edit', 'success', NULL, NOW(), %s)
-            """, (siren, log_entry))
+                VALUES (%s, %s, %s, 'success', NULL, NOW(), %s)
+            """, (
+                "CONFLICT_RESOLVE" if conflict_action == "accept" else "MANUAL_EDIT",
+                siren, action_label, log_entry,
+            ))
 
         await conn.commit()
+
+    # ── Log to activity journal ──────────────────────────────
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
+    denomination = company.get("denomination", siren)
+
+    if conflict_action == "accept":
+        chosen_val = list(updates.values())[0] if updates else "?"
+        details = (
+            f"Conflit résolu sur {conflict_field} pour {denomination} ({siren}) "
+            f"— choisi: {chosen_val} ({conflict_chosen_source}), "
+            f"rejeté: {conflict_rejected_value} ({conflict_rejected_source})"
+        )
+        await log_activity(user_id, username, "conflict_resolved", "company", siren, details)
+    elif saved:
+        # Log every manual edit to activity journal
+        for field, value in updates.items():
+            old_val = before_values.get(field)
+            if old_val:
+                detail = f"{field}: {old_val} → {value or '(vide)'}"
+            else:
+                detail = f"{field} = {value or '(vide)'}"
+            await log_activity(user_id, username, "manual_edit", "company", siren,
+                               f"{denomination} ({siren}) — {detail}")
 
     return {"updated": sorted(saved), "siren": siren}
 
@@ -209,12 +265,12 @@ async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
       5. _merge_contacts() dedup + conflict UI handles the rest on next card load
     """
     from fortress.api.routes.websocket import manager
-    from fortress.module_c.curl_client import CurlClient, CurlClientError
-    from fortress.module_b.contact_parser import (
+    from fortress.scraping.http import CurlClient, CurlClientError
+    from fortress.matching.contacts import (
         extract_emails, extract_phones, extract_social_links,
         _is_valid_french_phone, is_junk_email,
     )
-    from fortress.module_d.deduplicator import log_audit
+    from fortress.processing.dedup import log_audit
     from urllib.parse import urlparse, urljoin
     import re as _re
     import time
@@ -586,8 +642,8 @@ async def crawl_website_sync(siren: str):
 
     website = contact["website"]
 
-    from fortress.module_c.curl_client import CurlClient, CurlClientError
-    from fortress.module_b.contact_parser import (
+    from fortress.scraping.http import CurlClient, CurlClientError
+    from fortress.matching.contacts import (
         extract_emails, extract_phones, extract_social_links, extract_siret
     )
     from urllib.parse import urlparse, urljoin
@@ -688,8 +744,8 @@ async def crawl_website_sync(siren: str):
             break
     
     # Select best email and phone — now with company context
-    from fortress.module_d.enricher import _best_email, _best_phone
-    from fortress.module_b.contact_parser import is_agency_email
+    from fortress.processing.enricher import _best_email, _best_phone
+    from fortress.matching.contacts import is_agency_email
     best_email = _best_email(list(set(all_emails)), root_url, siren, company_name=company_name)
     
     # ── Fix 1: Agency email rejection (domain mismatch) ─────────
@@ -1156,19 +1212,52 @@ async def _get_company_impl(siren: str):
     suggested_matches = []
 
     if siren.startswith("MAPS"):
+        link_confidence = company.get("link_confidence")
         linked_siren = company.get("linked_siren")
-        if linked_siren:
-            # Already linked — fetch the real company data
+
+        if link_confidence == "confirmed" and linked_siren:
+            # User confirmed this link — fetch the real company data
             linked_company = await fetch_one("""
                 SELECT siren, denomination, naf_code, naf_libelle,
                        forme_juridique, tranche_effectif, effectif_exact,
                        adresse, code_postal, ville, departement
                 FROM companies WHERE siren = %s
             """, (linked_siren,))
+
+        elif link_confidence == "rejected":
+            # User rejected — no banner, entity stays independent
+            pass
+
+        elif link_confidence == "pending" and linked_siren:
+            # Runner found a candidate but user hasn't decided yet
+            # Show as suggested match for user to confirm/reject
+            candidate = await fetch_one("""
+                SELECT siren, denomination, naf_code, naf_libelle,
+                       forme_juridique, tranche_effectif, effectif_exact,
+                       adresse, code_postal, ville, departement
+                FROM companies WHERE siren = %s
+            """, (linked_siren,))
+            if candidate:
+                method = company.get("link_method") or "fuzzy_name"
+                reason_map = {
+                    "address": "Même adresse détectée",
+                    "fuzzy_name": "Nom similaire",
+                }
+                suggested_matches = [{
+                    "siren": candidate["siren"],
+                    "denomination": candidate.get("denomination"),
+                    "confidence": "pending",
+                    "method": method,
+                    "reason": reason_map.get(method, method),
+                    "address": candidate.get("adresse"),
+                    "ville": candidate.get("ville"),
+                    "naf_code": candidate.get("naf_code"),
+                    "tranche_effectif": candidate.get("tranche_effectif"),
+                }]
         else:
-            # Not linked yet — try to find matches
+            # No candidate from runner — try live matching
             try:
-                from fortress.module_b.entity_matcher import find_matches
+                from fortress.matching.entities import find_matches
                 async with get_conn() as conn:
                     matches = await find_matches(
                         maps_siren=siren,
@@ -1178,34 +1267,19 @@ async def _get_company_impl(siren: str):
                         conn=conn,
                     )
                     if matches:
-                        # Auto-link HIGH confidence matches
-                        best = matches[0]
-                        if best.confidence == "high":
-                            await conn.execute("""
-                                UPDATE companies
-                                SET linked_siren = %s, link_confidence = %s, link_method = %s
-                                WHERE siren = %s
-                            """, (best.siren, best.confidence, best.method, siren))
-                            await conn.commit()
-                            linked_company = await fetch_one("""
-                                SELECT siren, denomination, naf_code, naf_libelle,
-                                       forme_juridique, tranche_effectif, effectif_exact,
-                                       adresse, code_postal, ville, departement
-                                FROM companies WHERE siren = %s
-                            """, (best.siren,))
-                        else:
-                            suggested_matches = [
-                                {
-                                    "siren": m.siren,
-                                    "denomination": m.denomination,
-                                    "confidence": m.confidence,
-                                    "method": m.method,
-                                    "reason": m.reason,
-                                    "address": m.address,
-                                    "ville": m.ville,
-                                }
-                                for m in matches
-                            ]
+                        # Never auto-link — always show as suggestions
+                        suggested_matches = [
+                            {
+                                "siren": m.siren,
+                                "denomination": m.denomination,
+                                "confidence": m.confidence,
+                                "method": m.method,
+                                "reason": m.reason,
+                                "address": m.address,
+                                "ville": m.ville,
+                            }
+                            for m in matches
+                        ]
             except Exception:
                 pass  # Matching failed — no big deal, card still loads
 
@@ -1256,6 +1330,9 @@ async def _get_company_impl(siren: str):
     # Sort by timestamp DESC
     unified_history.sort(key=lambda x: x["timestamp"], reverse=True)
 
+    # ── Build unified alerts list ─────────────────────────────
+    alerts = _build_alerts(company, merged, contacts)
+
     return {
         "company": company,
         "contacts": contacts,
@@ -1269,6 +1346,7 @@ async def _get_company_impl(siren: str):
         "suggested_matches": suggested_matches,
         "data_conflicts": merged.get("data_conflicts", []),
         "siren_match": merged.get("siren_match"),
+        "alerts": alerts,
     }
 
 
@@ -1439,6 +1517,88 @@ def _merge_contacts(contacts: list[dict]) -> dict:
     return merged
 
 
+def _build_alerts(company: dict, merged: dict, contacts: list[dict]) -> list[dict]:
+    """Build a unified alerts list for the company card.
+
+    Alert types:
+      - siren_mismatch: website crawl found a SIRET belonging to a different company
+      - address_mismatch: Google Maps address differs from SIRENE registry address
+      - data_conflict: two sources disagree on phone/email/website (from _merge_contacts)
+
+    Each alert has: type, severity (critical/warning/info), title, description,
+    field, current_value, current_source, alt_value, alt_source.
+    """
+    alerts: list[dict] = []
+
+    # ── 1. SIRET mismatch (critical) ──────────────────────────────
+    siren_match = merged.get("siren_match")
+    if siren_match is False:
+        # Find which source flagged it
+        flagging_source = None
+        for c in contacts:
+            if c.get("siren_match") is False:
+                flagging_source = c.get("source", "?")
+                break
+        alerts.append({
+            "type": "siren_mismatch",
+            "severity": "critical",
+            "title": "SIRET du site web ne correspond pas",
+            "description": (
+                f"Le site web de cette entreprise contient un SIRET appartenant "
+                f"à une autre société. Les données du site pourraient être celles d'une entreprise différente."
+            ),
+            "field": "siren",
+            "current_value": company.get("siren"),
+            "current_source": "sirene",
+            "alt_value": None,
+            "alt_source": flagging_source,
+        })
+
+    # ── 2. Address mismatch (Maps vs SIRENE) ──────────────────────
+    sirene_addr = company.get("adresse") or ""
+    sirene_ville = company.get("ville") or ""
+    maps_addr = merged.get("address") or ""
+    maps_source = merged.get("address_source")
+
+    if maps_source == "google_maps" and sirene_addr and maps_addr:
+        # Compare cities: extract city from Maps address and compare with SIRENE ville
+        sirene_city_norm = sirene_ville.strip().upper()
+        maps_addr_upper = maps_addr.upper()
+        # Maps address typically ends with "VILLE, France" or "CODE VILLE, France"
+        city_mismatch = sirene_city_norm and sirene_city_norm not in maps_addr_upper
+        if city_mismatch:
+            alerts.append({
+                "type": "address_mismatch",
+                "severity": "warning",
+                "title": "Adresse Google Maps différente du registre SIRENE",
+                "description": (
+                    f"L'adresse trouvée sur Google Maps ne correspond pas "
+                    f"à l'adresse enregistrée au registre SIRENE."
+                ),
+                "field": "address",
+                "current_value": f"{sirene_addr}, {sirene_ville}".strip(", "),
+                "current_source": "sirene",
+                "alt_value": maps_addr,
+                "alt_source": "google_maps",
+            })
+
+    # ── 3. Data conflicts (phone/email/website) ──────────────────
+    for conflict in merged.get("data_conflicts", []):
+        alerts.append({
+            "type": "data_conflict",
+            "severity": "warning",
+            "title": f"Conflit sur {conflict['field']}",
+            "description": conflict["reason"],
+            "field": conflict["field"],
+            "current_value": conflict["current"]["value"],
+            "current_source": conflict["current"]["source"],
+            "alt_value": conflict["alternative"]["value"],
+            "alt_source": conflict["alternative"]["source"],
+        })
+
+    return alerts
+
+
 # ── Entity linking endpoints ──────────────────────────────────────────
 
 class LinkBody(BaseModel):
@@ -1446,8 +1606,13 @@ class LinkBody(BaseModel):
 
 
 @router.post("/{siren}/link")
-async def link_entity(siren: str, body: LinkBody):
-    """Confirm a MAPS entity is linked to a real SIREN."""
+async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTasks):
+    """Confirm a MAPS entity is linked to a real SIREN.
+
+    After confirmation:
+      - Sets link_confidence = 'confirmed'
+      - Triggers INPI enrichment (directors + financials) in background
+    """
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be linked"})
 
@@ -1461,7 +1626,7 @@ async def link_entity(siren: str, body: LinkBody):
     async with get_conn() as conn:
         await conn.execute("""
             UPDATE companies
-            SET linked_siren = %s, link_confidence = 'high', link_method = 'manual'
+            SET linked_siren = %s, link_confidence = 'confirmed', link_method = COALESCE(link_method, 'manual')
             WHERE siren = %s
         """, (body.target_siren, siren))
 
@@ -1472,12 +1637,120 @@ async def link_entity(siren: str, body: LinkBody):
 
         await conn.commit()
 
+    # Trigger INPI enrichment for the confirmed target SIREN (background)
+    background_tasks.add_task(_post_link_inpi_enrich, body.target_siren, siren)
+
     return {
         "linked": True,
         "maps_siren": siren,
         "target_siren": body.target_siren,
         "target_name": target.get("denomination"),
     }
+
+
+async def _post_link_inpi_enrich(target_siren: str, maps_siren: str):
+    """After user confirms a link, fetch directors + financials from INPI for the target SIREN."""
+    try:
+        from fortress.matching.inpi import fetch_dirigeants
+        from fortress.models import Officer, ContactSource
+        from fortress.processing.dedup import upsert_officer, log_audit
+
+        dirigeants, company_data = await fetch_dirigeants(target_siren)
+
+        async with get_conn() as conn:
+            for d in dirigeants:
+                officer = Officer(
+                    siren=target_siren,
+                    nom=d["nom"],
+                    prenom=d.get("prenom"),
+                    role=d.get("qualite"),
+                    civilite=d.get("civilite"),
+                    source=ContactSource.RECHERCHE_ENTREPRISES,
+                )
+                await upsert_officer(conn, officer)
+
+            if dirigeants:
+                await log_audit(
+                    conn, batch_id="ENTITY_LINK", siren=maps_siren,
+                    action="officers_found", result="success",
+                    detail=f"{len(dirigeants)} dirigeant(s) via INPI après lien confirmé",
+                )
+
+            # Update financial data on the target company row
+            if company_data:
+                parts, vals = [], []
+                if "chiffre_affaires" in company_data:
+                    parts.append("chiffre_affaires = %s")
+                    vals.append(company_data["chiffre_affaires"])
+                if "resultat_net" in company_data:
+                    parts.append("resultat_net = %s")
+                    vals.append(company_data["resultat_net"])
+                if "tranche_effectif" in company_data:
+                    parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                    vals.append(company_data["tranche_effectif"])
+                if parts:
+                    vals.append(target_siren)
+                    await conn.execute(
+                        f"UPDATE companies SET {', '.join(parts)} WHERE siren = %s",
+                        tuple(vals),
+                    )
+
+            await conn.commit()
+
+    except Exception as exc:
+        import structlog
+        structlog.get_logger().warning(
+            "post_link_inpi_enrich.failed",
+            target_siren=target_siren,
+            maps_siren=maps_siren,
+            error=str(exc),
+        )
+
+
+@router.post("/{siren}/reject-link")
+async def reject_link(siren: str):
+    """User rejects the suggested SIRENE match — entity stays independent."""
+    if not siren.startswith("MAPS"):
+        return JSONResponse(status_code=400, content={"error": "Only MAPS entities can reject links"})
+
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE companies
+            SET link_confidence = 'rejected'
+            WHERE siren = %s
+        """, (siren,))
+
+        await conn.execute("""
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+            VALUES ('ENTITY_LINK', %s, 'reject_link', 'success', NULL, NOW(), 'Correspondance rejetée par l''utilisateur')
+        """, (siren,))
+
+        await conn.commit()
+
+    return {"rejected": True, "siren": siren}
+
+
+@router.post("/{siren}/unlink")
+async def unlink_entity(siren: str):
+    """Remove an existing confirmed link — entity goes back to independent."""
+    if not siren.startswith("MAPS"):
+        return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be unlinked"})
+
+    async with get_conn() as conn:
+        await conn.execute("""
+            UPDATE companies
+            SET linked_siren = NULL, link_confidence = NULL, link_method = NULL
+            WHERE siren = %s
+        """, (siren,))
+
+        await conn.execute("""
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+            VALUES ('ENTITY_LINK', %s, 'unlink', 'success', NULL, NOW(), 'Lien supprimé par l''utilisateur')
+        """, (siren,))
+
+        await conn.commit()
+
+    return {"unlinked": True, "siren": siren}
 
 
 @router.post("/{siren}/merge")

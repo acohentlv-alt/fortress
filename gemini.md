@@ -46,5 +46,5 @@ Logic: `while len(contacts) < target_count` (strict `<`). Already enforced.
 
 ### 🔑 Context Keys
 - **Test SIREN**: `399817626` (has known multi-source conflicts)
-- **Primary Logic**: `module_d/enricher.py` (orchestrations), `api/routes/companies.py` (merging)
+- **Primary Logic**: `processing/enricher.py` (orchestrations), `api/routes/companies.py` (merging)
 - **Design System**: `css/design-system.css` (glass-badge, btn-liquid, info-tip classes)

@@ -36,11 +36,11 @@ import psycopg_pool
 import structlog
 
 from fortress.config.settings import settings
-from fortress.module_a.query_interpreter import interpret_query
-from fortress.module_a.triage import triage_companies
-from fortress.module_c.curl_client import CurlClient
-from fortress.module_d.batch_processor import run_query as bp_run_query
-from fortress.module_d.enricher import enrich_companies
+from fortress.query.interpreter import interpret_query
+from fortress.query.triage import triage_companies
+from fortress.scraping.http import CurlClient
+from fortress.processing.batch import run_query as bp_run_query
+from fortress.processing.enricher import enrich_companies
 
 log = structlog.get_logger()
 
@@ -200,7 +200,7 @@ async def run(batch_id: str) -> None:
     # ── Clear stale checkpoint from previous runs ────────────────────────
     # Every runner invocation is a NEW job launch. Old checkpoint dirs
     # with the same batch_id would cause batch.already_complete skip.
-    from fortress.module_d import checkpoint as _ckpt
+    from fortress.processing import checkpoint as _ckpt
     if _ckpt.checkpoint_exists(batch_id):
         _ckpt.clear(batch_id)
         log.info("runner.stale_checkpoint_cleared", batch_id=batch_id)
@@ -211,7 +211,7 @@ async def run(batch_id: str) -> None:
     # fails to connect due to resource contention.
     maps_scraper = None
     try:
-        from fortress.module_c.playwright_maps_scraper import PlaywrightMapsScraper
+        from fortress.scraping.maps import PlaywrightMapsScraper
         maps_scraper = PlaywrightMapsScraper()
         await maps_scraper.start()
         log.info("runner.maps_scraper_started", engine="playwright_chromium")

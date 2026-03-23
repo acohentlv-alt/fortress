@@ -21,13 +21,13 @@ This document defines rules and constraints for AI agents working on the Fortres
 Frontend (Vanilla JS SPA)      API (FastAPI)              Pipeline (Python async)
 ┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────────────┐
 │ dashboard.js         │──▶│ routes/dashboard.py  │   │ runner.py (SIRENE strat) │
-│ new-batch.js         │──▶│ routes/batch.py      │──▶│ maps_discovery_runner.py │
-│ monitor.js (polling) │──▶│ routes/jobs.py       │   │  → query_interpreter.py  │
+│ new-batch.js         │──▶│ routes/batch.py      │──▶│ discovery.py             │
+│ monitor.js (polling) │──▶│ routes/jobs.py       │   │  → interpreter.py  │
 │ search.js            │──▶│ routes/companies.py  │   │  → triage.py             │
 │ company.js           │──▶│ routes/export.py     │   │  → enricher.py           │
-│ contacts.js          │──▶│ routes/contacts_list │   │  → batch_processor.py    │
-│ upload.js            │──▶│ routes/client.py     │   │  → playwright_maps.py    │
-│ activity.js          │──▶│ routes/activity.py   │   │  → deduplicator.py       │
+│ contacts.js          │──▶│ routes/contacts_list │   │  → batch.py    │
+│ upload.js            │──▶│ routes/client.py     │   │  → maps.py    │
+│ activity.js          │──▶│ routes/activity.py   │   │  → dedup.py       │
 │ job.js               │──▶│ routes/notes.py      │   │  → checkpoint.py         │
 │ login.js             │──▶│ routes/auth.py       │   └──────────────────────────┘
 └──────────────────────┘   └──────────────────────┘
@@ -75,14 +75,14 @@ These rules are non-negotiable. See [Pipeline Contract](fortress/docs/pipeline.m
 3. **Qualified companies persist immediately** — `on_save` writes before wave completes
 4. **Zero Maps presence required before rejection** — location mismatch alone is not rejection
 5. **Chrome starts before heavy DB queries** — prevents resource contention failures
-6. **curl_cffi for website crawl** — Playwright is Maps-only. Do NOT route website crawl through Playwright.
+6. **curl_cffi for website crawl** (`scraping/http.py`) — Playwright is Maps-only. Do NOT route website crawl through Playwright.
 
 ### Two Pipeline Strategies
 
 | Strategy | Runner | How it works |
 |----------|--------|-------------|
 | **SIRENE** (default) | `runner.py` | Query 14.7M → filter by NAF+dept → triage → enrich (Maps + crawl) |
-| **Maps Discovery** | `maps_discovery_runner.py` | Search Google Maps directly with user queries, bypass SIRENE pool |
+| **Maps Discovery** | `discovery.py` | Search Google Maps directly with user queries, bypass SIRENE pool |
 
 ---
 
@@ -155,9 +155,9 @@ idx_company_notes_siren ON company_notes(siren)
 | Schema | `database/schema.sql` — definitive table structure |
 | Auth | `api/auth.py` (session tokens), `api/routes/auth.py` (login/logout) |
 | API | `api/db.py` (async pool), `api/routes/*.py` (15 route files) |
-| Pipeline | `runner.py` (SIRENE), `maps_discovery_runner.py` (Maps) |
-| Enrichment | `module_d/enricher.py` → `module_c/playwright_maps_scraper.py` + `module_c/curl_client.py` |
-| Dedup | `module_d/deduplicator.py` — all upsert logic |
+| Pipeline | `runner.py` (SIRENE), `discovery.py` (Maps) |
+| Enrichment | `processing/enricher.py` → `scraping/maps.py` + `scraping/http.py` |
+| Dedup | `processing/dedup.py` — all upsert logic |
 | Upload | `api/routes/client.py` + `utils/column_mapper.py` |
 | Frontend | `frontend/js/app.js` (SPA router), `frontend/js/pages/*.js` (13 pages) |
 | Models | `models.py` — Pydantic data models (Company, Contact, Officer, QueryResult) |

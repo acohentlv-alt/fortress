@@ -91,7 +91,7 @@ async def main():
 
     # ── Step 2: Start Maps scraper ─────────────────────────────────────
     print("\n🌐 Starting Playwright Chromium stealth engine...")
-    from fortress.module_c.playwright_maps_scraper import PlaywrightMapsScraper
+    from fortress.scraping.maps import PlaywrightMapsScraper
 
     scraper = PlaywrightMapsScraper()
     try:

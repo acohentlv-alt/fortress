@@ -1,5 +1,5 @@
 import pytest
-from fortress.module_d.enricher import (
+from fortress.processing.enricher import (
     _normalize_name, _names_match, _geo_matches, _best_phone, _best_email
 )
 from fortress.models import Company

@@ -135,10 +135,11 @@ export async function getDataBank() {
 }
 
 /** Browse all enriched entities with contact data (paginated). */
-export async function getAllData({ q = '', department = '', limit = 50, offset = 0 } = {}) {
+export async function getAllData({ q = '', department = '', naf_code = '', limit = 50, offset = 0 } = {}) {
     const params = new URLSearchParams({ limit: limit.toString(), offset: offset.toString() });
     if (q) params.set('q', q);
     if (department) params.set('department', department);
+    if (naf_code) params.set('naf_code', naf_code);
     return await request(`/dashboard/all-data?${params}`);
 }
 

@@ -141,7 +141,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
     # Choose the correct runner based on strategy
     if body.strategy == "maps":
-        runner_module = "fortress.maps_discovery_runner"
+        runner_module = "fortress.discovery"
     else:
         runner_module = "fortress.runner"
 

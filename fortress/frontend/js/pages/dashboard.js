@@ -100,7 +100,6 @@ export async function renderDashboard(container) {
             <button class="view-toggle-btn ${user?.role !== 'admin' ? 'active' : ''}" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-dept">📍 Par Département</button>
             <button class="view-toggle-btn" id="btn-by-upload">📤 Par Upload</button>
-            <button class="view-toggle-btn" id="btn-all-data">🗃️ Toutes les Données</button>
         </div>
 
         <!-- View Container -->
@@ -174,10 +173,6 @@ export async function renderDashboard(container) {
         _renderByUpload(data, container);
     });
 
-    document.getElementById('btn-all-data').addEventListener('click', () => {
-        setActiveToggle('btn-all-data');
-        _renderAllData(container);
-    });
 }
 
 async function _loadAnalysisView(rootContainer) {
@@ -335,7 +330,7 @@ function _renderByUpload(data, rootContainer) {
 
 
 // ── All Data View — searchable + paginated table of all enriched entities ──
-function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
+function _renderAllData(rootContainer, q = '', department = '', naf_code = '', offset = 0) {
     const view = document.getElementById('dashboard-view');
     const PAGE_SIZE = 50;
     const _selected = new Set();
@@ -357,21 +352,29 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
                        background:var(--bg-input); border:1px solid var(--border-default);
                        border-radius:var(--radius); color:var(--text-primary);
                        font-family:var(--font-family); font-size:var(--font-sm); outline:none;">
+            <input type="text" id="alldata-naf" placeholder="NAF (ex: 55.30Z)"
+                value="${escapeHtml(naf_code)}"
+                style="width:120px; padding:var(--space-sm) var(--space-md);
+                       background:var(--bg-input); border:1px solid var(--border-default);
+                       border-radius:var(--radius); color:var(--text-primary);
+                       font-family:var(--font-family); font-size:var(--font-sm); outline:none;">
         </div>
         <div id="alldata-results"><div class="loading"><div class="spinner"></div></div></div>
     `;
 
     const searchInput = document.getElementById('alldata-search');
     const deptInput = document.getElementById('alldata-dept');
+    const nafInput = document.getElementById('alldata-naf');
     const resultsEl = document.getElementById('alldata-results');
     let timer;
 
     async function loadData() {
         const curQ = searchInput.value.trim();
         const curDept = deptInput.value.trim();
+        const curNaf = nafInput.value.trim();
         resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-        const data = await getAllData({ q: curQ, department: curDept, limit: PAGE_SIZE, offset });
+        const data = await getAllData({ q: curQ, department: curDept, naf_code: curNaf, limit: PAGE_SIZE, offset });
         if (!data || data._ok === false) {
             resultsEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
             return;
@@ -488,15 +491,13 @@ function _renderAllData(rootContainer, q = '', department = '', offset = 0) {
         _updateBulkExportBar(_selected);
     }
 
-    // Wire search inputs
-    searchInput.addEventListener('input', () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { offset = 0; loadData(); }, 400);
-    });
-    deptInput.addEventListener('input', () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { offset = 0; loadData(); }, 400);
-    });
+    // Wire search inputs — live results as user types
+    for (const el of [searchInput, deptInput, nafInput]) {
+        el.addEventListener('input', () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => { offset = 0; loadData(); }, 400);
+        });
+    }
 
     // Initial load
     loadData();

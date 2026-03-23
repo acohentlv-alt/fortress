@@ -21,6 +21,8 @@ const ACTION_ICONS = {
     note_added: '📝',
     note_deleted: '🗑️',
     contact_request: '✉️',
+    conflict_resolved: '✅',
+    conflict_dismissed: '❌',
 };
 
 const ACTION_LABELS = {
@@ -35,6 +37,8 @@ const ACTION_LABELS = {
     note_added: 'Note ajoutée',
     note_deleted: 'Note supprimée',
     contact_request: 'Demande de contact',
+    conflict_resolved: 'Conflit résolu',
+    conflict_dismissed: 'Conflit ignoré',
 };
 
 function _timeAgo(dateStr) {

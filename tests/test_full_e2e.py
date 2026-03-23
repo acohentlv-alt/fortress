@@ -69,7 +69,7 @@ async def main():
 
     # ── Step 2: Scrape test companies ─────────────────────────────────
     print("\n🌐 Step 2: Scrape Test Companies")
-    from fortress.module_c.playwright_maps_scraper import PlaywrightMapsScraper
+    from fortress.scraping.maps import PlaywrightMapsScraper
 
     scraper = PlaywrightMapsScraper()
     await scraper.start()
@@ -193,7 +193,7 @@ async def main():
 
     # ── Step 5: Master export ─────────────────────────────────────────
     print("\n📦 Step 5: Master Export")
-    from fortress.module_e import master_file as mf
+    from fortress.export import master_file as mf
 
     cards = []
     for data in scraped:

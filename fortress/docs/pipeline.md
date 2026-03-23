@@ -11,7 +11,7 @@ The pipeline does **not**: modify master company identity data, run inside the A
 ## Source of Truth
 
 * **Schema truth:** `database/schema.sql`
-* **Runtime truth:** `runner.py`, `enricher.py`, `batch_processor.py`, `deduplicator.py`
+* **Runtime truth:** `runner.py`, `enricher.py`, `batch.py`, `dedup.py`
 * **This document:** human-readable contract derived from code inspection
 
 If this document conflicts with application code, **code wins**, and this document must be corrected immediately.
@@ -48,7 +48,7 @@ These rules are non-negotiable. Any code change that violates them is a regressi
 
 | | |
 |---|---|
-| **Owner** | `module_a/query_interpreter.py` |
+| **Owner** | `query/interpreter.py` |
 | **Input** | `query_name` (e.g. "transport 66"), `batch_offset`, `limit` |
 | **Output** | `QueryResult` containing company list + metadata |
 | **Side effects** | None — read-only SQL on `companies` table |
@@ -67,7 +67,7 @@ These rules are non-negotiable. Any code change that violates them is a regressi
 
 | | |
 |---|---|
-| **Owner** | `module_a/triage.py` |
+| **Owner** | `query/triage.py` |
 | **Input** | Company list from Query Interpretation + `raw_query` |
 | **Output** | `TriageResult` with five buckets: BLACK, BLUE, GREEN, YELLOW, RED |
 | **Side effects** | GREEN companies tagged in `query_tags` via `bulk_tag_query()` |
@@ -95,8 +95,8 @@ These rules are non-negotiable. Any code change that violates them is a regressi
 
 | | |
 |---|---|
-| **Owner** | `module_d/enricher.py` |
-| **Input** | Wave of companies (from batch_processor), `pool`, `curl_client`, `maps_scraper` |
+| **Owner** | `processing/enricher.py` |
+| **Input** | Wave of companies (from batch), `pool`, `curl_client`, `maps_scraper` |
 | **Output** | `(list[Contact], replaced_count)` |
 | **Side effects** | Writes to `contacts`, `companies`, `query_tags`, `scrape_audit`, `enrichment_log`, `rejected_sirens` (all via `on_save` and end-of-loop persistence) |
 | **Failure mode** | Per-company exception → logged as `failed` in `enrichment_log`, company replaced |
@@ -151,7 +151,7 @@ A company is qualified only if Maps returned **a valid phone number** (high or l
 
 | | |
 |---|---|
-| **Owner** | `module_d/batch_processor.py` |
+| **Owner** | `processing/batch.py` |
 | **Input** | `TriageResult`, `enrich_fn`, `pool`, `wave_size` |
 | **Output** | None (all output is via DB writes and JSONL files) |
 | **Side effects** | `contacts`, `companies`, `query_tags`, `scrape_audit` writes; JSONL card files; checkpoint files |
@@ -184,12 +184,12 @@ A company is qualified only if Maps returned **a valid phone number** (high or l
 
 | | |
 |---|---|
-| **Owner** | `maps_discovery_runner.py` |
+| **Owner** | `discovery.py` |
 | **Input** | `search_queries` (JSONB array of Google Maps search strings) |
 | **Output** | Same as SIRENE strategy: enriched contacts in DB |
 | **Key difference** | Bypasses SIRENE pool entirely — searches Google Maps directly with user-provided queries |
 
-**When used:** When `scrape_jobs.strategy = 'maps'`. The API in `batch.py` spawns `maps_discovery_runner` instead of `runner.py`.
+**When used:** When `scrape_jobs.strategy = 'maps'`. The API in `batch.py` spawns `discovery` instead of `runner.py`.
 
 **Flow:**
 1. Receives search queries from user (e.g., `["plombier Paris", "electricien Lyon"]`)
@@ -197,10 +197,10 @@ A company is qualified only if Maps returned **a valid phone number** (high or l
 3. Extracts business listings from Maps results
 4. Creates/updates company records in `companies` table
 5. Runs website crawl enrichment on found URLs
-6. Deduplicates and persists via same `deduplicator.py` as SIRENE strategy
+6. Deduplicates and persists via same `dedup.py` as SIRENE strategy
 
 **Key differences from SIRENE strategy:**
-- No `query_interpreter.py` stage (no NAF/department matching)
+- No `interpreter.py` stage (no NAF/department matching)
 - No triage stage (all results are new discoveries)
 - Companies may not exist in SIRENE registry
 - Discovery is Maps-first, not DB-first
@@ -377,10 +377,10 @@ These are tunable settings. Changes here do not affect architecture.
 | Control | Current value | Location | Notes |
 |---------|--------------|----------|-------|
 | Wave size | 50 (min 1, max 200) | `settings.wave_size`, capped by `_MAX_WAVE_SIZE` | |
-| Wave timeout | `max(300s, wave_size × 15s)` | `batch_processor.py` line 181 | Dynamic per wave |
-| Cooldown between waves | 5–15s (randomized) | `batch_processor.py` `delay_min`/`delay_max` | Skip after last wave |
-| Maps concurrency | 1 (asyncio.Lock) | `playwright_maps_scraper.py` line 87 | One search at a time |
-| Maps delay | 2–3s + jitter | `playwright_maps_scraper.py` | Per-search |
+| Wave timeout | `max(300s, wave_size × 15s)` | `batch.py` line 181 | Dynamic per wave |
+| Cooldown between waves | 5–15s (randomized) | `batch.py` `delay_min`/`delay_max` | Skip after last wave |
+| Maps concurrency | 1 (asyncio.Lock) | `maps.py` line 87 | One search at a time |
+| Maps delay | 2–3s + jitter | `maps.py` | Per-search |
 | Website crawl timeout | 8s | `enricher.py` `CurlClient(timeout=8.0)` | Per-page |
 | Website crawl delay | 0.3–0.5s | `enricher.py` `CurlClient(delay_min=0.3)` | Per-page |
 | Replacement pool size | `target_count × 3` | `enricher.py` line 338 | Pre-fetched in bulk |
@@ -462,7 +462,7 @@ These are tunable settings. Changes here do not affect architecture.
 
 ### Reliability & Resilience
 3. **Add Retry Path for Failed Jobs** — Add an API endpoint and UI "Retry" button to cleanly flip a job's status from `failed` to `new` (and clear the `data/checkpoints/{id}/` folder) so users can recover from SQL timeouts or machine reboots.
-4. **Playwright Memory Leak Mitigation** — In `playwright_maps_scraper.py`, instead of doing a hard `.reload()` and fully-blocking `gc.collect()` every 10 searches, simply `.close()` the `Page` and open a `new_page()` every 50 searches to drop the isolated DOM footprint without pausing the async event loop.
+4. **Playwright Memory Leak Mitigation** — In `maps.py`, instead of doing a hard `.reload()` and fully-blocking `gc.collect()` every 10 searches, simply `.close()` the `Page` and open a `new_page()` every 50 searches to drop the isolated DOM footprint without pausing the async event loop.
 5. **Per-Company Rejection Persistence** — Flush rejected SIRENs immediately (via `_on_save` logic) instead of batch-end to prevent repeating dead Maps queries if the pipeline drops mid-batch.
 6. **Playwright Fallback for Website Crawls** — If the `curl_cffi` crawler hits a 403 (Cloudflare/Datadome block) during website enrichment, hand the URL over to the already-warm Playwright Maps instance to bypass bot protection instead of abandoning the crawl.
 

@@ -53,6 +53,7 @@ def _format_count(exact_count: int) -> dict:
 async def list_contacts(
     q: str = Query(None, description="Search by name, SIREN, phone, or email"),
     department: str = Query(None, description="Filter by department code"),
+    naf_code: str = Query(None, description="Filter by NAF code prefix"),
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ):
@@ -63,22 +64,36 @@ async def list_contacts(
 
     if q:
         clean_q = q.strip()
-        where_parts.append("""(
-            co.denomination ILIKE %s
-            OR co.siren = %s
-            OR ct.phone ILIKE %s
-            OR ct.email ILIKE %s
-            OR o.nom ILIKE %s
-            OR o.prenom ILIKE %s
-            OR o.ligne_directe ILIKE %s
-            OR o.email_direct ILIKE %s
-        )""")
-        like = f"%{clean_q}%"
-        params.extend([like, clean_q, like, like, like, like, like, like])
+        # Smart search: digits = SIREN prefix, letters = name prefix / ILIKE
+        clean_digits = clean_q.replace(" ", "")
+        if clean_digits.isdigit():
+            # SIREN prefix search
+            where_parts.append("co.siren LIKE %s")
+            params.append(f"{clean_digits}%")
+        elif len(clean_q) <= 2:
+            # Short text: prefix on denomination
+            where_parts.append("co.denomination LIKE %s")
+            params.append(f"{clean_q.upper()}%")
+        else:
+            # Longer text: search across multiple fields
+            where_parts.append("""(
+                co.denomination ILIKE %s
+                OR co.siren = %s
+                OR ct.phone ILIKE %s
+                OR ct.email ILIKE %s
+                OR o.nom ILIKE %s
+                OR o.prenom ILIKE %s
+            )""")
+            like = f"%{clean_q}%"
+            params.extend([like, clean_q, like, like, like, like])
 
     if department:
         where_parts.append("co.departement = %s")
         params.append(department.strip())
+
+    if naf_code:
+        where_parts.append("co.naf_code LIKE %s")
+        params.append(f"{naf_code.strip().upper()}%")
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 

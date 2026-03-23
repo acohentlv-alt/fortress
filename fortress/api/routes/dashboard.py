@@ -756,57 +756,57 @@ async def get_all_data(
     request: Request,
     q: str = "",
     department: str = "",
+    naf_code: str = "",
     limit: int = 50,
     offset: int = 0,
 ):
     """Browse all enriched companies with their best contact data.
 
-    Admin: all enriched data. User: scoped to own jobs.
-    Supports text search (name/SIREN) and department filter.
+    Searches companies that have at least one contact row (enriched).
+    Supports text search (name/SIREN), department filter, and NAF code filter.
     """
-    # Shared workspace — no user scoping
-    scope_clause = ""
-    scope_params: list = []
+    # Build search filters
+    where_parts: list[str] = []
+    params: list = []
 
-    # Build search filter
-    search_clause = ""
-    search_params: list = []
     if q.strip():
         clean = q.strip()
         digits = clean.replace(" ", "")
         if digits.isdigit() and len(digits) == 9:
-            search_clause = "AND co.siren = %s"
-            search_params = [digits]
+            where_parts.append("co.siren = %s")
+            params.append(digits)
         else:
-            search_clause = "AND UPPER(co.denomination) LIKE UPPER(%s)"
-            search_params = [f"%{clean}%"]
+            where_parts.append("UPPER(co.denomination) LIKE UPPER(%s)")
+            params.append(f"%{clean}%")
 
-    dept_clause = ""
-    dept_params: list = []
     if department.strip():
-        dept_clause = "AND co.departement = %s"
-        dept_params = [department.strip()]
+        where_parts.append("co.departement = %s")
+        params.append(department.strip())
 
-    all_params = tuple(scope_params + search_params + dept_params + [limit, offset])
+    if naf_code.strip():
+        where_parts.append("co.naf_code ILIKE %s")
+        params.append(f"{naf_code.strip()}%")
 
-    # Count total for pagination
-    count_params = tuple(scope_params + search_params + dept_params)
+    where_clause = (" AND ".join(where_parts)) if where_parts else "TRUE"
+
+    # Count total enriched companies matching filters
+    count_params = tuple(params)
     total_row = await fetch_one(f"""
-        SELECT COUNT(DISTINCT qt.siren) AS total
-        FROM batch_tags qt
-        JOIN companies co ON co.siren = qt.siren
-        WHERE 1=1 {scope_clause} {search_clause} {dept_clause}
+        SELECT COUNT(DISTINCT co.siren) AS total
+        FROM companies co
+        WHERE EXISTS (SELECT 1 FROM contacts ct WHERE ct.siren = co.siren)
+          AND {where_clause}
     """, count_params)
     total = (total_row or {}).get("total", 0) or 0
 
+    all_params = tuple(params + [limit, offset])
     rows = await fetch_all(f"""
-        SELECT DISTINCT ON (co.siren)
+        SELECT
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.forme_juridique, co.ville, co.departement,
             ct.phone, ct.email, ct.website,
-            qt.batch_name, qt.tagged_at
-        FROM batch_tags qt
-        JOIN companies co ON co.siren = qt.siren
+            qt.batch_name
+        FROM companies co
         LEFT JOIN LATERAL (
             SELECT phone, email, website FROM contacts c2
             WHERE c2.siren = co.siren
@@ -815,8 +815,15 @@ async def get_all_data(
                       CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
             LIMIT 1
         ) ct ON true
-        WHERE 1=1 {scope_clause} {search_clause} {dept_clause}
-        ORDER BY co.siren, qt.tagged_at DESC
+        LEFT JOIN LATERAL (
+            SELECT batch_name FROM batch_tags bt
+            WHERE bt.siren = co.siren
+            ORDER BY bt.tagged_at DESC
+            LIMIT 1
+        ) qt ON true
+        WHERE EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.siren = co.siren)
+          AND {where_clause}
+        ORDER BY co.denomination
         LIMIT %s OFFSET %s
     """, all_params)
 

@@ -132,14 +132,14 @@ fortress/
 │   │   │       ├── upload.js
 │   │   │       └── login.js
 │   │   └── index.html
-│   ├── module_a/              # Query interpretation + triage
-│   ├── module_b/              # Contact parsing + web search
-│   ├── module_c/              # Playwright Maps + curl client
-│   ├── module_d/              # Enrichment + batch processing
-│   ├── module_e/              # Card formatting + export
+│   ├── query/                 # Query interpretation + triage
+│   ├── matching/              # Contact parsing + web search
+│   ├── scraping/              # Playwright Maps + curl client
+│   ├── processing/            # Enrichment + batch processing
+│   ├── export/                # Card formatting + export
 │   ├── utils/                 # Column mapper + utilities
 │   ├── runner.py              # SIRENE-strategy pipeline orchestrator
-│   ├── maps_discovery_runner.py # Maps-strategy pipeline orchestrator
+│   ├── discovery.py # Maps-strategy pipeline orchestrator
 │   ├── models.py              # Pydantic data models
 │   ├── manage_users.py        # User management CLI
 │   └── setup_users.py         # Initial user creation
@@ -160,13 +160,13 @@ fortress/
 Frontend (Vanilla JS SPA)      API (FastAPI)              Pipeline (Python async)
 ┌──────────────────────┐   ┌──────────────────────┐   ┌──────────────────────────┐
 │ dashboard.js         │──▶│ routes/dashboard.py  │   │ runner.py (SIRENE strat) │
-│ new-batch.js         │──▶│ routes/batch.py      │──▶│ maps_discovery_runner.py │
-│ monitor.js (polling) │──▶│ routes/jobs.py       │   │  → query_interpreter.py  │
+│ new-batch.js         │──▶│ routes/batch.py      │──▶│ discovery.py             │
+│ monitor.js (polling) │──▶│ routes/jobs.py       │   │  → interpreter.py        │
 │ search.js            │──▶│ routes/companies.py  │   │  → triage.py             │
 │ company.js           │──▶│ routes/export.py     │   │  → enricher.py           │
-│ contacts.js          │──▶│ routes/contacts_list │   │  → batch_processor.py    │
-│ upload.js            │──▶│ routes/client.py     │   │  → playwright_maps.py    │
-│ activity.js          │──▶│ routes/activity.py   │   │  → deduplicator.py       │
+│ contacts.js          │──▶│ routes/contacts_list │   │  → batch.py              │
+│ upload.js            │──▶│ routes/client.py     │   │  → maps.py               │
+│ activity.js          │──▶│ routes/activity.py   │   │  → dedup.py              │
 │ job.js               │──▶│ routes/notes.py      │   │  → checkpoint.py         │
 └──────────────────────┘   └──────────────────────┘   └──────────────────────────┘
          │                          │                            │
@@ -184,10 +184,10 @@ Full details in [Pipeline Contract](fortress/docs/pipeline.md).
 
 | Stage | Module | Purpose |
 |-------|--------|---------|
-| 1. Interpret | `query_interpreter.py` | User input → SQL on 14.7M companies |
+| 1. Interpret | `interpreter.py` | User input → SQL on 14.7M companies |
 | 2. Triage | `triage.py` | Classify: BLACK / BLUE / GREEN (Data Bank) / YELLOW / RED |
 | 3. Enrich | `enricher.py` | Maps (Playwright) → website crawl (curl_cffi). Qualify-or-replace loop. |
-| 4. Wave Process | `batch_processor.py` | Per-company save, checkpoint, cooldown |
+| 4. Wave Process | `batch.py` | Per-company save, checkpoint, cooldown |
 | 5. Complete | `runner.py` | Status → completed, Chrome cleanup |
 
 **Two pipeline strategies:**
@@ -218,7 +218,7 @@ Full schema: [Database Contract](fortress/docs/database.md) or `database/schema.
 
 ```bash
 # Syntax check
-python3 -c "import ast; ast.parse(open('fortress/module_d/enricher.py').read())"
+python3 -c "import ast; ast.parse(open('fortress/processing/enricher.py').read())"
 
 # Start API
 python3 -m fortress.api.main

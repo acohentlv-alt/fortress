@@ -13,12 +13,13 @@ import { DEPARTMENTS } from '../constants.js';
 
 export async function renderContacts(container) {
     let currentDepartment = '';
+    let currentNafCode = '';
     let currentQuery = '';
     const PAGE_SIZE = 50;
-    const INITIAL_PAGES = 5; // Load 5 pages (250 contacts) initially
-    let allResults = [];      // Accumulated results across loads
-    let hasMore = true;       // Whether there are more results to load
-    let totalDisplay = '...'; // Smart count display string
+    const INITIAL_PAGES = 5;
+    let allResults = [];
+    let hasMore = true;
+    let totalDisplay = '...';
 
     container.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:var(--space-md); margin-bottom:var(--space-xl)">
@@ -32,7 +33,7 @@ export async function renderContacts(container) {
         </div>
 
         <!-- Search + Filters -->
-        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-lg); flex-wrap:wrap; max-width:800px">
+        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-lg); flex-wrap:wrap; max-width:900px">
             <div style="flex:1; min-width:260px; position:relative">
                 <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">🔍</span>
                 <input type="text" id="contacts-search"
@@ -48,14 +49,21 @@ export async function renderContacts(container) {
                 >
             </div>
             <select id="contacts-dept-filter" class="sort-select"
-                style="min-width:180px; background:var(--bg-input); border:1px solid var(--border-default);
+                style="min-width:160px; background:var(--bg-input); border:1px solid var(--border-default);
                        border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-sm);
                        padding:var(--space-sm) var(--space-md)">
-                <option value="">Tous les départements</option>
+                <option value="">Dépt:</option>
                 ${DEPARTMENTS.map(([code, name]) =>
                     `<option value="${code}">${code} — ${escapeHtml(name)}</option>`
                 ).join('')}
             </select>
+            <input type="text" id="contacts-naf-filter"
+                placeholder="NAF (ex: 55.30Z)"
+                style="width:130px; background:var(--bg-input); border:1px solid var(--border-default);
+                       border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-sm);
+                       padding:var(--space-sm) var(--space-md); font-family:var(--font-family)"
+                autocomplete="off"
+            >
         </div>
 
         <!-- Results -->
@@ -66,8 +74,10 @@ export async function renderContacts(container) {
 
     const searchInput = document.getElementById('contacts-search');
     const deptFilter = document.getElementById('contacts-dept-filter');
+    const nafFilter = document.getElementById('contacts-naf-filter');
     const resultsEl = document.getElementById('contacts-results');
     let debounceTimer;
+    let nafTimer;
 
     // ── Render the table from accumulated results ────────────────
     function renderTable() {
@@ -181,6 +191,7 @@ export async function renderContacts(container) {
         const params = { limit: PAGE_SIZE * INITIAL_PAGES, offset: 0 };
         if (currentQuery) params.q = currentQuery;
         if (currentDepartment) params.department = currentDepartment;
+        if (currentNafCode) params.naf_code = currentNafCode;
 
         const data = await getContactsList(params);
 
@@ -220,6 +231,7 @@ export async function renderContacts(container) {
         const params = { limit: PAGE_SIZE * INITIAL_PAGES, offset: allResults.length };
         if (currentQuery) params.q = currentQuery;
         if (currentDepartment) params.department = currentDepartment;
+        if (currentNafCode) params.naf_code = currentNafCode;
 
         const data = await getContactsList(params);
 
@@ -259,6 +271,14 @@ export async function renderContacts(container) {
     deptFilter.addEventListener('change', () => {
         currentDepartment = deptFilter.value;
         doSearch();
+    });
+
+    nafFilter.addEventListener('input', () => {
+        clearTimeout(nafTimer);
+        nafTimer = setTimeout(() => {
+            currentNafCode = nafFilter.value.trim();
+            doSearch();
+        }, 500);
     });
 
     // Export button

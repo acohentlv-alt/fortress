@@ -27,7 +27,7 @@ async def main():
     # ── Step 1: Import and instantiate ─────────────────────────────────
     print("\n📦 Importing PlaywrightMapsScraper...")
     try:
-        from fortress.module_c.playwright_maps_scraper import PlaywrightMapsScraper
+        from fortress.scraping.maps import PlaywrightMapsScraper
         print("   ✅ Import successful")
     except ImportError as e:
         print(f"   ❌ Import failed: {e}")
