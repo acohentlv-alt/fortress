@@ -262,10 +262,11 @@ async def start_deep_enrich(body: DeepEnrichRequest, background_tasks: Backgroun
         
         # Link SIRENS via batch_tags
         now = datetime.datetime.now()
-        await conn.execute_many(
-            "INSERT INTO batch_tags (siren, batch_id, batch_name, tagged_at) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            [(s, batch_id, f"Enrichissement Manuel", now) for s in sirens]
-        )
+        for s in sirens:
+            await conn.execute(
+                "INSERT INTO batch_tags (siren, batch_id, batch_name, tagged_at) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (s, batch_id, "Enrichissement Manuel", now)
+            )
         await conn.commit()
 
     background_tasks.add_task(async_deep_enrich_worker, batch_id, sirens)

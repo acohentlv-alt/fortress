@@ -10,6 +10,7 @@ import { GlobalSelection } from '../state.js';
 let selectionMode = false;
 let selectedSirens = GlobalSelection;
 let _currentBatchId = null;
+let _currentBatchName = null;
 let _currentPage = 1;
 let _currentSort = 'completude';
 
@@ -164,6 +165,7 @@ export async function renderJob(container, batchId) {
     selectionMode = false;
     selectedSirens.clear();
     _currentBatchId = batchId;
+    _currentBatchName = job.batch_name;
     _currentPage = 1;
     _currentSort = 'completude';
 
@@ -389,7 +391,7 @@ async function loadCompanies(batchId, page, sort) {
                     danger: true,
                     checkboxLabel: 'Également ajouter à la liste noire (ne plus jamais scraper)',
                     onConfirm: async (checkboxChecked) => {
-                        const result = await untagCompany(siren, batchId);
+                        const result = await untagCompany(siren, _currentBatchName);
                         if (result._ok !== false) {
                             if (checkboxChecked) {
                                 try {
@@ -540,7 +542,7 @@ async function _bulkDelete() {
         onConfirm: async (blacklist) => {
             let ok = 0;
             for (const siren of sirens) {
-                const res = await untagCompany(siren, _currentBatchId);
+                const res = await untagCompany(siren, _currentBatchName);
                 if (res && res._ok !== false) ok++;
                 if (blacklist) {
                     await fetch('/api/blacklist', {

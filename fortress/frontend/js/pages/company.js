@@ -164,24 +164,40 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
     };
 
     if (linkedCo) {
-        // Confirmed link — show real company info with merge/unlink buttons
+        // Confirmed link — side-by-side comparison (same layout as suggested match, green theme)
         const reasonText = _linkReasonLabel(linkMethod);
+        const mc = co._merged_contact || {};
         return `
-        <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(59,130,246,0.08)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-md)">
-            <div style="display:flex; align-items:center; gap:var(--space-md); flex:1; min-width:0">
-                <span style="font-size:1.5rem">🔗</span>
-                <div style="min-width:0">
-                    <div style="font-weight:700; color:var(--success); font-size:var(--font-base)">Lié à ${escapeHtml(linkedCo.denomination || '')}</div>
-                    <div style="font-size:var(--font-xs); color:var(--accent); margin-top:2px; font-weight:600">${reasonText}</div>
-                    <div style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; flex-wrap:wrap; gap:var(--space-sm); margin-top:2px">
-                        <span>SIREN: ${linkedCo.siren}</span>
-                        ${linkedCo.naf_code ? `<span>· 📋 ${escapeHtml(linkedCo.naf_code)}</span>` : ''}
-                        ${linkedCo.tranche_effectif && linkedCo.tranche_effectif !== 'NN' ? `<span>· 👥 ${effectifLabel(linkedCo.tranche_effectif) || linkedCo.tranche_effectif}</span>` : ''}
-                        ${linkedCo.ville ? `<span>· ${escapeHtml(linkedCo.ville)}</span>` : ''}
+        <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
+            <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
+                <span style="font-size:1.3rem">🔗</span>
+                <span style="font-weight:700; color:var(--success); font-size:var(--font-base)">Lié à ${escapeHtml(linkedCo.denomination || '')}</span>
+                <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${reasonText}</span>
+            </div>
+            <div class="entity-banner-grid">
+                <!-- Left: Maps data -->
+                <div style="padding:var(--space-md); background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2); border-radius:var(--radius-md)">
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">🗺️ Données Maps</div>
+                    <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
+                        <div><strong>${escapeHtml(co.denomination)}</strong></div>
+                        ${co.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(co.adresse)}</div>` : ''}
+                        ${mc.phone ? `<div>📞 ${escapeHtml(mc.phone)}</div>` : ''}
+                        ${mc.website ? `<div>🌐 ${escapeHtml(mc.website)}</div>` : ''}
+                    </div>
+                </div>
+                <!-- Right: SIRENE data -->
+                <div style="padding:var(--space-md); background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2); border-radius:var(--radius-md)">
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--success); margin-bottom:var(--space-sm)">🏢 Données SIRENE</div>
+                    <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
+                        <div><strong>${escapeHtml(linkedCo.denomination || '')}</strong></div>
+                        ${linkedCo.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(linkedCo.adresse)}</div>` : ''}
+                        <div style="color:var(--text-secondary)">SIREN: ${linkedCo.siren}</div>
+                        ${linkedCo.naf_code ? `<div style="color:var(--text-secondary)">NAF: ${escapeHtml(linkedCo.naf_code)}</div>` : ''}
+                        ${linkedCo.ville ? `<div style="color:var(--text-secondary)">${escapeHtml(linkedCo.ville)}</div>` : ''}
                     </div>
                 </div>
             </div>
-            <div style="display:flex; gap:var(--space-sm); flex-shrink:0">
+            <div style="display:flex; gap:var(--space-md); justify-content:center">
                 <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">🔀 Fusionner</button>
                 <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">Dissocier</button>
             </div>
@@ -244,8 +260,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                <button class="action-btn action-btn-confirm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="width:auto; padding:var(--space-sm) var(--space-xl); font-weight:700; font-size:var(--font-sm); opacity:1">Oui, c'est la même</button>
-                <button class="action-btn action-btn-reject" id="btn-reject-match" data-maps="${co.siren}" style="width:auto; padding:var(--space-sm) var(--space-xl); font-weight:700; font-size:var(--font-sm); opacity:1">Non, garder séparé</button>
+                <button class="btn btn-primary btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm)">Oui, c'est la même</button>
+                <button class="btn btn-secondary btn-sm" id="btn-reject-match" data-maps="${co.siren}" style="font-size:var(--font-sm); color:var(--error)">Non, garder séparé</button>
             </div>
         </div>`;
     }

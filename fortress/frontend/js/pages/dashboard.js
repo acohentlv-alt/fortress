@@ -426,7 +426,8 @@ function _renderPendingLinks(data, rootContainer) {
                             : r.link_method === 'enseigne' ? 'Même enseigne'
                             : r.link_method || '—';
                         const hints = [];
-                        if (r.ville) hints.push('même ville');
+                        if (r.suggested_ville && r.maps_address &&
+                            r.maps_address.toLowerCase().includes(r.suggested_ville.toLowerCase())) hints.push('même ville');
                         const reasonDisplay = hints.length ? `${reason} · ${hints.join(' · ')}` : reason;
                         return `
                         <tr class="contacts-row" onclick="window.location.hash='#/company/${escapeHtml(r.siren)}'">
