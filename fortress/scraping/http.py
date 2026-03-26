@@ -111,6 +111,15 @@ class CurlResponse:
     headers: dict[str, str] = field(default_factory=dict)
 
 
+def _decode_body(raw_content: bytes) -> str:
+    """Decode HTTP response bytes, forcing UTF-8 with Latin-1 fallback.
+    curl_cffi misdetects encoding on some French sites, garbling accented chars."""
+    try:
+        return raw_content.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return raw_content.decode("latin-1")
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -271,7 +280,7 @@ class CurlClient:
                     log.info("curl_client.non_retryable_status", status=last_status)
                     return CurlResponse(
                         status_code=last_status,
-                        text=raw.text,
+                        text=_decode_body(raw.content),
                         url=str(raw.url),
                         headers=dict(raw.headers),
                     )
@@ -293,7 +302,7 @@ class CurlClient:
                 # Success or any other non-retryable status — return immediately
                 return CurlResponse(
                     status_code=last_status,
-                    text=raw.text,
+                    text=_decode_body(raw.content),
                     url=str(raw.url),
                     headers=dict(raw.headers),
                 )

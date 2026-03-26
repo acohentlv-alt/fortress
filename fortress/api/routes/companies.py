@@ -102,6 +102,13 @@ async def update_company_fields(siren: str, body: dict, request: Request):
     conflict_rejected_source = body.pop("_conflict_rejected_source", None)
     conflict_chosen_source = body.pop("_conflict_chosen_source", None)
 
+    # Strip alert type prefix if present (e.g., "data_conflict:phone" → "phone")
+    if conflict_field and ":" in conflict_field:
+        conflict_field = conflict_field.split(":")[-1]
+    # Validate the cleaned field name is a known contact field before use in SQL
+    if conflict_field and conflict_field not in _EDITABLE_FIELDS:
+        conflict_field = None
+
     # Filter to allowed fields only
     updates = {k: v for k, v in body.items() if k in _EDITABLE_FIELDS}
 
@@ -150,30 +157,42 @@ async def update_company_fields(siren: str, body: dict, request: Request):
             )
             saved.extend(co_updates.keys())
 
-        # Upsert contacts table (source='manual_edit')
+        # Upsert contacts table
         if ct_updates:
-            columns = ["siren", "source"] + list(ct_updates.keys())
-            placeholders = ["%s"] * len(columns)
-            values = [siren, "manual_edit"] + list(ct_updates.values())
-            on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in ct_updates)
-            await conn.execute(f"""
-                INSERT INTO contacts ({', '.join(columns)}, collected_at)
-                VALUES ({', '.join(placeholders)}, NOW())
-                ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
-            """, tuple(values))
-            saved.extend(ct_updates.keys())
+            if conflict_action == "accept" and conflict_rejected_source and conflict_field:
+                # ── Conflict resolution: null out the REJECTED source's field ──
+                # This prevents the circular loop where writing a 'manual_edit' row
+                # immediately creates a new conflict against the original source row.
+                # Instead we silence the loser by NULLing its field in-place.
+                await conn.execute(f"""
+                    UPDATE contacts SET {conflict_field} = NULL
+                    WHERE siren = %s AND source = %s
+                """, (siren, conflict_rejected_source))
+                saved.extend(ct_updates.keys())
+            else:
+                # Normal manual edit — upsert into 'manual_edit' source row
+                columns = ["siren", "source"] + list(ct_updates.keys())
+                placeholders = ["%s"] * len(columns)
+                values = [siren, "manual_edit"] + list(ct_updates.values())
+                on_conflict = ", ".join(f"{k} = EXCLUDED.{k}" for k in ct_updates)
+                await conn.execute(f"""
+                    INSERT INTO contacts ({', '.join(columns)}, collected_at)
+                    VALUES ({', '.join(placeholders)}, NOW())
+                    ON CONFLICT (siren, source) DO UPDATE SET {on_conflict}, collected_at = NOW()
+                """, tuple(values))
+                saved.extend(ct_updates.keys())
 
-            # ── Deletion propagation ─────────────────────────────
-            # When user CLEARS a field (sets to None/empty), also NULL
-            # that field in ALL other source rows so _merge_contacts()
-            # can't pull the deleted value back from website_crawl etc.
-            deleted_fields = [k for k, v in ct_updates.items() if not v]
-            if deleted_fields:
-                for field in deleted_fields:
-                    await conn.execute(f"""
-                        UPDATE contacts SET {field} = NULL
-                        WHERE siren = %s AND source != 'manual_edit'
-                    """, (siren,))
+                # ── Deletion propagation ─────────────────────────────
+                # When user CLEARS a field (sets to None/empty), also NULL
+                # that field in ALL other source rows so _merge_contacts()
+                # can't pull the deleted value back from website_crawl etc.
+                deleted_fields = [k for k, v in ct_updates.items() if not v]
+                if deleted_fields:
+                    for field in deleted_fields:
+                        await conn.execute(f"""
+                            UPDATE contacts SET {field} = NULL
+                            WHERE siren = %s AND source != 'manual_edit'
+                        """, (siren,))
 
         # Audit trail with before/after
         for field, value in updates.items():
@@ -208,15 +227,16 @@ async def update_company_fields(siren: str, body: dict, request: Request):
         )
         await log_activity(user_id, username, "conflict_resolved", "company", siren, details)
     elif saved:
-        # Log every manual edit to activity journal
+        # Single consolidated journal entry covering all changed fields
+        parts = []
         for field, value in updates.items():
             old_val = before_values.get(field)
             if old_val:
-                detail = f"{field}: {old_val} → {value or '(vide)'}"
+                parts.append(f"{field}: {old_val} → {value or '(vide)'}")
             else:
-                detail = f"{field} = {value or '(vide)'}"
-            await log_activity(user_id, username, "manual_edit", "company", siren,
-                               f"{denomination} ({siren}) — {detail}")
+                parts.append(f"{field} = {value or '(vide)'}")
+        detail = f"{denomination} ({siren}) — " + ", ".join(parts)
+        await log_activity(user_id, username, "manual_edit", "company", siren, detail)
 
     return {"updated": sorted(saved), "siren": siren}
 
@@ -744,7 +764,7 @@ async def crawl_website_sync(siren: str):
             break
     
     # Select best email and phone — now with company context
-    from fortress.processing.enricher import _best_email, _best_phone
+    from fortress.matching.contacts import _best_email, _best_phone
     from fortress.matching.contacts import is_agency_email
     best_email = _best_email(list(set(all_emails)), root_url, siren, company_name=company_name)
     
@@ -961,6 +981,7 @@ async def crawl_website_sync(siren: str):
 
 @router.get("/search")
 async def search_companies(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search by name, SIREN, or NAF code"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0, description="Pagination offset"),
@@ -978,6 +999,15 @@ async def search_companies(
     Search string is normalized with UPPER() for case-insensitive matching.
     NAF code is matched via OR condition alongside denomination.
     """
+    # Workspace scoping
+    _user = getattr(request.state, "user", None)
+    if _user and not _user.is_admin:
+        ws_part = "qt.workspace_id = %s"
+        ws_params_base: list = [_user.workspace_id]
+    else:
+        ws_part = "1=1"
+        ws_params_base = []
+
     # Resolve sort clause (whitelist prevents SQL injection)
     sort_col = _SORT_COLUMNS.get(sort_by, "co.denomination")
     sort_dir = "DESC" if order.lower() == "desc" else "ASC"
@@ -1002,22 +1032,23 @@ async def search_companies(
                           CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
                 LIMIT 1
             ) ct ON true
-            WHERE co.siren = %s
+            WHERE co.siren = %s AND {ws_part}
             GROUP BY co.siren, co.denomination, co.naf_code, co.naf_libelle,
                      co.forme_juridique, co.tranche_effectif,
                      co.ville, co.departement, co.statut,
                      ct.phone, ct.email, ct.website
             ORDER BY {sort_clause}
-        """, (clean_q,))
+        """, tuple([clean_q] + ws_params_base))
     else:
         # Name / NAF code search — indexed via batch_tags.siren
         like_param = f"%{q.strip()}%"
 
         # Build dynamic WHERE filters
         where_parts = [
-            "(UPPER(co.denomination) LIKE UPPER(%s) OR co.naf_code ILIKE %s)"
+            "(UPPER(co.denomination) LIKE UPPER(%s) OR co.naf_code ILIKE %s)",
+            ws_part,
         ]
-        params: list = [like_param, like_param]
+        params: list = [like_param, like_param] + ws_params_base
 
         if department:
             where_parts.append("co.departement = %s")
@@ -1180,6 +1211,18 @@ async def _get_company_impl(siren: str):
         ORDER BY nom
     """, (siren,))
 
+    # For MAPS entities with a confirmed linked SIREN, also pull officers stored
+    # under the real SIREN (enricher writes them there, not on the MAPS id).
+    if not officers and company.get("linked_siren") and company.get("link_confidence") == "confirmed":
+        officers = await fetch_all("""
+            SELECT nom, prenom, role, source,
+                   civilite, email_direct, ligne_directe,
+                   code_fonction, type_fonction
+            FROM officers
+            WHERE siren = %s
+            ORDER BY nom
+        """, (company["linked_siren"],))
+
     # Merge best contacts
     merged = _merge_contacts(contacts)
 
@@ -1255,33 +1298,9 @@ async def _get_company_impl(siren: str):
                     "tranche_effectif": candidate.get("tranche_effectif"),
                 }]
         else:
-            # No candidate from runner — try live matching
-            try:
-                from fortress.matching.entities import find_matches
-                async with get_conn() as conn:
-                    matches = await find_matches(
-                        maps_siren=siren,
-                        maps_addr=company.get("adresse"),
-                        maps_name=company.get("denomination"),
-                        departement=company.get("departement"),
-                        conn=conn,
-                    )
-                    if matches:
-                        # Never auto-link — always show as suggestions
-                        suggested_matches = [
-                            {
-                                "siren": m.siren,
-                                "denomination": m.denomination,
-                                "confidence": m.confidence,
-                                "method": m.method,
-                                "reason": m.reason,
-                                "address": m.address,
-                                "ville": m.ville,
-                            }
-                            for m in matches
-                        ]
-            except Exception:
-                pass  # Matching failed — no big deal, card still loads
+            # No candidate from the pipeline — don't block page load.
+            # Frontend will call /suggest-matches asynchronously.
+            pass
 
     # ── Unified History ───────────────────────────────────────
     # Merge enrichment_history (batch_log) + notes (company_notes) + activity_log
@@ -1341,13 +1360,28 @@ async def _get_company_impl(siren: str):
         "batch_tags": tags,
         "history": unified_history,
         "linked_company": linked_company,
+        "sirene_denomination": linked_company.get("denomination") if linked_company else None,
         "link_method": company.get("link_method"),
         "link_confidence": company.get("link_confidence"),
         "suggested_matches": suggested_matches,
+        "matching_available": siren.startswith("MAPS") and not company.get("linked_siren") and company.get("link_confidence") is None,
         "data_conflicts": merged.get("data_conflicts", []),
         "siren_match": merged.get("siren_match"),
         "alerts": alerts,
     }
+
+
+def _normalize_phone_for_comparison(phone: str) -> str:
+    """Normalize French phone to 0XXXXXXXXX for comparison only."""
+    if not phone:
+        return ""
+    digits = ''.join(c for c in phone if c.isdigit() or c == '+')
+    digits = digits.replace(" ", "").replace(".", "").replace("-", "")
+    if digits.startswith("+33") and len(digits) >= 12:
+        digits = "0" + digits[3:]
+    if digits.startswith("0033") and len(digits) >= 13:
+        digits = "0" + digits[4:]
+    return digits
 
 
 def _merge_contacts(contacts: list[dict]) -> dict:
@@ -1481,6 +1515,12 @@ def _merge_contacts(contacts: list[dict]) -> dict:
     for field in CONFLICT_FIELDS:
         alt = merged.get(f"{field}_alt")
         if alt and alt.get("value"):
+            # For phone: normalize before comparing to avoid false conflicts
+            if field == "phone":
+                cur_norm = _normalize_phone_for_comparison(merged.get(field) or "")
+                alt_norm = _normalize_phone_for_comparison(alt["value"] or "")
+                if cur_norm == alt_norm:
+                    continue  # Same number, different format — not a conflict
             cur_src = merged.get(f"{field}_source") or "?"
             alt_src = alt["source"] or "?"
             cur_label = _SOURCE_LABELS.get(cur_src, cur_src)
@@ -1606,7 +1646,7 @@ class LinkBody(BaseModel):
 
 
 @router.post("/{siren}/link")
-async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTasks):
+async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTasks, request: Request):
     """Confirm a MAPS entity is linked to a real SIREN.
 
     After confirmation:
@@ -1623,6 +1663,10 @@ async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTa
     if not target:
         return JSONResponse(status_code=404, content={"error": f"Target SIREN {body.target_siren} not found"})
 
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
+
     async with get_conn() as conn:
         await conn.execute("""
             UPDATE companies
@@ -1636,6 +1680,9 @@ async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTa
         """, (siren, f"Linked to {body.target_siren} ({target.get('denomination')})"))
 
         await conn.commit()
+
+    await log_activity(user_id, username, "link", "company", siren,
+        f"Lié à {body.target_siren} ({target.get('denomination')})")
 
     # Trigger INPI enrichment for the confirmed target SIREN (background)
     background_tasks.add_task(_post_link_inpi_enrich, body.target_siren, siren)
@@ -1708,10 +1755,14 @@ async def _post_link_inpi_enrich(target_siren: str, maps_siren: str):
 
 
 @router.post("/{siren}/reject-link")
-async def reject_link(siren: str):
+async def reject_link(siren: str, request: Request):
     """User rejects the suggested SIRENE match — entity stays independent."""
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can reject links"})
+
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
 
     async with get_conn() as conn:
         await conn.execute("""
@@ -1727,14 +1778,21 @@ async def reject_link(siren: str):
 
         await conn.commit()
 
+    await log_activity(user_id, username, "reject_link", "company", siren,
+        "Correspondance rejetée")
+
     return {"rejected": True, "siren": siren}
 
 
 @router.post("/{siren}/unlink")
-async def unlink_entity(siren: str):
+async def unlink_entity(siren: str, request: Request):
     """Remove an existing confirmed link — entity goes back to independent."""
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be unlinked"})
+
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
 
     async with get_conn() as conn:
         await conn.execute("""
@@ -1750,14 +1808,21 @@ async def unlink_entity(siren: str):
 
         await conn.commit()
 
+    await log_activity(user_id, username, "unlink", "company", siren,
+        "Lien supprimé")
+
     return {"unlinked": True, "siren": siren}
 
 
 @router.post("/{siren}/merge")
-async def merge_entity(siren: str, body: LinkBody):
+async def merge_entity(siren: str, body: LinkBody, request: Request):
     """Merge a MAPS entity into a real SIREN — moves all data, then deletes MAPS row."""
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be merged"})
+
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
 
     target_siren = body.target_siren
 
@@ -1827,9 +1892,273 @@ async def merge_entity(siren: str, body: LinkBody):
 
         await conn.commit()
 
+    await log_activity(user_id, username, "merge", "company", target_siren,
+        f"Fusion depuis {siren}")
+
     return {
         "merged": True,
         "deleted_maps": siren,
         "redirect_to": target_siren,
         "target_name": target.get("denomination"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Manual entity creation — POST /api/companies/create
+# ---------------------------------------------------------------------------
+
+class OfficerInput(BaseModel):
+    nom: str = ""
+    prenom: str = ""
+    role: str = ""
+
+
+class CreateEntityRequest(BaseModel):
+    siren: str | None = None
+    denomination: str | None = None
+    enseigne: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    website: str | None = None
+    adresse: str | None = None
+    code_postal: str | None = None
+    ville: str | None = None
+    departement: str | None = None
+    social_linkedin: str | None = None
+    social_facebook: str | None = None
+    social_instagram: str | None = None
+    social_tiktok: str | None = None
+    social_twitter: str | None = None
+    social_whatsapp: str | None = None
+    social_youtube: str | None = None
+    officers: list[OfficerInput] = []
+    notes: str | None = None
+
+
+@router.post("/create", status_code=201)
+async def create_entity(body: CreateEntityRequest, request: Request):
+    """Manually create a new MAPS entity with optional SIRENE link.
+
+    If a 9-digit SIREN is provided and found in the DB, creates the MAPS entity
+    with linked_siren = siren, link_confidence = 'confirmed', link_method = 'manual'.
+    Otherwise creates a standalone MAPS entity.
+
+    Always creates:
+    - A row in companies (MAPS entity)
+    - A row in contacts (source='manual') with provided contact data
+    - Officer rows if provided (source='manual')
+    - A batch_tags entry (batch_name='Ajout manuel')
+    - An activity log entry
+    - A company_notes entry if notes provided
+    """
+    user = getattr(request.state, "user", None)
+    username = getattr(user, "username", "?") if user else "?"
+    user_id = getattr(user, "id", None) if user else None
+    workspace_id = getattr(user, "workspace_id", None) if user else None
+
+    # Validate: need denomination or a valid SIREN
+    provided_siren = (body.siren or "").strip().replace(" ", "")
+
+    if provided_siren.upper().startswith("MAPS"):
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Utilisez un SIREN à 9 chiffres ou laissez vide"}
+        )
+
+    if not body.denomination and not (provided_siren and len(provided_siren) == 9):
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Nom d'entreprise requis si aucun SIREN n'est fourni"}
+        )
+
+    # Attempt SIRENE lookup if 9-digit SIREN provided
+    sirene_record = None
+    if provided_siren and len(provided_siren) == 9 and provided_siren.isdigit():
+        sirene_record = await fetch_one(
+            "SELECT siren, denomination, enseigne, naf_code, forme_juridique, adresse, code_postal, ville, departement, statut FROM companies WHERE siren = %s AND siren NOT LIKE 'MAPS%%'",
+            (provided_siren,)
+        )
+
+    async with get_conn() as conn:
+        # Generate MAPS ID
+        cur = await conn.execute(
+            "SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER)) FROM companies WHERE siren LIKE 'MAPS%%'"
+        )
+        max_row = await cur.fetchone()
+        next_id = (max_row[0] or 0) + 1 if max_row else 1
+        maps_siren = f"MAPS{next_id:05d}"
+
+        # Determine entity fields
+        denomination = body.denomination
+        enseigne = body.enseigne
+        adresse = body.adresse
+        code_postal = body.code_postal
+        ville = body.ville
+        departement = body.departement
+        linked_siren = None
+        link_confidence = None
+        link_method = None
+
+        if sirene_record:
+            # Copy SIRENE reference data (only if not user-provided)
+            if not denomination:
+                denomination = sirene_record.get("denomination")
+            if not enseigne:
+                enseigne = sirene_record.get("enseigne")
+            if not adresse:
+                adresse = sirene_record.get("adresse")
+            if not code_postal:
+                code_postal = sirene_record.get("code_postal")
+            if not ville:
+                ville = sirene_record.get("ville")
+            if not departement:
+                departement = sirene_record.get("departement")
+            linked_siren = provided_siren
+            link_confidence = "confirmed"
+            link_method = "manual"
+
+        # Insert company row
+        await conn.execute("""
+            INSERT INTO companies (
+                siren, denomination, enseigne, adresse, code_postal, ville, departement,
+                statut, linked_siren, link_confidence, link_method, workspace_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'A', %s, %s, %s, %s)
+        """, (
+            maps_siren, denomination, enseigne, adresse, code_postal, ville, departement,
+            linked_siren, link_confidence, link_method, workspace_id
+        ))
+
+        # Insert contacts row if any contact data provided
+        has_contact = any([
+            body.phone, body.email, body.website,
+            body.social_linkedin, body.social_facebook, body.social_instagram,
+            body.social_tiktok, body.social_twitter, body.social_whatsapp, body.social_youtube,
+        ])
+        if has_contact:
+            await conn.execute("""
+                INSERT INTO contacts (
+                    siren, source,
+                    phone, email, website,
+                    social_linkedin, social_facebook, social_instagram,
+                    social_tiktok, social_twitter, social_whatsapp, social_youtube,
+                    collected_at
+                ) VALUES (%s, 'manual', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (siren, source) DO UPDATE SET
+                    phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
+                    website = EXCLUDED.website,
+                    social_linkedin = EXCLUDED.social_linkedin,
+                    social_facebook = EXCLUDED.social_facebook,
+                    social_instagram = EXCLUDED.social_instagram,
+                    social_tiktok = EXCLUDED.social_tiktok,
+                    social_twitter = EXCLUDED.social_twitter,
+                    social_whatsapp = EXCLUDED.social_whatsapp,
+                    social_youtube = EXCLUDED.social_youtube,
+                    collected_at = NOW()
+            """, (
+                maps_siren,
+                body.phone, body.email, body.website,
+                body.social_linkedin, body.social_facebook, body.social_instagram,
+                body.social_tiktok, body.social_twitter, body.social_whatsapp, body.social_youtube,
+            ))
+
+        # Insert officers
+        for officer in (body.officers or []):
+            nom = (officer.nom or "").strip()
+            prenom = (officer.prenom or "").strip()
+            if not nom and not prenom:
+                continue
+            await conn.execute("""
+                INSERT INTO officers (siren, nom, prenom, role, source)
+                VALUES (%s, %s, %s, %s, 'manual')
+                ON CONFLICT (siren, nom, COALESCE(prenom, '')) DO NOTHING
+            """, (maps_siren, nom, prenom or None, officer.role or None))
+
+        # Create batch_tags entry so entity appears in dashboard
+        batch_name = "Ajout manuel"
+        batch_id = f"MANUAL_{maps_siren}"
+        await conn.execute("""
+            INSERT INTO batch_data (batch_id, batch_name, status, total_companies, workspace_id)
+            VALUES (%s, %s, 'completed', 1, %s)
+        """, (batch_id, batch_name, workspace_id))
+
+        await conn.execute("""
+            INSERT INTO batch_tags (siren, batch_id, batch_name, workspace_id, tagged_at)
+            VALUES (%s, %s, %s, %s, NOW())
+        """, (maps_siren, batch_id, batch_name, workspace_id))
+
+        # Notes
+        if body.notes and body.notes.strip():
+            await conn.execute("""
+                INSERT INTO company_notes (siren, user_id, username, text)
+                VALUES (%s, %s, %s, %s)
+            """, (maps_siren, user_id, username, body.notes.strip()))
+
+        # Batch log
+        await conn.execute("""
+            INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
+            VALUES (%s, %s, 'entity_created', 'success', NULL, NOW(), %s)
+        """, (batch_id, maps_siren, f"Création manuelle par {username}"))
+
+        await conn.commit()
+
+    await log_activity(
+        user_id, username, "entity_created", "company", maps_siren,
+        f"Entreprise créée manuellement : {denomination} ({maps_siren})"
+    )
+
+    return {
+        "status": "ok",
+        "siren": maps_siren,
+        "denomination": denomination,
+        "linked_siren": linked_siren,
+        "link_confidence": link_confidence,
+        "link_method": link_method,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Async SIRENE match suggestions — GET /api/companies/{siren}/suggest-matches
+# ---------------------------------------------------------------------------
+
+@router.get("/{siren}/suggest-matches")
+async def suggest_matches(siren: str):
+    """Run live SIRENE matching for an unmatched MAPS entity.
+
+    Called asynchronously by the frontend after the company page loads.
+    Returns suggested matches without blocking the main company detail.
+    """
+    if not siren.startswith("MAPS"):
+        return {"matches": []}
+
+    company = await fetch_one(
+        "SELECT denomination, adresse, departement, link_confidence FROM companies WHERE siren = %s",
+        (siren,)
+    )
+    if not company or company.get("link_confidence") in ("confirmed", "rejected"):
+        return {"matches": []}
+
+    try:
+        from fortress.matching.entities import find_matches
+        async with get_conn() as conn:
+            matches = await find_matches(
+                maps_siren=siren,
+                maps_addr=company.get("adresse"),
+                maps_name=company.get("denomination"),
+                departement=company.get("departement"),
+                conn=conn,
+            )
+            return {"matches": [
+                {
+                    "siren": m.siren,
+                    "denomination": m.denomination,
+                    "confidence": m.confidence,
+                    "method": m.method,
+                    "reason": m.reason,
+                    "address": m.address,
+                    "ville": m.ville,
+                }
+                for m in matches
+            ]}
+    except Exception:
+        return {"matches": []}

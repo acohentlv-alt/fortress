@@ -230,6 +230,10 @@ export async function getCompany(siren) {
     return await request(`/companies/${siren}`);
 }
 
+export async function getSuggestedMatches(siren) {
+    return request(`/companies/${siren}/suggest-matches`);
+}
+
 // ── Enrichment ───────────────────────────────────────────────────
 export async function enrichCompany(siren, targetModules) {
     return await postJSON(`/companies/${siren}/enrich`, {
@@ -389,6 +393,10 @@ export async function getHitRates() {
     return await request('/dashboard/hit-rates');
 }
 
+export async function getPendingLinks() {
+    return await request('/dashboard/pending-links');
+}
+
 export async function deleteSectorTags(sector) {
     return await request(`/dashboard/sector/${encodeURIComponent(sector)}/tags`, { method: 'DELETE' });
 }
@@ -403,6 +411,14 @@ export async function deleteJobGroup(batchName) {
 
 export async function deleteCompanyTag(siren) {
     return await request(`/companies/${siren}/tags/`, { method: 'DELETE' });
+}
+
+export async function createEntity(data) {
+    return request('/companies/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────

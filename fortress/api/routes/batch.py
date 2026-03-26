@@ -28,7 +28,7 @@ class BatchRunRequest(BaseModel):
     """JSON body for POST /api/batch/run."""
     sector: str = Field(..., min_length=1, description="Sector name, e.g. 'agriculture'")
     department: str = Field(..., min_length=1, max_length=10, description="Department code (e.g. '66') or 'FR'/'ALL' for France-wide")
-    size: int = Field(20, ge=1, le=500, description="Number of entities to collect (SIRENE mode)")
+    size: int = Field(20, ge=1, le=50, description="Number of entities to collect (SIRENE mode)")
     mode: str = Field("discovery", description="Mode: discovery or enrichment")
     city: str | None = Field(None, description="Optional city filter")
     naf_code: str | None = Field(None, description="Optional exact NAF code, e.g. '49.41A'")
@@ -113,18 +113,19 @@ async def run_batch(body: BatchRunRequest, request: Request):
                 if count_row and count_row[0]:
                     batch_offset = count_row[0]
 
-            # Get user_id from authenticated session (if present)
-            user_id = getattr(request.state, 'user', None)
-            user_id = user_id.id if user_id else None
+            # Get user_id and workspace_id from authenticated session (if present)
+            session_user = getattr(request.state, 'user', None)
+            user_id = session_user.id if session_user else None
+            workspace_id = session_user.workspace_id if session_user else None
 
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id
 
             await conn.execute(
                 """INSERT INTO batch_data
-                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (batch_id, batch_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json),
+                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (batch_id, batch_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id),
             )
             await conn.commit()
     except Exception as exc:
@@ -139,11 +140,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{batch_id}.log"
 
-    # Choose the correct runner based on strategy
-    if body.strategy == "maps":
-        runner_module = "fortress.discovery"
-    else:
-        runner_module = "fortress.runner"
+    runner_module = "fortress.discovery"
 
     runner_cmd = [
         sys.executable, "-m", runner_module, batch_id,

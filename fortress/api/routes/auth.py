@@ -69,7 +69,7 @@ async def login(request: Request):
         )
 
     # Create session token and set cookie
-    token = create_session_token(user["id"], user["username"], user["role"])
+    token = create_session_token(user["id"], user["username"], user["role"], user.get("workspace_id"))
 
     response = JSONResponse(content={
         "status": "ok",
@@ -78,6 +78,8 @@ async def login(request: Request):
             "username": user["username"],
             "role": user["role"],
             "display_name": user["display_name"] or user["username"],
+            "workspace_id": user.get("workspace_id"),
+            "workspace_name": user.get("workspace_name"),
         },
     })
     response.set_cookie(
@@ -129,6 +131,7 @@ async def get_current_user(request: Request):
             "id": user.id,
             "username": user.username,
             "role": user.role,
+            "workspace_id": user.workspace_id,
         },
     }
 

@@ -198,6 +198,9 @@ a:hover { color: var(--accent); }
     line-height: 1;
     display: flex;
     align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
 }
 
 .sidebar-brand-badge {
@@ -439,8 +442,14 @@ a:hover { color: var(--accent); }
 }
 
 /* ── Responsive: auto-collapse sidebar for split-screen / small windows ── */
+@media (max-width: 1400px) {
+    .header-search {
+        max-width: 320px;
+    }
+}
+
 @media (max-width: 900px) {
-    /* Auto-collapse is now managed by JS in app.js. 
+    /* Auto-collapse is now managed by JS in app.js.
        We only keep rules here if they specifically differ from .collapsed behavior. */
     .header-search {
         display: none; /* Hide global search on small screens */
@@ -517,6 +526,7 @@ a:hover { color: var(--accent); }
     box-sizing: border-box;
     overflow-x: hidden;
     overflow-y: visible;
+    margin: 0 auto;
 }
 
 .page-title {

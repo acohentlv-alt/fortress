@@ -23,6 +23,11 @@ const ACTION_ICONS = {
     contact_request: '✉️',
     conflict_resolved: '✅',
     conflict_dismissed: '❌',
+    merge: '🔀',
+    link: '🔗',
+    reject_link: '❌',
+    unlink: '🔓',
+    manual_edit: '✏️',
 };
 
 const ACTION_LABELS = {
@@ -39,6 +44,11 @@ const ACTION_LABELS = {
     contact_request: 'Demande de contact',
     conflict_resolved: 'Conflit résolu',
     conflict_dismissed: 'Conflit ignoré',
+    merge: 'Fusion manuelle',
+    link: 'Lien confirmé',
+    reject_link: 'Lien refusé',
+    unlink: 'Lien dissocié',
+    manual_edit: 'Modification manuelle',
 };
 
 function _timeAgo(dateStr) {

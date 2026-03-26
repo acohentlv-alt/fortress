@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany, enrichCompany } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 
@@ -48,13 +48,15 @@ export async function renderJob(container, batchId) {
 
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-xl); flex-wrap:wrap; margin-bottom:var(--space-2xl)">
             <div>
-                <h1 class="page-title">${escapeHtml(job.batch_name)}</h1>
+                <h1 class="page-title">
+                    ${escapeHtml(job.batch_name)}
+                    ${job.batch_number ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-muted); margin-left:var(--space-sm)">Batch #${job.batch_number}</span>` : ''}
+                </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)">
                     ${statusBadge(job.status)}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
                         Créé le ${formatDateTime(job.created_at)}
                     </span>
-                    ${job.batch_number > 1 ? `<span class="badge badge-accent">Batch #${job.batch_number}</span>` : ''}
                     ${(job.triage_green || 0) > 0 ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3)">🟢 ${job.triage_green} données existantes</span>` : ''}
                 </div>
             </div>
@@ -69,12 +71,19 @@ export async function renderJob(container, batchId) {
             </div>
         </div>
 
+        ${job.shortfall_reason ? `
+        <div style="display:flex; align-items:flex-start; gap:var(--space-md); padding:var(--space-md) var(--space-lg); background:rgba(99,179,237,0.08); border:1px solid rgba(99,179,237,0.3); border-radius:var(--radius-md); margin-bottom:var(--space-xl); font-size:var(--font-sm); color:var(--text-secondary)">
+            <span style="font-size:16px; flex-shrink:0">ℹ️</span>
+            <span>${escapeHtml(job.shortfall_reason)}</span>
+        </div>` : ''}
+
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-weight:600">Progression — ${batchSize} entreprises</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
                     <span style="color:var(--text-secondary); font-weight:500">${qualified} entreprise${qualified !== 1 ? 's' : ''} trouvée${qualified !== 1 ? 's' : ''}</span>
+                    ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">⏳ ${job.pending_links} lien${job.pending_links > 1 ? 's' : ''} en attente</span>` : ''}
                     <button id="toggle-provenance" title="Détails du traitement" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
                 </div>
             </div>
@@ -317,7 +326,10 @@ async function loadCompanies(batchId, page, sort) {
             <div style="margin-bottom:var(--space-lg)">
                 <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border-radius:var(--radius-sm); border-left:3px solid var(--accent)">
                     <span style="font-size:var(--font-sm); color:var(--accent); font-weight:600">🔍 ${escapeHtml(query)}</span>
-                    <span style="font-size:var(--font-xs); color:var(--text-muted); margin-left:auto">${companies.length} résultat${companies.length > 1 ? 's' : ''}</span>
+                    <span style="font-size:var(--font-xs); color:var(--text-muted); margin-left:auto">
+                        ${companies.length} résultat${companies.length > 1 ? 's' : ''}
+                        ${(() => { const p = companies.filter(c => c.link_confidence === 'pending').length; return p > 0 ? `<span style="color:rgb(245,158,11); margin-left:6px">⏳ ${p} en attente</span>` : ''; })()}
+                    </span>
                 </div>
                 <div class="company-grid">
                     ${companies.map(c => companyCard(c, {
@@ -347,6 +359,17 @@ async function loadCompanies(batchId, page, sort) {
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort))}
     `;
 
+    // Restore checkbox state after re-render
+    if (selectionMode) {
+        document.querySelectorAll('.card-checkbox').forEach(cb => {
+            if (selectedSirens.has(cb.dataset.siren)) {
+                cb.checked = true;
+                cb.closest('.company-card')?.classList.add('card-selected');
+            }
+        });
+        _updateBulkBar();
+    }
+
     // Event delegation for × remove buttons
     const grid = document.getElementById('job-company-grid');
     if (grid) {
@@ -360,22 +383,33 @@ async function loadCompanies(batchId, page, sort) {
                 const name = card?.querySelector('.company-card-name')?.textContent || siren;
 
                 showConfirmModal({
-                    title: '× Retirer cette entreprise ?',
-                    body: `
-                        <p><strong>${escapeHtml(name)}</strong></p>
-                        <p>SIREN: ${siren}</p>
-                        <p style="color:var(--text-muted)">L'entreprise sera retirée de cette requête.
-                        Ses données restent dans la base.</p>
-                    `,
-                    confirmLabel: 'Retirer',
+                    title: 'Supprimer cette entreprise ?',
+                    body: `<p>Retirer <strong>${escapeHtml(name)}</strong> de ce batch</p>`,
+                    confirmLabel: 'Supprimer',
                     danger: true,
-                    onConfirm: async () => {
+                    checkboxLabel: 'Également ajouter à la liste noire (ne plus jamais scraper)',
+                    onConfirm: async (checkboxChecked) => {
                         const result = await untagCompany(siren, batchId);
                         if (result._ok !== false) {
+                            if (checkboxChecked) {
+                                try {
+                                    await fetch('/api/blacklist', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ siren, reason: 'Supprimé manuellement' }),
+                                        credentials: 'same-origin',
+                                    });
+                                } catch { /* best effort */ }
+                            }
                             showToast(`${name} retirée`, 'success');
                             if (card) {
                                 card.classList.add('card-fade-out');
-                                card.addEventListener('animationend', () => card.remove());
+                                card.addEventListener('animationend', async () => {
+                                    card.remove();
+                                    await loadCompanies(_currentBatchId, _currentPage, _currentSort);
+                                });
+                            } else {
+                                await loadCompanies(_currentBatchId, _currentPage, _currentSort);
                             }
                         } else {
                             showToast('Erreur lors du retrait', 'error');
@@ -438,8 +472,7 @@ function _updateBulkBar() {
     bar.innerHTML = `
         <span class="bulk-count">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
         <button class="btn btn-secondary" id="bulk-select-all">Tout sélectionner</button>
-        <button class="btn btn-primary" id="bulk-enrich-maps">🗺️ Maps</button>
-        <button class="btn btn-secondary" id="bulk-enrich-crawl">🌐 Site Web</button>
+        <button class="btn btn-primary" id="bulk-enrich-web">🚀 Enrichir via site web</button>
         <button class="btn btn-danger" id="bulk-delete">🗑️ Supprimer</button>
     `;
 
@@ -464,10 +497,27 @@ function _updateBulkBar() {
         _updateBulkBar();
     };
 
-    // Enrich Maps
-    document.getElementById('bulk-enrich-maps').onclick = () => _bulkEnrich(['maps_lookup']);
-    // Enrich Crawl
-    document.getElementById('bulk-enrich-crawl').onclick = () => _bulkEnrich(['website_crawl']);
+    // Enrich via web
+    document.getElementById('bulk-enrich-web').onclick = async () => {
+        const sirens = [...selectedSirens];
+        if (!sirens.length) return;
+        if (sirens.length > 20) {
+            showToast('Maximum 20 entreprises par enrichissement', 'error');
+            return;
+        }
+        showToast(`Enrichissement de ${sirens.length} entreprise(s)…`, 'info');
+        const result = await startDeepEnrich(sirens);
+        if (result && result._ok !== false) {
+            showToast(`Enrichissement lancé pour ${sirens.length} entreprise(s)`, 'success');
+            selectionMode = false;
+            selectedSirens.clear();
+            _removeBulkBar();
+            await loadCompanies(_currentBatchId, _currentPage, _currentSort);
+        } else {
+            showToast("Erreur lors de l'enrichissement", 'error');
+        }
+    };
+
     // Delete
     document.getElementById('bulk-delete').onclick = () => _bulkDelete();
 }
@@ -477,52 +527,35 @@ function _removeBulkBar() {
     if (bar) bar.remove();
 }
 
-async function _bulkEnrich(modules) {
-    const sirens = [...selectedSirens];
-    const label = modules.includes('maps_lookup') ? 'Maps' : 'Site Web';
-    showToast(`⏳ Enrichissement ${label} de ${sirens.length} entreprise(s)…`, 'info');
-
-    let ok = 0, fail = 0;
-    for (let i = 0; i < sirens.length; i++) {
-        const siren = sirens[i];
-        showToast(`⏳ ${label} : ${i + 1}/${sirens.length}…`, 'info');
-        try {
-            const res = await enrichCompany(siren, modules);
-            if (res._ok !== false) ok++; else fail++;
-        } catch { fail++; }
-    }
-
-    showToast(`✅ ${ok} enrichie(s)${fail ? `, ❌ ${fail} échouée(s)` : ''}`, ok > 0 ? 'success' : 'error');
-    selectedSirens.clear();
-    selectionMode = false;
-    _removeBulkBar();
-    const btn = document.getElementById('btn-select-mode');
-    if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
-    await loadCompanies(_currentBatchId, _currentPage, _currentSort);
-}
 
 async function _bulkDelete() {
     const sirens = [...selectedSirens];
+    if (!sirens.length) return;
     showConfirmModal({
-        title: `🗑️ Retirer ${sirens.length} entreprise(s) ?`,
-        body: `<p>Les entreprises seront retirées de cette requête.<br>Leurs données restent dans la base.</p>`,
-        confirmLabel: 'Retirer',
+        title: `Supprimer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} ?`,
+        body: `<p>Retirer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} de ce batch</p>`,
+        confirmLabel: 'Supprimer',
         danger: true,
-        onConfirm: async () => {
+        checkboxLabel: 'Également ajouter à la liste noire',
+        onConfirm: async (blacklist) => {
             let ok = 0;
             for (const siren of sirens) {
-                try {
-                    const res = await untagCompany(siren, _currentBatchId);
-                    if (res._ok !== false) ok++;
-                } catch { /* skip */ }
+                const res = await untagCompany(siren, _currentBatchId);
+                if (res && res._ok !== false) ok++;
+                if (blacklist) {
+                    await fetch('/api/blacklist', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({siren, reason: 'Supprimé en masse'}),
+                        credentials: 'same-origin',
+                    });
+                }
             }
-            showToast(`${ok} entreprise(s) retirée(s)`, 'success');
-            selectedSirens.clear();
+            showToast(`${ok}/${sirens.length} supprimée(s)`, 'success');
             selectionMode = false;
+            selectedSirens.clear();
             _removeBulkBar();
-            const btn = document.getElementById('btn-select-mode');
-            if (btn) { btn.classList.remove('active'); btn.innerHTML = '☑ Sélectionner'; }
             await loadCompanies(_currentBatchId, _currentPage, _currentSort);
-        },
+        }
     });
 }

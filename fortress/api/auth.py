@@ -61,10 +61,10 @@ def verify_password(password: str, password_hash: str) -> bool:
 # Session tokens
 # ---------------------------------------------------------------------------
 
-def create_session_token(user_id: int, username: str, role: str) -> str:
+def create_session_token(user_id: int, username: str, role: str, workspace_id: int | None = None) -> str:
     """Create a signed session token containing user identity."""
     s = _get_serializer()
-    return s.dumps({"uid": user_id, "usr": username, "role": role})
+    return s.dumps({"uid": user_id, "usr": username, "role": role, "wid": workspace_id})
 
 
 @dataclass
@@ -72,11 +72,16 @@ class SessionUser:
     """Decoded user from a valid session token."""
     id: int
     username: str
-    role: str  # 'admin' | 'user'
+    role: str  # 'admin' | 'user' | 'head'
+    workspace_id: int | None = None
 
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
+
+    @property
+    def is_head(self) -> bool:
+        return self.role == "head"
 
 
 def decode_session_token(token: str) -> SessionUser | None:
@@ -88,6 +93,7 @@ def decode_session_token(token: str) -> SessionUser | None:
             id=data["uid"],
             username=data["usr"],
             role=data["role"],
+            workspace_id=data.get("wid"),
         )
     except (BadSignature, SignatureExpired, KeyError, TypeError):
         return None
@@ -99,9 +105,12 @@ def decode_session_token(token: str) -> SessionUser | None:
 
 async def get_user_by_username(conn, username: str) -> dict | None:
     """Fetch a user row by username (case-insensitive). Returns dict or None."""
-    import psycopg.rows
     cur = await conn.execute(
-        "SELECT id, username, password_hash, role, display_name FROM users WHERE LOWER(username) = LOWER(%s)",
+        """SELECT u.id, u.username, u.password_hash, u.role, u.display_name,
+                  u.workspace_id, w.name AS workspace_name
+           FROM users u
+           LEFT JOIN workspaces w ON w.id = u.workspace_id
+           WHERE LOWER(u.username) = LOWER(%s)""",
         (username,),
     )
     row = await cur.fetchone()
@@ -113,6 +122,8 @@ async def get_user_by_username(conn, username: str) -> dict | None:
         "password_hash": row[2],
         "role": row[3],
         "display_name": row[4],
+        "workspace_id": row[5],
+        "workspace_name": row[6],
     }
 
 

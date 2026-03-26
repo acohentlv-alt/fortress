@@ -281,13 +281,13 @@ export async function renderSearch(container) {
             currentOffset = 0;
             updateFilterPills();
             doSearch(input.value.trim(), 0);
-        }, 500);
+        }, 400);
     });
 
     // Search input
     input.addEventListener('input', () => {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => doSearch(input.value.trim()), 300);
+        debounceTimer = setTimeout(() => doSearch(input.value.trim()), 400);
     });
 
     input.addEventListener('keydown', (e) => {

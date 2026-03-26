@@ -13,67 +13,75 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 async def get_stats(request: Request):
-    """Dashboard statistics — shared workspace."""
-    scope_clause = ""
-    scope_params: tuple = ()
-    jobs_scope = ""
+    """Dashboard statistics — scoped by workspace."""
+    user = getattr(request.state, "user", None)
+
+    if user and not user.is_admin:
+        wid = user.workspace_id
+        tags_clause = "WHERE qt.workspace_id = %s"
+        jobs_clause = "AND workspace_id = %s"
+        stats_params: tuple = (wid, wid, wid, wid)
+    else:
+        tags_clause = ""
+        jobs_clause = ""
+        stats_params = ()
 
     stats = await fetch_one(f"""
         WITH tagged AS (
-            SELECT DISTINCT qt.siren
-            FROM batch_tags qt
-            {scope_clause}
+            SELECT DISTINCT qt.siren FROM batch_tags qt {tags_clause}
         ),
-        enriched AS (
-            SELECT
-                t.siren,
-                co.departement,
-                MAX(ct.phone)   AS phone,
-                MAX(ct.email)   AS email,
-                MAX(ct.website) AS website
-            FROM tagged t
-            JOIN companies co ON co.siren = t.siren
-            LEFT JOIN contacts ct ON ct.siren = t.siren
-            GROUP BY t.siren, co.departement
+        contact_stats AS (
+            SELECT siren,
+                MAX(phone)   AS phone,
+                MAX(email)   AS email,
+                MAX(website) AS website
+            FROM contacts
+            WHERE siren IN (SELECT siren FROM tagged)
+            GROUP BY siren
         )
         SELECT
-            COUNT(*)                                           AS total_companies,
-            COUNT(*) FILTER (WHERE phone IS NOT NULL)          AS with_phone,
-            COUNT(*) FILTER (WHERE email IS NOT NULL)          AS with_email,
-            COUNT(*) FILTER (WHERE website IS NOT NULL)        AS with_website,
-            COUNT(DISTINCT departement)
-                FILTER (WHERE departement IS NOT NULL)         AS departments_covered,
-            (SELECT COUNT(*) FROM batch_data {jobs_scope})    AS total_jobs,
+            COUNT(*)                                                    AS total_companies,
+            COUNT(*) FILTER (WHERE cs.phone IS NOT NULL)                AS with_phone,
+            COUNT(*) FILTER (WHERE cs.email IS NOT NULL)                AS with_email,
+            COUNT(*) FILTER (WHERE cs.website IS NOT NULL)              AS with_website,
+            COUNT(DISTINCT co.departement)
+                FILTER (WHERE co.departement IS NOT NULL)               AS departments_covered,
+            (SELECT COUNT(*) FROM batch_data WHERE 1=1 {jobs_clause})   AS total_jobs,
             (SELECT COUNT(*) FROM batch_data
-             WHERE status = 'completed') AS completed_jobs,
+             WHERE status = 'completed' {jobs_clause})                  AS completed_jobs,
             (SELECT COUNT(*) FROM batch_data
-             WHERE status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180) AS running_jobs
-        FROM enriched
-    """, scope_params)
+             WHERE status IN ('in_progress', 'queued', 'triage')
+               {jobs_clause})                                           AS running_jobs
+        FROM tagged t
+        JOIN companies co ON co.siren = t.siren
+        LEFT JOIN contact_stats cs ON cs.siren = t.siren
+    """, stats_params if stats_params else None)
     return stats or {}
 
 
 @router.get("/recent-activity")
 async def get_recent_activity(request: Request):
-    """Last 10 job updates — shared workspace."""
-    rows = await fetch_all("""
+    """Last 10 job updates — scoped by workspace."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    rows = await fetch_all(f"""
         SELECT batch_id, batch_name,
-               CASE
-                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180
-                        AND COALESCE(companies_qualified, 0) >= COALESCE(batch_size, total_companies, 1)
-                        THEN 'completed'
-                   WHEN status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - updated_at)) > 180
-                        THEN 'failed'
-                   ELSE status
-               END AS status,
+               status,
                total_companies, companies_scraped, companies_failed,
                wave_current, wave_total,
                triage_black, triage_green, triage_yellow, triage_red,
                created_at, updated_at, worker_id
         FROM batch_data
+        WHERE 1=1 {ws_filter}
         ORDER BY updated_at DESC
         LIMIT 10
-    """)
+    """, ws_params if ws_params else None)
     return rows
 
 
@@ -83,17 +91,29 @@ async def get_recent_activity(request: Request):
 
 @router.get("/stats/by-job")
 async def get_stats_by_job(request: Request):
-    """Job-level stats — shared workspace."""
-    user_filter = ""
+    """Job-level stats — scoped by workspace."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+        tag_filter = "WHERE workspace_id = %s"
+        tag_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+        tag_filter = ""
+        tag_params = ()
 
     groups = await fetch_all(f"""
         WITH tag_counts AS (
             SELECT UPPER(batch_name) AS batch_key, COUNT(DISTINCT siren) AS unique_companies
             FROM batch_tags
+            {tag_filter}
             GROUP BY UPPER(batch_name)
         )
         SELECT
-            UPPER(sj.batch_name) AS batch_name,
+            UPPER(sj.batch_name) AS batch_key,
+            MAX(sj.batch_name) AS display_name,
             COUNT(*) AS batch_count,
             SUM(COALESCE(sj.companies_scraped, 0)) AS total_scraped,
             SUM(COALESCE(sj.companies_failed, 0)) AS total_failed,
@@ -106,32 +126,26 @@ async def get_stats_by_job(request: Request):
         FROM batch_data sj
         LEFT JOIN tag_counts tc ON tc.batch_key = UPPER(sj.batch_name)
         WHERE sj.status != 'deleted'
-        {user_filter}
+        {ws_filter}
         GROUP BY UPPER(sj.batch_name)
         ORDER BY MAX(sj.updated_at) DESC
-    """)
+    """, (tag_params + ws_params) if (tag_params or ws_params) else None)
 
     all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.batch_name) AS group_key,
-            sj.batch_id, sj.batch_name, 
-            CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
-                     THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     THEN 'failed'
-                ELSE sj.status 
-            END AS status,
+            sj.batch_id, sj.batch_name,
+            sj.status AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
             sj.total_companies, sj.wave_current, sj.wave_total,
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,
             sj.created_at, sj.updated_at
         FROM batch_data sj
         WHERE sj.status != 'deleted'
-        {user_filter}
+        {ws_filter}
         ORDER BY sj.created_at DESC
-    """)
+        LIMIT 200
+    """, ws_params if ws_params else None)
 
     batch_map: dict[str, list[dict]] = {}
     for b in all_batches:
@@ -140,7 +154,9 @@ async def get_stats_by_job(request: Request):
 
     result = []
     for g in groups:
-        g["batches"] = batch_map.get(g["batch_name"], [])
+        batch_key = g.pop("batch_key")
+        g["batch_name"] = batch_key
+        g["batches"] = batch_map.get(batch_key, [])
         result.append(g)
 
     return result
@@ -212,11 +228,26 @@ async def get_data_bank(request: Request):
         ORDER BY last_active DESC
     """)
 
+    # Per-workspace breakdown for admin dedup view
+    by_workspace = await fetch_all("""
+        SELECT
+            w.name AS workspace_name,
+            COUNT(DISTINCT qt.siren) AS total_companies,
+            COUNT(DISTINCT ct.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
+            COUNT(DISTINCT ct.siren) FILTER (WHERE ct.email IS NOT NULL) AS with_email
+        FROM workspaces w
+        LEFT JOIN batch_tags qt ON qt.workspace_id = w.id
+        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        GROUP BY w.id, w.name
+        ORDER BY total_companies DESC
+    """)
+
     return {
         "totals": totals or {},
         "top_sectors": top_sectors,
         "top_departments": top_depts,
         "workers": workers,
+        "by_workspace": by_workspace or [],
     }
 
 
@@ -383,8 +414,7 @@ async def get_analysis(request: Request):
         SELECT
             COUNT(*) FILTER (WHERE status = 'completed')        AS completed_total,
             COUNT(*) FILTER (WHERE status = 'failed')           AS failed_total,
-            COUNT(*) FILTER (WHERE status IN ('in_progress', 'queued', 'triage')
-                            AND EXTRACT(EPOCH FROM (NOW() - updated_at)) <= 180)
+            COUNT(*) FILTER (WHERE status IN ('in_progress', 'queued', 'triage'))
                                                                 AS running_now,
             COUNT(*) FILTER (WHERE status = 'completed'
                             AND created_at >= NOW() - INTERVAL '7 days')
@@ -434,16 +464,7 @@ async def get_analysis(request: Request):
     recent_jobs = await fetch_all(f"""
         SELECT
             sj.batch_id, sj.batch_name,
-            CASE
-                WHEN sj.status IN ('in_progress', 'queued', 'triage')
-                     AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
-                     THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage')
-                     AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     THEN 'failed'
-                ELSE sj.status
-            END AS status,
+            sj.status AS status,
             sj.companies_scraped,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             sj.created_at
@@ -459,11 +480,64 @@ async def get_analysis(request: Request):
         "recent_jobs": recent_jobs or [],
     }
 
+    # ── 5. Week comparison ───────────────────────────────────────
+    week_row = await fetch_one("""
+        SELECT
+            COUNT(CASE WHEN bt.tagged_at >= NOW() - INTERVAL '7 days' THEN 1 END) AS this_week_companies,
+            COUNT(CASE WHEN bt.tagged_at >= NOW() - INTERVAL '14 days'
+                        AND bt.tagged_at < NOW() - INTERVAL '7 days' THEN 1 END) AS last_week_companies,
+            COUNT(DISTINCT CASE WHEN sj.created_at >= NOW() - INTERVAL '7 days' THEN sj.batch_id END) AS this_week_batches,
+            COUNT(DISTINCT CASE WHEN sj.created_at >= NOW() - INTERVAL '14 days'
+                                  AND sj.created_at < NOW() - INTERVAL '7 days' THEN sj.batch_id END) AS last_week_batches
+        FROM batch_tags bt
+        JOIN batch_data sj ON sj.batch_id = bt.batch_id
+    """)
+    wr = week_row or {}
+    week_comparison = {
+        "this_week": {
+            "companies": wr.get("this_week_companies", 0) or 0,
+            "batches": wr.get("this_week_batches", 0) or 0,
+        },
+        "last_week": {
+            "companies": wr.get("last_week_companies", 0) or 0,
+            "batches": wr.get("last_week_batches", 0) or 0,
+        },
+    }
+
+    # ── 6. Top searches ─────────────────────────────────────────
+    top_searches = await fetch_all("""
+        SELECT sj.batch_name, COUNT(*) AS company_count,
+            ROUND(100.0 * COUNT(CASE WHEN c.phone IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS phone_rate,
+            ROUND(100.0 * COUNT(CASE WHEN c.email IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS email_rate
+        FROM batch_tags bt
+        JOIN batch_data sj ON sj.batch_id = bt.batch_id
+        JOIN companies co ON co.siren = bt.siren
+        LEFT JOIN LATERAL (
+            SELECT MAX(phone) AS phone, MAX(email) AS email FROM contacts WHERE siren = bt.siren
+        ) c ON true
+        GROUP BY sj.batch_name
+        ORDER BY company_count DESC
+        LIMIT 5
+    """)
+
+    # ── 7. Recent searches ──────────────────────────────────────
+    recent_searches = await fetch_all("""
+        SELECT DISTINCT sj.batch_name, sj.created_at
+        FROM batch_data sj
+        WHERE sj.created_at >= NOW() - INTERVAL '7 days'
+          AND sj.status != 'deleted'
+        ORDER BY sj.created_at DESC
+        LIMIT 10
+    """)
+
     return {
         "quality": quality_data,
         "gaps": gaps_data,
         "enrichers": enrichers,
         "pipeline": pipeline_data,
+        "week_comparison": week_comparison,
+        "top_searches": top_searches or [],
+        "recent_searches": recent_searches or [],
     }
 
 
@@ -878,6 +952,60 @@ async def get_stats_by_sector(request: Request):
         ORDER BY companies DESC
     """, scope_params)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Pending Links — companies with link_confidence = 'pending'
+# ---------------------------------------------------------------------------
+
+@router.get("/pending-links")
+async def get_pending_links(request: Request):
+    """Return all companies with link_confidence = 'pending', workspace-scoped.
+
+    These are fuzzy-name matches waiting for user confirmation.
+    """
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND co.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    rows = await fetch_all(f"""
+        SELECT DISTINCT ON (co.siren)
+            co.siren,
+            co.denomination,
+            co.linked_siren AS suggested_siren,
+            target.denomination AS suggested_name,
+            target.ville AS suggested_ville,
+            target.adresse AS suggested_address,
+            target.naf_code AS suggested_naf,
+            target.naf_libelle AS suggested_naf_libelle,
+            co.link_method,
+            co.departement,
+            co.ville,
+            ct.phone,
+            ct.maps_address,
+            bt.batch_name
+        FROM companies co
+        LEFT JOIN companies target ON target.siren = co.linked_siren
+        LEFT JOIN LATERAL (
+            SELECT phone,
+                   address AS maps_address
+            FROM contacts WHERE siren = co.siren
+            ORDER BY (phone IS NOT NULL)::int DESC LIMIT 1
+        ) ct ON true
+        LEFT JOIN LATERAL (
+            SELECT batch_name FROM batch_tags WHERE siren = co.siren
+            ORDER BY tagged_at DESC LIMIT 1
+        ) bt ON true
+        WHERE co.link_confidence = 'pending'
+          {ws_filter}
+        ORDER BY co.siren
+    """, ws_params if ws_params else None)
+
+    return {"count": len(rows), "results": rows}
 
 
 # ---------------------------------------------------------------------------

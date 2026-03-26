@@ -14,7 +14,7 @@
 
 import { getCompany, enrichCompany, updateCompany, getCompanyEnrichHistory,
          getCompanyNotes, addCompanyNote, deleteCompanyNote,
-         extractApiError, getCachedUser } from '../api.js';
+         extractApiError, getCachedUser, getSuggestedMatches } from '../api.js';
 import {
     breadcrumb, formatSiren, formatSiret, formatDate,
     statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
@@ -154,9 +154,11 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
     if (!co.siren || !co.siren.startsWith('MAPS')) return '';
 
     const _linkReasonLabel = (method) => {
+        if (method === 'enseigne') return 'Même nom commercial (enseigne)';
+        if (method === 'phone') return 'Même numéro de téléphone';
         if (method === 'address') return 'Même adresse détectée';
+        if (method === 'siren_website') return 'SIREN trouvé sur le site web';
         if (method === 'fuzzy_name') return 'Nom similaire détecté';
-        if (method === 'siret_website') return 'SIRET trouvé sur le site web';
         if (method === 'manual') return 'Lien établi manuellement';
         return 'Correspondance automatique';
     };
@@ -188,16 +190,37 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
 
     if (suggestedMatches.length > 0) {
         const m = suggestedMatches[0]; // Show the best match
-        const methodLabel = m.method === 'address' ? 'Même adresse' : m.method === 'fuzzy_name' ? 'Nom similaire' : m.method;
+        const methodLabel = m.method === 'address' ? 'Même adresse'
+            : m.method === 'fuzzy_name' ? 'Nom similaire'
+            : m.method === 'phone' ? 'Même téléphone'
+            : m.method === 'enseigne' ? 'Même enseigne'
+            : m.method === 'siren_website' ? 'SIREN sur le site'
+            : m.method;
+
+        // Build additional context hints
+        const hints = [];
+        if (m.ville && co.adresse && co.adresse.toLowerCase().includes(m.ville.toLowerCase())) {
+            hints.push('même ville');
+        }
+        if (m.address && co.adresse) {
+            const mapsWords = co.adresse.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
+            const sireneWords = m.address.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
+            const commonWords = mapsWords.filter(w => sireneWords.includes(w));
+            if (commonWords.length > 0) {
+                hints.push('adresse similaire');
+            }
+        }
+        const contextStr = hints.length > 0 ? ` · ${hints.join(' · ')}` : '';
+
         const mc = co._merged_contact || {};
         return `
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
                 <span style="font-size:1.3rem">💡</span>
                 <span style="font-weight:700; color:var(--warning); font-size:var(--font-base)">Correspondance possible</span>
-                <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${escapeHtml(m.reason || methodLabel)}</span>
+                <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${escapeHtml(m.reason || methodLabel)}${contextStr}</span>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-lg); margin-bottom:var(--space-lg)">
+            <div class="entity-banner-grid">
                 <!-- Left: Maps data -->
                 <div style="padding:var(--space-md); background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2); border-radius:var(--radius-md)">
                     <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">🗺️ Données Maps</div>
@@ -221,8 +244,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                <button class="btn btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm); background:var(--success); color:white; border:none; padding:var(--space-sm) var(--space-xl); font-weight:700; border-radius:var(--radius-md)">Oui, c'est la même</button>
-                <button class="btn btn-sm" id="btn-reject-match" data-maps="${co.siren}" style="font-size:var(--font-sm); background:var(--danger, #ef4444); color:white; border:none; padding:var(--space-sm) var(--space-xl); font-weight:700; border-radius:var(--radius-md)">Non, garder séparé</button>
+                <button class="action-btn action-btn-confirm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="width:auto; padding:var(--space-sm) var(--space-xl); font-weight:700; font-size:var(--font-sm); opacity:1">Oui, c'est la même</button>
+                <button class="action-btn action-btn-reject" id="btn-reject-match" data-maps="${co.siren}" style="width:auto; padding:var(--space-sm) var(--space-xl); font-weight:700; font-size:var(--font-sm); opacity:1">Non, garder séparé</button>
             </div>
         </div>`;
     }
@@ -384,6 +407,44 @@ function _buildBreadcrumb(co, tags) {
     return breadcrumb(items);
 }
 
+// ── Async SIRENE match suggestions loader ────────────────────────
+async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
+    const placeholder = container.querySelector('#entity-match-placeholder');
+    if (!placeholder) return;
+
+    try {
+        const result = await getSuggestedMatches(siren);
+        const matches = (result && result.matches) || [];
+
+        if (matches.length === 0) {
+            placeholder.innerHTML = `
+                <span style="font-size:var(--font-sm); color:var(--text-muted)">Aucune correspondance trouvée dans la base SIRENE.</span>
+            `;
+            return;
+        }
+
+        // Render the best match using the same format as _buildEntityLinkBanner
+        const fakeData = { suggested_matches: matches };
+        const bannerHtml = _buildEntityLinkBanner(
+            Object.assign({}, co, {_merged_contact: mc}),
+            null,
+            matches,
+            null
+        );
+
+        placeholder.outerHTML = bannerHtml || `<div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
+            <div style="font-size:var(--font-sm); color:var(--text-muted)">Correspondances chargées.</div>
+        </div>`;
+
+        // Re-wire the buttons that were just inserted
+        _initEntityLinkHandlers(container, siren);
+    } catch (_e) {
+        if (placeholder && placeholder.parentNode) {
+            placeholder.remove();
+        }
+    }
+}
+
 // ── AbortController — cancel stale renders on rapid navigation ───
 let _companyAbortCtrl = null;
 
@@ -398,14 +459,9 @@ export async function renderCompany(container, siren) {
     // If user navigated away while we were fetching, bail silently
     if (thisCtrl.signal.aborted) return;
 
-    if (!data || data.error) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">❌</div>
-                <div class="empty-state-text">Entreprise introuvable</div>
-                <a href="#/" class="btn btn-primary">Retour au Dashboard</a>
-            </div>
-        `;
+    if (!data || data.error || data.detail === 'Not found') {
+        showToast('Entreprise introuvable — elle a peut-être été supprimée ou fusionnée', 'error');
+        window.location.hash = '#/';
         return;
     }
 
@@ -422,16 +478,31 @@ export async function renderCompany(container, siren) {
 
         ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method)}
 
+        ${data.matching_available && suggestedMatches.length === 0 ? `
+        <div id="entity-match-placeholder" class="card" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.15); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; align-items:center; gap:var(--space-sm)">
+            <span style="display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.15); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; flex-shrink:0"></span>
+            <span style="font-size:var(--font-sm); color:var(--text-secondary)">Recherche de correspondances SIRENE...</span>
+        </div>` : ''}
+
         <!-- Top Header Panel -->
         <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
             <div class="company-detail-name-block">
-                <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">${escapeHtml(co.denomination)}</div>
+                <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">
+                    ${escapeHtml(co.denomination)}
+                    ${linkedCo && linkedCo.denomination !== co.denomination ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-secondary); margin-left:var(--space-md)">— ${escapeHtml(linkedCo.denomination)}</span>` : ''}
+                </div>
+                <!-- Badge row 1: Identity -->
                 <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
-                    <span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}
-                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span>
-                    </span>
+                    ${co.siren && co.siren.startsWith('MAPS') && linkedCo
+                        ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span></span>
+                          <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS\u00a0${escapeHtml(co.siren)}</span>`
+                        : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span></span>`
+                    }
                     ${statutBadge(co.statut)}
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
+                </div>
+                <!-- Badge row 2: Activity -->
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>Code d'activité principale (NAF/APE) classifiant le secteur économique de l'entreprise.<span class="info-tip-source">Source : INSEE</span></span></span>
                     </span>` : ''}
@@ -469,7 +540,7 @@ export async function renderCompany(container, siren) {
                         ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}</a>`
                         : unenrichedField(), sourceLabel(mc.email_source), 'email', mc.email || '')}
                     ${detailRow('Site web', mc.website
-                        ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; min-width:0">${escapeHtml(mc.website)}</a>`
+                        ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank" rel="noopener" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; min-width:0">${escapeHtml(mc.website)}</a>`
                         : unenrichedField(), sourceLabel(mc.website_source), 'website', mc.website || '')}
                     ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
                     ${_buildSocialSection(mc, co.siren)}
@@ -525,22 +596,43 @@ export async function renderCompany(container, siren) {
         </div>
 
         <!-- BOTTOM SECTION: Reference Data (2-column symmetric grid) -->
-        <div class="company-ref-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-xl); align-items:start; margin-bottom:var(--space-2xl)">
+        <div class="company-ref-grid" style="align-items:start; margin-bottom:var(--space-2xl); margin-top:var(--space-lg)">
 
             <!-- Left: Identité juridique + Localisation (merged) -->
             <div class="detail-section" style="margin-bottom:0">
                 <h3 class="detail-section-title">🏛️ Identité</h3>
-                ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, 'Registre SIRENE', 'denomination', co.denomination || '')}
+                ${(() => {
+                    let identitySource;
+                    if (!co.siren.startsWith('MAPS')) {
+                        identitySource = 'Registre SIRENE';
+                    } else if (!linkedCo) {
+                        identitySource = 'Google Maps';
+                    } else if (data.link_method === 'manual') {
+                        identitySource = 'SIRENE (confirmé manuellement)';
+                    } else {
+                        const methodLabels = {
+                            'enseigne': 'même enseigne',
+                            'phone': 'même téléphone',
+                            'address': 'même adresse',
+                            'siren_website': 'SIREN trouvé sur le site'
+                        };
+                        const reason = methodLabels[data.link_method] || 'correspondance automatique';
+                        identitySource = `SIRENE (auto : ${reason})`;
+                    }
+                    return `
+                ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, identitySource, 'denomination', co.denomination || '')}
                 ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
                 ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
                 ${detailRow('Forme juridique', co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
                 ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
                 ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
                 <div style="border-top:1px solid var(--border-subtle); margin:var(--space-sm) 0"></div>
-                ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'adresse', co.adresse || '')}
-                ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'code_postal', co.code_postal || '')}
-                ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE', 'ville', co.ville || '')}
+                ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'adresse', co.adresse || '')}
+                ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'code_postal', co.code_postal || '')}
+                ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'ville', co.ville || '')}
                 ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                    `;
+                })()}
             </div>
 
             <!-- Right: Financial + Activité (merged "Chiffres Clés") -->
@@ -665,7 +757,7 @@ export async function renderCompany(container, siren) {
                     body: JSON.stringify({
                         [field]: value,
                         _conflict_action: 'accept',
-                        _conflict_field: `${alertType}:${field}`,
+                        _conflict_field: field,
                         _conflict_rejected_value: btn.dataset.rejectedValue || '',
                         _conflict_rejected_source: btn.dataset.rejectedSource || '',
                         _conflict_chosen_source: btn.dataset.chosenSource || '',
@@ -723,6 +815,11 @@ export async function renderCompany(container, siren) {
     // ── Inline editing on detail rows ───────────────────────────
     _initInlineEditing(container, siren);
     _initEntityLinkHandlers(container, siren);
+
+    // ── Async SIRENE match suggestions ──────────────────────────
+    if (data.matching_available && suggestedMatches.length === 0) {
+        _loadSuggestedMatchesAsync(container, siren, co, mc);
+    }
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
@@ -973,7 +1070,7 @@ function _initInlineEditing(container, siren) {
                         formattedVal = `<a href="mailto:${escapeHtml(newVal)}" style="color:var(--accent)">${escapeHtml(newVal)}</a>`;
                     } else if ((field === 'website' || field.startsWith('social_')) && newVal && (newVal.startsWith('http') || newVal.startsWith('www'))) {
                         const href = newVal.startsWith('http') ? newVal : `https://${newVal}`;
-                        formattedVal = `<a href="${escapeHtml(href)}" target="_blank">${escapeHtml(displayVal)} ↗</a>`;
+                        formattedVal = `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(displayVal)} ↗</a>`;
                     } else {
                         formattedVal = newVal ? `<span style="color:var(--text-primary)">${escapeHtml(displayVal)}</span>` : '<span style="color:var(--text-disabled)">—</span>';
                     }
@@ -1242,7 +1339,7 @@ function formatSocial(url, label) {
     if (!url) return '<span style="color:var(--text-disabled)">—</span>';
     if (url.startsWith('http') || url.startsWith('www.')) {
         const href = url.startsWith('http') ? url : `https://${url}`;
-        return `<a href="${href}" target="_blank">${label} ↗</a>`;
+        return `<a href="${href}" target="_blank" rel="noopener">${label} ↗</a>`;
     }
     return `<span style="color:var(--text-primary)">${escapeHtml(url)}</span>`;
 }
@@ -1345,7 +1442,7 @@ function _loadEnrichHistory(siren, history) {
                                     <div style="color:var(--text-secondary); font-size:calc(var(--font-sm) - 1px); display:flex; gap:var(--space-xs); align-items:center; flex-wrap:wrap">
                                         <span style="color:${color}; font-weight:700">${escapeHtml(resultLabel)}</span>
                                         ${h.search_query ? `<span style="opacity:0.6">•</span><span style="font-style:italic">🔍 "${escapeHtml(h.search_query)}"</span>` : ''}
-                                        ${h.source_url ? `<span style="opacity:0.6">•</span><a href="${h.source_url.startsWith('http') ? h.source_url : 'https://'+h.source_url}" target="_blank" style="color:var(--accent); text-decoration:none">🔗 Voir la source</a>` : ''}
+                                        ${h.source_url ? `<span style="opacity:0.6">•</span><a href="${h.source_url.startsWith('http') ? h.source_url : 'https://'+h.source_url}" target="_blank" rel="noopener" style="color:var(--accent); text-decoration:none">🔗 Voir la source</a>` : ''}
                                         ${h.duration ? `<span style="opacity:0.6">•</span><span>${h.duration}ms</span>` : ''}
                                     </div>
                                 </div>

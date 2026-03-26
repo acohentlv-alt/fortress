@@ -9,7 +9,7 @@
  * (These are embedded in the natural language query or moved to Base SIRENE)
  */
 
-import { escapeHtml } from '../components.js';
+import { escapeHtml, showToast } from '../components.js';
 import { runBatch, extractApiError } from '../api.js';
 
 // French department names → codes (lowercase, accent-insensitive keys)
@@ -82,9 +82,9 @@ export async function renderNewBatch(container) {
             <div class="form-group">
                 <label class="form-label" for="batch-size">📊 Nombre d'entreprises souhaité</label>
                 <input type="number" id="batch-size" class="form-input"
-                    value="20" min="5" max="200" step="5"
+                    value="20" min="5" max="50" step="5"
                     style="max-width:140px">
-                <div class="form-hint">Recommandé : 20 par batch. Maximum : 200</div>
+                <div class="form-hint">Recommandé : 20 par batch. Maximum : 50</div>
             </div>
 
             <!-- Safeguard Warning Area -->
@@ -216,12 +216,12 @@ export async function renderNewBatch(container) {
         }
 
         document.getElementById('batch-summary-content').innerHTML = `
-            <strong>🗺️ Recherche Maps</strong> — ${queries.length} terme${queries.length > 1 ? 's' : ''}<br>
+            <strong>🗺️ Votre recherche</strong> — ${queries.length} terme${queries.length > 1 ? 's' : ''}<br>
             <ul style="margin:var(--space-xs) 0 0 var(--space-lg); padding:0">
                 ${queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('')}
             </ul>
             <span style="color:var(--text-muted)">
-                ${batchSize} entreprises souhaitées · Pipeline : Google Maps → Sauvegarde
+                ${batchSize} entreprises souhaitées · Les résultats seront enrichis automatiquement
             </span>
         `;
     };
@@ -238,14 +238,14 @@ export async function renderNewBatch(container) {
             .filter(q => q.length > 0);
 
         if (queries.length === 0) {
-            alert('⚠️ Ajoutez au moins un terme de recherche');
+            showToast('Ajoutez au moins un terme de recherche', 'error');
             return;
         }
 
         // Safeguard: block if ALL queries are too broad (single word, no location)
         const warnings = validateQueries(queries);
         if (warnings.length === queries.length) {
-            alert('⚠️ Toutes vos recherches sont trop larges.\nAjoutez une ville ou un département à chaque terme.\n\nExemple : "camping Perpignan" au lieu de "camping"');
+            showToast('Toutes vos recherches sont trop larges. Ajoutez une ville ou un département à chaque terme.', 'error');
             return;
         }
 

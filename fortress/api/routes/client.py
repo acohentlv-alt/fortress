@@ -133,7 +133,7 @@ async def upload_client_file(file: UploadFile = File(...)):
                     FROM batch_log sa
                     WHERE sa.batch_id = %s
                     ON CONFLICT (siren, batch_name) DO NOTHING
-                """, (batch_id, batch_id))
+                """, (f"Import: {filename}", batch_id))
 
             # Mark job completed
             scraped = stats["companies_inserted"] + stats["companies_updated"]
@@ -411,7 +411,12 @@ async def _upsert_company(conn, siren: str, fields: dict, extra: dict, stats: di
     row = await cur.fetchone()
 
     if row:
-        # Update existing: only fill empty fields
+        # Guard: never modify real SIRENE records
+        if not siren.startswith("MAPS"):
+            stats.setdefault("companies_skipped", 0)
+            stats["companies_skipped"] += 1
+            return
+        # Update existing MAPS entity: only fill empty fields
         sets = []
         vals = []
         for db_field, value in fields.items():

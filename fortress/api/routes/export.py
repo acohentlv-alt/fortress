@@ -1,8 +1,16 @@
 """Export API routes — CSV, XLSX, and JSONL downloads."""
 
 import csv
+import decimal
 import io
 import json
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        return super().default(obj)
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -234,7 +242,7 @@ async def export_jsonl(batch_id: str):
                 clean[k] = v.isoformat()
             else:
                 clean[k] = v
-        lines.append(json.dumps(clean, ensure_ascii=False))
+        lines.append(json.dumps(clean, cls=_DecimalEncoder, ensure_ascii=False))
 
     content = "\n".join(lines).encode("utf-8")
     return StreamingResponse(

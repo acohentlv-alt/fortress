@@ -5,7 +5,8 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getDataBank, getSectorStats, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser, getPendingLinks } from '../api.js';
+import { showAddEntityModal } from '../components/add-entity-modal.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { GlobalSelection } from '../state.js';
 
@@ -19,18 +20,20 @@ export async function renderDashboard(container) {
     // Show loading state
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-    let stats, departments, jobs;
+    let stats, departments, jobs, pendingLinksData;
 
     try {
-        [stats, departments, jobs] = await Promise.all([
+        [stats, departments, jobs, pendingLinksData] = await Promise.all([
             getDashboardStats(),
             getDepartments(),
             getJobs(),
+            getPendingLinks(),
         ]);
     } catch {
         stats = null;
         departments = null;
         jobs = null;
+        pendingLinksData = null;
     }
     // Helper: check if a response is an API error (not a valid data payload)
     const isErr = (r) => !r || (r._ok === false);
@@ -73,6 +76,10 @@ export async function renderDashboard(container) {
 
     const s = stats || {};
     const user = getCachedUser();
+    const pendingCount = (pendingLinksData && pendingLinksData.count) ? pendingLinksData.count : 0;
+    const pendingBadge = pendingCount > 0
+        ? ` <span style="background:var(--warning); color:#000; border-radius:999px; font-size:var(--font-xs); font-weight:700; padding:1px 6px; margin-left:4px">${pendingCount}</span>`
+        : '';
 
     container.innerHTML = `
 
@@ -89,32 +96,37 @@ export async function renderDashboard(container) {
                 <a href="#/new-batch" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-sm)">🚀 Nouvelle Recherche</a>
                 <a href="#/monitor" class="btn btn-secondary" style="display:flex; align-items:center; gap:var(--space-sm)">📡 Pipeline Live</a>
                 <button class="btn btn-secondary" id="btn-master-export" style="display:flex; align-items:center; gap:var(--space-sm)">📥 Exporter</button>
+                <button class="btn btn-secondary" id="btn-add-entity" style="display:flex; align-items:center; gap:var(--space-sm)">➕ Ajouter</button>
             </div>
         </div>
 
 
 
         <!-- View Toggle -->
-        <div class="view-toggle" style="flex-wrap:wrap">
+        <div class="view-toggle">
             ${user?.role === 'admin' ? '<button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>' : ''}
             <button class="view-toggle-btn ${user?.role !== 'admin' ? 'active' : ''}" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-dept">📍 Par Département</button>
             <button class="view-toggle-btn" id="btn-by-upload">📤 Par Upload</button>
+            <button class="view-toggle-btn" id="btn-pending-links">🔗 Liens en attente${pendingBadge}</button>
         </div>
 
         <!-- View Container -->
         <div id="dashboard-view"><div class="loading"><div class="spinner"></div></div></div>
     `;
 
-    // Render initial view — Analysis for admin, Par Recherche for others
-    if (user?.role === 'admin') {
-        _loadAnalysisView(container);
-    } else {
-        const byJobData = await getDashboardStatsByJob();
-        if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
-            renderByJobFromAPI(byJobData, container);
+    // Render initial view — only on first visit (before any tab has been chosen)
+    // On subsequent visits, _currentTab will have been set and the restore block below handles it.
+    if (_currentTab === 'stats') {
+        if (user?.role === 'admin') {
+            _loadAnalysisView(container);
         } else {
-            renderByJob(jobs, container);
+            const byJobData = await getDashboardStatsByJob();
+            if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
+                renderByJobFromAPI(byJobData, container);
+            } else {
+                renderByJob(jobs, container);
+            }
         }
     }
 
@@ -142,12 +154,14 @@ export async function renderDashboard(container) {
     const analysisBtn = document.getElementById('btn-analysis');
     if (analysisBtn) {
         analysisBtn.addEventListener('click', () => {
+            _currentTab = 'analyse';
             setActiveToggle('btn-analysis');
             _loadAnalysisView(container);
         });
     }
 
     document.getElementById('btn-by-job').addEventListener('click', async () => {
+        _currentTab = 'by-job';
         setActiveToggle('btn-by-job');
         const byJobData = await getDashboardStatsByJob();
         if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
@@ -158,6 +172,7 @@ export async function renderDashboard(container) {
     });
 
     document.getElementById('btn-by-dept').addEventListener('click', async () => {
+        _currentTab = 'by-dept';
         setActiveToggle('btn-by-dept');
         const view = document.getElementById('dashboard-view');
         view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -166,6 +181,7 @@ export async function renderDashboard(container) {
     });
 
     document.getElementById('btn-by-upload').addEventListener('click', async () => {
+        _currentTab = 'upload';
         setActiveToggle('btn-by-upload');
         const view = document.getElementById('dashboard-view');
         view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -173,21 +189,51 @@ export async function renderDashboard(container) {
         _renderByUpload(data, container);
     });
 
+    document.getElementById('btn-pending-links').addEventListener('click', async () => {
+        _currentTab = 'pending-links';
+        setActiveToggle('btn-pending-links');
+        const view = document.getElementById('dashboard-view');
+        view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        const data = await getPendingLinks();
+        _renderPendingLinks(data, container);
+    });
+
+    document.getElementById('btn-add-entity').addEventListener('click', () => {
+        showAddEntityModal({ onSuccess: () => renderDashboard(container) });
+    });
+
+    // Restore previously active tab
+    if (_currentTab === 'by-job') {
+        document.getElementById('btn-by-job')?.click();
+    } else if (_currentTab === 'by-dept') {
+        document.getElementById('btn-by-dept')?.click();
+    } else if (_currentTab === 'upload') {
+        document.getElementById('btn-by-upload')?.click();
+    } else if (_currentTab === 'pending-links') {
+        document.getElementById('btn-pending-links')?.click();
+    } else if (_currentTab === 'analyse' && user?.role === 'admin') {
+        document.getElementById('btn-analysis')?.click();
+    }
+    // Note: the initial render above (lines 119-128) already loaded the default view on first visit.
+    // Tab restore only fires on subsequent visits when _currentTab is already set.
+
 }
 
 async function _loadAnalysisView(rootContainer) {
     const view = document.getElementById('dashboard-view');
+    if (!view) return;
     view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-    const [data, batchData] = await Promise.all([
+    const [data, batchData, depts] = await Promise.all([
         getAnalysis(),
         getBatchAnalysis(),
+        getDepartments(),
     ]);
     if (!data || data._ok === false) {
         view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
         return;
     }
     const isAdmin = getCachedUser()?.role === 'admin';
-    renderAnalysis(data, isAdmin, rootContainer, batchData);
+    renderAnalysis(data, isAdmin, rootContainer, batchData, Array.isArray(depts) ? depts : []);
 }
 
 function setActiveToggle(activeId) {
@@ -329,6 +375,213 @@ function _renderByUpload(data, rootContainer) {
 
 
 
+// ── Pending Links View — companies waiting for SIRENE link confirmation ──
+function _renderPendingLinks(data, rootContainer) {
+    const view = document.getElementById('dashboard-view');
+
+    if (!data || data._ok === false) {
+        view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
+        return;
+    }
+
+    const results = data.results || [];
+
+    if (results.length === 0) {
+        view.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">✅</div>
+                <div class="empty-state-text">Aucun lien en attente de confirmation</div>
+                <p style="color:var(--text-muted)">Toutes les correspondances SIRENE ont été traitées</p>
+            </div>
+        `;
+        return;
+    }
+
+    view.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
+            <span style="font-size:var(--font-sm); color:var(--text-secondary)">
+                ${results.length} lien${results.length > 1 ? 's' : ''} en attente
+            </span>
+        </div>
+        <div class="card" style="overflow-x:auto">
+            <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                <thead>
+                    <tr>
+                        <th class="contacts-th">Entreprise</th>
+                        <th class="contacts-th" style="white-space:nowrap">MAPS ID</th>
+                        <th class="contacts-th">Correspondance suggérée</th>
+                        <th class="contacts-th">Raison</th>
+                        <th class="contacts-th">Téléphone</th>
+                        <th class="contacts-th">Ville</th>
+                        <th class="contacts-th" style="white-space:nowrap">Dépt</th>
+                        <th class="contacts-th">Recherche</th>
+                        <th class="contacts-th">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${results.map((r, idx) => {
+                        const reason = r.link_method === 'fuzzy_name' ? 'Nom similaire'
+                            : r.link_method === 'address' ? 'Même adresse'
+                            : r.link_method === 'phone' ? 'Même téléphone'
+                            : r.link_method === 'enseigne' ? 'Même enseigne'
+                            : r.link_method || '—';
+                        const hints = [];
+                        if (r.ville) hints.push('même ville');
+                        const reasonDisplay = hints.length ? `${reason} · ${hints.join(' · ')}` : reason;
+                        return `
+                        <tr class="contacts-row" onclick="window.location.hash='#/company/${escapeHtml(r.siren)}'">
+                            <td class="contacts-td" style="font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                                ${escapeHtml(r.denomination || '—')}
+                            </td>
+                            <td class="contacts-td" style="font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap">
+                                ${escapeHtml(r.siren)}
+                            </td>
+                            <td class="contacts-td" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                                ${r.suggested_name
+                                    ? `<span style="color:var(--warning); font-weight:500">${escapeHtml(r.suggested_name)}</span><br><span style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(r.suggested_siren || '')}</span>`
+                                    : `<span style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(r.suggested_siren || '—')}</span>`}
+                            </td>
+                            <td class="contacts-td reason-toggle" data-idx="${idx}">
+                                <span class="reason-chevron">▸</span>
+                                <span style="color:var(--text-secondary); font-size:var(--font-xs)">${escapeHtml(reasonDisplay)}</span>
+                            </td>
+                            <td class="contacts-td">
+                                ${r.phone
+                                    ? `<span style="color:var(--success); font-weight:600; white-space:nowrap">${escapeHtml(r.phone)}</span>`
+                                    : '<span style="color:var(--text-disabled)">—</span>'}
+                            </td>
+                            <td class="contacts-td" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+                                ${escapeHtml(r.ville || '—')}
+                            </td>
+                            <td class="contacts-td" style="text-align:center; white-space:nowrap">
+                                ${escapeHtml(r.departement || '—')}
+                            </td>
+                            <td class="contacts-td" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-muted)">
+                                ${escapeHtml(r.batch_name || '—')}
+                            </td>
+                            <td style="white-space:nowrap; text-align:right" onclick="event.stopPropagation()">
+                                <button class="action-btn action-btn-confirm pending-confirm" data-siren="${escapeHtml(r.siren)}" data-target="${escapeHtml(r.suggested_siren || '')}" title="Confirmer le lien">✓</button>
+                                <button class="action-btn action-btn-reject pending-reject" data-siren="${escapeHtml(r.siren)}" title="Rejeter le lien">✕</button>
+                            </td>
+                        </tr>
+                        <tr class="evidence-row" id="evidence-${idx}" style="display:none">
+                            <td colspan="9" style="padding:0">
+                                <div class="evidence-content">
+                                    <div class="evidence-grid">
+                                        <div class="evidence-side">
+                                            <div class="evidence-side-title">🗺️  Données Maps</div>
+                                            <div class="evidence-field"><span class="evidence-label">Nom</span> ${escapeHtml(r.denomination || '—')}</div>
+                                            <div class="evidence-field"><span class="evidence-label">Adresse</span> ${escapeHtml(r.maps_address || r.ville || '—')}</div>
+                                            <div class="evidence-field"><span class="evidence-label">Tél</span> ${escapeHtml(r.phone || '—')}</div>
+                                        </div>
+                                        <div class="evidence-side">
+                                            <div class="evidence-side-title">🏢 Candidat SIRENE</div>
+                                            <div class="evidence-field"><span class="evidence-label">Nom</span> ${escapeHtml(r.suggested_name || '—')}</div>
+                                            <div class="evidence-field"><span class="evidence-label">Adresse</span> ${escapeHtml(r.suggested_address || r.suggested_ville || '—')}</div>
+                                            <div class="evidence-field"><span class="evidence-label">NAF</span> ${escapeHtml(r.suggested_naf || '—')} ${escapeHtml(r.suggested_naf_libelle || '')}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    `}).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    // Evidence row toggle handler
+    view.addEventListener('click', (e) => {
+        const toggle = e.target.closest('.reason-toggle');
+        if (!toggle) return;
+        e.stopPropagation();
+        const idx = toggle.dataset.idx;
+        const evidenceRow = document.getElementById(`evidence-${idx}`);
+        if (!evidenceRow) return;
+        const isOpen = evidenceRow.style.display !== 'none';
+        // Close all other open evidence rows
+        view.querySelectorAll('.evidence-row').forEach(row => {
+            row.style.display = 'none';
+        });
+        view.querySelectorAll('.reason-chevron').forEach(ch => {
+            ch.style.transform = '';
+        });
+        if (!isOpen) {
+            evidenceRow.style.display = '';
+            const chevron = toggle.querySelector('.reason-chevron');
+            if (chevron) chevron.style.transform = 'rotate(90deg)';
+        }
+    });
+
+    // Confirm handler
+    view.querySelectorAll('.pending-confirm').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳...';
+            const siren = btn.dataset.siren;
+            const target = btn.dataset.target;
+            try {
+                const resp = await fetch(`/api/companies/${encodeURIComponent(siren)}/link`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({target_siren: target}),
+                    credentials: 'same-origin',
+                });
+                if (resp.ok) {
+                    showToast('Lien confirmé', 'success');
+                    const fresh = await getPendingLinks();
+                    _renderPendingLinks(fresh, rootContainer);
+                    const badge = document.querySelector('#btn-pending-links .badge');
+                    if (badge) badge.textContent = fresh.count > 0 ? fresh.count : '';
+                } else {
+                    showToast('Erreur lors de la confirmation', 'error');
+                    btn.disabled = false;
+                    btn.textContent = origText;
+                }
+            } catch {
+                showToast('Erreur réseau', 'error');
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        });
+    });
+
+    // Reject handler
+    view.querySelectorAll('.pending-reject').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳...';
+            const siren = btn.dataset.siren;
+            try {
+                const resp = await fetch(`/api/companies/${encodeURIComponent(siren)}/reject-link`, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+                if (resp.ok) {
+                    showToast('Lien rejeté', 'success');
+                    const fresh = await getPendingLinks();
+                    _renderPendingLinks(fresh, rootContainer);
+                    const badge = document.querySelector('#btn-pending-links .badge');
+                    if (badge) badge.textContent = fresh.count > 0 ? fresh.count : '';
+                } else {
+                    showToast('Erreur lors du rejet', 'error');
+                    btn.disabled = false;
+                    btn.textContent = origText;
+                }
+            } catch {
+                showToast('Erreur réseau', 'error');
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        });
+    });
+}
+
+
 // ── All Data View — searchable + paginated table of all enriched entities ──
 function _renderAllData(rootContainer, q = '', department = '', naf_code = '', offset = 0) {
     const view = document.getElementById('dashboard-view');
@@ -336,7 +589,7 @@ function _renderAllData(rootContainer, q = '', department = '', naf_code = '', o
     const _selected = new Set();
 
     view.innerHTML = `
-        <div style="margin-bottom:var(--space-lg); display:flex; gap:var(--space-md); align-items:center; flex-wrap:wrap">
+        <div class="search-filters-row" style="align-items:center">
             <div style="position:relative; flex:1; min-width:200px">
                 <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">🔍</span>
                 <input type="text" id="alldata-search" placeholder="Rechercher par nom ou SIREN..."
@@ -433,7 +686,7 @@ function _renderAllData(rootContainer, q = '', department = '', naf_code = '', o
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" onclick="window.location.hash='#/company/${c.siren}'">${escapeHtml(c.denomination || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.phone ? 'var(--success)' : 'var(--text-muted)'}; white-space:nowrap">${c.phone ? escapeHtml(c.phone) : '—'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.email ? 'var(--success)' : 'var(--text-muted)'}; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.email ? escapeHtml(c.email) : '—'}</td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" rel="noopener" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center">${escapeHtml(c.departement || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.batch_name || '—')}</td>
                             </tr>
@@ -563,8 +816,19 @@ function renderByJobFromAPI(groups, rootContainer) {
         return;
     }
 
+    // Filter out manual addition groups from "Par Recherche" tab
+    const filteredGroups = groups.filter(g => {
+        const name = (g.display_name || g.batch_name || '').toLowerCase();
+        return name !== 'ajout manuel';
+    });
+
+    if (!filteredGroups || filteredGroups.length === 0) {
+        _renderJobEmptyState(view);
+        return;
+    }
+
     // The API returns pre-grouped, uppercase-normalized data
-    const groupCards = groups.map((g, idx) => _renderGroupCard(g, idx));
+    const groupCards = filteredGroups.map((g, idx) => _renderGroupCard(g, idx));
 
     view.innerHTML = `
         <div class="job-groups-list">
@@ -583,9 +847,15 @@ function renderByJob(jobs, rootContainer) {
         return;
     }
 
+    // Filter out manual addition jobs before grouping
+    const filteredJobs = jobs.filter(j => {
+        const name = (j.batch_name || '').toLowerCase().trim();
+        return name !== 'ajout manuel';
+    });
+
     // Group by batch_name (case-insensitive)
     const groups = {};
-    for (const j of jobs) {
+    for (const j of filteredJobs) {
         const key = (j.batch_name || '').toUpperCase().trim();
         if (!groups[key]) groups[key] = { display_name: j.batch_name, batches: [] };
         groups[key].batches.push(j);
@@ -658,15 +928,16 @@ function _renderGroupCard(g, idx) {
     const batchCount = batches.length;
     const groupId = `jobgroup-${idx}`;
 
-    // Use display_name directly — already uppercase from API
-    const displayName = escapeHtml(g.display_name || '');
+    // Use display_name if available (preserves original casing), fall back to batch_name
+    const displayName = escapeHtml(g.display_name || g.batch_name || '');
     const batchName = g.display_name || g.batch_name || '';
+    const latestBatchId = latest.batch_id || '';
 
     return `
         <div class="job-group-card" style="position:relative" data-group-name="${escapeHtml(batchName)}">
             <button class="card-delete-btn" data-delete-type="job-group" data-delete-id="${escapeHtml(batchName)}" data-delete-label="${displayName} (${batchCount} batch${batchCount > 1 ? 'es' : ''})"
                 onclick="event.stopPropagation()" title="Supprimer ce groupe">✕</button>
-            <div class="job-group-header" onclick="document.getElementById('${groupId}').classList.toggle('expanded')">
+            <div class="job-group-header" onclick="window.location.hash='#/job/${encodeURIComponent(latestBatchId)}'">
                 <div class="job-group-info">
                     <div class="job-group-name">${displayName}</div>
                     <div class="job-group-meta">
@@ -882,28 +1153,67 @@ function renderBySector(jobs, rootContainer) {
 }
 
 // ── Data Analysis View (redesigned — 4 focused panels + batch success) ──────────
-function renderAnalysis(data, isAdmin, rootContainer, batchData) {
+function renderAnalysis(data, isAdmin, rootContainer, batchData, departments = []) {
     const view = document.getElementById('dashboard-view');
+    if (!view) return;
     const q = data.quality || {};
     const gaps = data.gaps || {};
     const enrichers = data.enrichers || {};
     const pipeline = data.pipeline || {};
     const trend = pipeline.weekly_trend || [];
     const recentJobs = pipeline.recent_jobs || [];
+    const weekComp = data.week_comparison || { this_week: { companies: 0, batches: 0 }, last_week: { companies: 0, batches: 0 } };
+    const topSearches = data.top_searches || [];
+    const recentSearches = data.recent_searches || [];
 
-    // ── Panel 1: Quality Score ───────────────────────────────────
-    const qualityPanel = `
-        <div class="card analysis-panel" style="grid-column: 1 / -1">
-            <h3 class="analysis-panel-title">📊 Qualité des données</h3>
+    // ── Section 1: Hero stats bar ────────────────────────────────
+    const thisWeekCo = weekComp.this_week.companies || 0;
+    const lastWeekCo = weekComp.last_week.companies || 0;
+    const weekDiff = thisWeekCo - lastWeekCo;
+    const weekTrendHtml = weekDiff > 0
+        ? `<span class="analytics-trend-up">↑ +${weekDiff} cette semaine</span>`
+        : weekDiff < 0
+        ? `<span class="analytics-trend-down">↓ ${weekDiff} cette semaine</span>`
+        : `<span style="font-size:var(--font-xs); color:var(--text-muted)">→ stable cette semaine</span>`;
+
+    const heroSection = `
+        <div class="analytics-hero-bar">
+            <div class="analytics-hero-card">
+                <div class="analytics-hero-number">${(q.total || 0).toLocaleString('fr-FR')}</div>
+                <div class="analytics-hero-label">Entreprises enrichies</div>
+                ${weekTrendHtml}
+            </div>
+            <div class="analytics-hero-card">
+                <div class="analytics-hero-number">${q.phone_pct || 0}%</div>
+                <div class="analytics-hero-label">Taux de téléphone</div>
+                <span style="font-size:var(--font-xs); color:var(--text-muted)">${(q.with_phone || 0).toLocaleString('fr-FR')} entreprises</span>
+            </div>
+            <div class="analytics-hero-card">
+                <div class="analytics-hero-number">${q.email_pct || 0}%</div>
+                <div class="analytics-hero-label">Taux d'email</div>
+                <span style="font-size:var(--font-xs); color:var(--text-muted)">${(q.with_email || 0).toLocaleString('fr-FR')} entreprises</span>
+            </div>
+            <div class="analytics-hero-card">
+                <div class="analytics-hero-number">${q.website_pct || 0}%</div>
+                <div class="analytics-hero-label">Taux de site web</div>
+                <span style="font-size:var(--font-xs); color:var(--text-muted)">${(q.with_website || 0).toLocaleString('fr-FR')} entreprises</span>
+            </div>
+        </div>
+    `;
+
+    // ── Section 2: Quality score donut + breakdown bars ──────────
+    const qualitySection = `
+        <div class="card analysis-panel" style="grid-column: 1 / -1; margin-bottom:var(--space-xl)">
+            <h3 class="analysis-panel-title">📊 Score de qualité</h3>
             <div class="analysis-quality-layout">
                 <div class="analysis-gauge-big">
                     ${renderGauge(q.overall_score || 0, 'Score global')}
                 </div>
                 <div class="analysis-metrics">
-                    ${_metricBar('📞 Téléphone', q.with_phone || 0, q.total || 0, q.phone_pct || 0)}
-                    ${_metricBar('✉️ Email', q.with_email || 0, q.total || 0, q.email_pct || 0)}
-                    ${_metricBar('🌐 Site web', q.with_website || 0, q.total || 0, q.website_pct || 0)}
-                    ${_metricBar('🔗 Réseaux sociaux', q.with_social || 0, q.total || 0, q.social_pct || 0)}
+                    ${_metricBarThick('📞 Téléphone', q.with_phone || 0, q.total || 0, q.phone_pct || 0)}
+                    ${_metricBarThick('✉️ Email', q.with_email || 0, q.total || 0, q.email_pct || 0)}
+                    ${_metricBarThick('🌐 Site web', q.with_website || 0, q.total || 0, q.website_pct || 0)}
+                    ${_metricBarThick('🔗 Réseaux sociaux', q.with_social || 0, q.total || 0, q.social_pct || 0)}
                 </div>
                 <div class="analysis-total-count">
                     <div class="analysis-total-number">${(q.total || 0).toLocaleString('fr-FR')}</div>
@@ -913,7 +1223,68 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
         </div>
     `;
 
-    // ── Panel 2: Data Gaps ──────────────────────────────────────
+    // ── Section 3: Recent activity ───────────────────────────────
+    const recentSearchNames = recentSearches.map(r => escapeHtml(r.batch_name || '')).filter(Boolean);
+    const topDept = departments.length > 0
+        ? departments.slice().sort((a, b) => (b.company_count || 0) - (a.company_count || 0))[0]
+        : null;
+
+    const recentSection = `
+        <div class="card analysis-panel" style="margin-bottom:var(--space-xl)">
+            <h3 class="analysis-panel-title">📅 Activité récente (7 jours)</h3>
+            <div style="display:flex; flex-direction:column; gap:var(--space-md)">
+                <div>
+                    <div style="font-size:var(--font-lg); font-weight:700; color:var(--text-primary)">${thisWeekCo.toLocaleString('fr-FR')}</div>
+                    <div style="font-size:var(--font-sm); color:var(--text-muted)">entreprises découvertes cette semaine</div>
+                </div>
+                <div>
+                    <div style="font-size:var(--font-lg); font-weight:700; color:var(--text-primary)">${weekComp.this_week.batches || 0}</div>
+                    <div style="font-size:var(--font-sm); color:var(--text-muted)">recherches lancées cette semaine</div>
+                </div>
+                ${recentSearchNames.length > 0 ? `
+                    <div>
+                        <div style="font-size:var(--font-xs); font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:var(--space-xs)">Recherches récentes</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:var(--space-xs)">
+                            ${recentSearchNames.map(n => `<span style="background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm); padding:2px 8px; font-size:var(--font-xs); color:var(--text-secondary)">${n}</span>`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                ${topDept ? `
+                    <div>
+                        <div style="font-size:var(--font-xs); font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:var(--space-xs)">Département le plus actif</div>
+                        <div style="font-size:var(--font-sm); color:var(--text-primary); font-weight:600">
+                            ${escapeHtml(topDept.departement || '')} — ${escapeHtml(topDept.department_name || '')}
+                            <span style="color:var(--text-muted); font-weight:400">(${(topDept.company_count || 0).toLocaleString('fr-FR')} entreprises)</span>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+
+    // ── Section 4: Top recherches ────────────────────────────────
+    const topSearchesSection = topSearches.length > 0 ? `
+        <div class="card analysis-panel" style="margin-bottom:var(--space-xl)">
+            <h3 class="analysis-panel-title">🏆 Top recherches</h3>
+            <div>
+                ${topSearches.map((s, i) => `
+                    <div class="analytics-search-rank">
+                        <div class="analytics-rank-number">${i + 1}</div>
+                        <div style="flex:1; min-width:0">
+                            <div style="font-weight:600; font-size:var(--font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${escapeHtml(s.batch_name || '—')}</div>
+                            <div style="font-size:var(--font-xs); color:var(--text-muted)">
+                                ${(s.company_count || 0).toLocaleString('fr-FR')} entreprises
+                                · ${s.phone_rate || 0}% tél.
+                                · ${s.email_rate || 0}% email
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    ` : '';
+
+    // ── Panels: Gaps + Enrichers (existing, kept) ────────────────
     const gTotal = gaps.total || 0;
     const complete = gaps.complete || 0;
     const missingAll = gaps.missing_all || 0;
@@ -945,7 +1316,6 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
         </div>
     `;
 
-    // ── Panel 3: Enricher Health ────────────────────────────────
     const maps = enrichers.maps || {};
     const crawl = enrichers.crawl || {};
     const outcomes = enrichers.outcomes || {};
@@ -969,28 +1339,49 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
         </div>
     `;
 
-    // ── Panel 4: Pipeline & Trends ──────────────────────────────
+    // ── Pipeline panel (existing, kept) ─────────────────────────
     const completed7d = pipeline.completed_7d || 0;
     const failed7d = pipeline.failed_7d || 0;
     const runningNow = pipeline.running_now || 0;
     const totalQualified = pipeline.total_qualified || 0;
 
-    // Quality trend chart
     const maxQuality = Math.max(100, ...trend.map(t => t.avg_quality || 0));
     const trendBars = trend.length > 0 ? `
-        <div class="analysis-trend-chart">
-            ${trend.map(t => {
-                const qVal = t.avg_quality || 0;
-                const height = Math.max(4, Math.round(100 * qVal / maxQuality));
-                const weekLabel = (t.week || '').replace(/^\d{4}-W/, 'S');
-                const color = qVal >= 60 ? 'var(--success)' : qVal >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
-                return `
-                    <div class="analysis-trend-bar-group" title="${t.week}: ${qVal}% qualité, ${t.companies || 0} entreprises">
-                        <div class="analysis-trend-bar" style="height:${height}%; background:${color}"></div>
-                        <span class="analysis-trend-label">${weekLabel}</span>
-                    </div>
-                `;
-            }).join('')}
+        <div style="display:flex; gap:var(--space-sm); align-items:flex-end; position:relative">
+            <!-- Y-axis labels -->
+            <div style="display:flex; flex-direction:column; justify-content:space-between; height:120px; padding-bottom:20px; min-width:28px; font-size:10px; color:var(--text-muted); text-align:right; flex-shrink:0">
+                <span>100%</span>
+                <span>50%</span>
+                <span>0%</span>
+            </div>
+            <!-- Chart area with grid lines -->
+            <div style="flex:1; position:relative; height:120px">
+                <!-- Grid lines -->
+                <div style="position:absolute; inset:0; pointer-events:none; padding-bottom:20px">
+                    <div style="position:absolute; left:0; right:0; top:0; border-top:1px dashed rgba(255,255,255,0.15)"></div>
+                    <div style="position:absolute; left:0; right:0; top:25%; border-top:1px dashed rgba(255,255,255,0.15)"></div>
+                    <div style="position:absolute; left:0; right:0; top:50%; border-top:1px dashed rgba(255,255,255,0.15)"></div>
+                    <div style="position:absolute; left:0; right:0; top:75%; border-top:1px dashed rgba(255,255,255,0.15)"></div>
+                </div>
+                <div class="analysis-trend-chart" style="position:relative; z-index:1">
+                    ${trend.map(t => {
+                        const qVal = t.avg_quality || 0;
+                        const height = Math.max(4, Math.round(100 * qVal / maxQuality));
+                        const weekLabel = (t.week || '').replace(/^\d{4}-W/, 'S');
+                        const color = qVal >= 60 ? '#22c55e' : qVal >= 30 ? '#f59e0b' : '#ef4444';
+                        const lighterColor = qVal >= 60 ? '#4ade80' : qVal >= 30 ? '#fbbf24' : '#f87171';
+                        return `
+                            <div class="analysis-trend-bar-group" title="${t.week}: ${qVal}% qualité, ${t.companies || 0} entreprises">
+                                <div style="position:relative; display:flex; flex-direction:column; align-items:center">
+                                    <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px; line-height:1">${qVal}%</span>
+                                    <div class="analysis-trend-bar" style="height:${height}%; background:linear-gradient(to top, ${color}, ${lighterColor}); max-width:40px; border-radius:6px 6px 0 0"></div>
+                                </div>
+                                <span class="analysis-trend-label">${weekLabel}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
         </div>
         <div class="analysis-trend-legend">
             <span><span class="analysis-legend-dot" style="background:var(--success)"></span> ≥60%</span>
@@ -1040,7 +1431,24 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
         </div>
     `;
 
-    // ── 5. Batch Pipeline Success panel ──────────────────────────
+    // ── Section 5: Department coverage (existing, at bottom) ─────
+    const deptSection = departments.length > 0 ? `
+        <div class="card analysis-panel" style="grid-column: 1 / -1">
+            <h3 class="analysis-panel-title">📍 Couverture par département</h3>
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:var(--space-sm)">
+                ${departments.slice(0, 20).map(d => `
+                    <div style="background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius-sm); padding:var(--space-sm) var(--space-md); cursor:pointer"
+                        onclick="window.location.hash='#/department/${encodeURIComponent(d.departement)}'">
+                        <div style="font-weight:700; font-size:var(--font-sm)">${escapeHtml(d.departement)} <span style="color:var(--text-muted); font-weight:400; font-size:var(--font-xs)">${escapeHtml(d.department_name || '')}</span></div>
+                        <div style="font-size:var(--font-xs); color:var(--text-muted)">${(d.company_count || 0).toLocaleString('fr-FR')} entreprises</div>
+                        <div style="font-size:var(--font-xs); color:var(--text-muted)">📞 ${d.phone_pct || 0}% · ✉️ ${d.email_pct || 0}%</div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    ` : '';
+
+    // ── Batch Pipeline Success panel (existing, at bottom) ───────
     const batches = (batchData && batchData.batches) || [];
     const batchSuccessPanel = batches.length > 0 ? `
         <div class="card analysis-panel" style="grid-column: 1 / -1">
@@ -1051,7 +1459,7 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
                     const dateStr = b.created_at ? new Date(b.created_at).toLocaleDateString('fr-FR') : '';
                     const isUpload = b.is_upload;
                     const steps = b.steps || [];
-                    
+
                     return `
                         <div style="
                             background: var(--bg-secondary, rgba(255,255,255,0.04));
@@ -1063,8 +1471,7 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
                                 <span style="font-weight:600; font-size:var(--font-sm)">${isUpload ? '📥' : '⚡'} ${escapeHtml(batchLabel)}</span>
                                 <span style="color:var(--text-muted); font-size:var(--font-xs)">${dateStr}</span>
                             </div>
-                            
-                            <div style="display:grid; grid-template-columns: repeat(${steps.length}, 1fr); gap:var(--space-md); margin-bottom:var(--space-sm)">
+                            <div class="batch-steps-row" style="margin-bottom:var(--space-sm)">
                                 ${steps.map(s => {
                                     const pct = s.pct || 0;
                                     const color = pct >= 60 ? 'var(--success)' : pct >= 30 ? 'var(--warning, #f59e0b)' : 'var(--error, #ef4444)';
@@ -1095,13 +1502,29 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData) {
     // ── Assemble ────────────────────────────────────────────────
     view.innerHTML = `
         <div class="analysis-grid">
-            ${qualityPanel}
+            <div style="grid-column: 1 / -1">
+                ${heroSection}
+            </div>
+            ${qualitySection}
+            <div style="grid-column: 1 / -1; display:grid; grid-template-columns:1fr 1fr; gap:var(--space-lg)">
+                ${recentSection}
+                ${topSearchesSection}
+            </div>
             ${gapsPanel}
             ${enricherPanel}
             ${pipelinePanel}
+            ${deptSection}
             ${batchSuccessPanel}
         </div>
     `;
+
+    // Animate metric bars in after render
+    requestAnimationFrame(() => {
+        view.querySelectorAll('.analysis-metric-fill-anim').forEach(el => {
+            const target = el.dataset.width || '0';
+            el.style.width = target + '%';
+        });
+    });
 }
 
 // ── Analysis helpers ─────────────────────────────────────────────
@@ -1114,6 +1537,20 @@ function _metricBar(label, value, total, pct) {
             </div>
             <div class="analysis-metric-track">
                 <div class="analysis-metric-fill" style="width:${pct}%"></div>
+            </div>
+        </div>
+    `;
+}
+
+function _metricBarThick(label, value, total, pct) {
+    return `
+        <div class="analysis-metric">
+            <div class="analysis-metric-header">
+                <span class="analysis-metric-label">${label}</span>
+                <span class="analysis-metric-value">${value.toLocaleString('fr-FR')} / ${total.toLocaleString('fr-FR')} (${pct}%)</span>
+            </div>
+            <div class="analysis-metric-track" style="height:8px">
+                <div class="analysis-metric-fill analysis-metric-fill-anim" data-width="${pct}" style="width:0%; height:100%; transition:width 0.6s ease"></div>
             </div>
         </div>
     `;

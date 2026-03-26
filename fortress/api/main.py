@@ -23,10 +23,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import activity, admin, auth as auth_routes, batch, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
+from fortress.api.routes import activity, admin, auth as auth_routes, batch, blacklist, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -114,9 +115,18 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS match_confidence VARCHAR(10)")
+                await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS shortfall_reason TEXT")
                 
                 # Index for Enrichment History timeline rendering performance
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_log_siren_time ON batch_log (siren, timestamp DESC)")
+
+                # Widen blacklist siren column to accept longer identifiers (e.g. MAPS IDs)
+                await conn.execute("""
+                    DO $$ BEGIN
+                        ALTER TABLE blacklisted_sirens ALTER COLUMN siren TYPE VARCHAR(20);
+                    EXCEPTION WHEN others THEN NULL;
+                    END $$;
+                """)
 
                 # ── Table + column rename migration ─────────────────────────
                 # scrape_jobs → batch_data, scrape_audit → batch_log, query_tags → batch_tags
@@ -189,6 +199,55 @@ async def lifespan(app: FastAPI):
                     CREATE INDEX IF NOT EXISTS idx_companies_dept_addr
                     ON companies (departement, LOWER(adresse))
                 """)
+
+                # ── Workspace isolation ──────────────────────────────
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS workspaces (
+                        id         SERIAL PRIMARY KEY,
+                        name       VARCHAR(100) NOT NULL UNIQUE,
+                        created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("ALTER TABLE users       ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id)")
+                await conn.execute("ALTER TABLE batch_data  ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id)")
+                await conn.execute("ALTER TABLE batch_log   ADD COLUMN IF NOT EXISTS workspace_id INTEGER")
+                await conn.execute("ALTER TABLE batch_tags  ADD COLUMN IF NOT EXISTS workspace_id INTEGER")
+                await conn.execute("ALTER TABLE batch_tags  ADD COLUMN IF NOT EXISTS batch_id TEXT")
+                await conn.execute("ALTER TABLE companies   ADD COLUMN IF NOT EXISTS workspace_id INTEGER")
+                await conn.execute("ALTER TABLE company_notes ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE")
+                await conn.execute("ALTER TABLE contacts    ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE")
+
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_data_workspace ON batch_data(workspace_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_workspace  ON companies(workspace_id) WHERE workspace_id IS NOT NULL")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_workspace ON batch_tags(workspace_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_siren ON batch_tags(siren)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_siren ON contacts(siren)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_data_status ON batch_data(status)")
+
+                # Seed default workspace and assign existing data (idempotent)
+                await conn.execute("INSERT INTO workspaces (name) VALUES ('Default') ON CONFLICT (name) DO NOTHING")
+                await conn.execute("""
+                    UPDATE users SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE workspace_id IS NULL AND role != 'admin'
+                """)
+                await conn.execute("UPDATE users SET role = 'head' WHERE username = 'olivierhaddad' AND role != 'admin'")
+                await conn.execute("""
+                    UPDATE companies SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE siren LIKE 'MAPS%' AND workspace_id IS NULL
+                """)
+                await conn.execute("""
+                    UPDATE batch_data SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE workspace_id IS NULL
+                """)
+                await conn.execute("""
+                    UPDATE batch_log SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE workspace_id IS NULL
+                """)
+                await conn.execute("""
+                    UPDATE batch_tags SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE workspace_id IS NULL
+                """)
+                logger.info("✅ Workspace isolation migrations complete")
 
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
@@ -286,6 +345,18 @@ app.add_middleware(SessionAuthMiddleware)
 logger.info("🔐 Session-based authentication ENABLED")
 
 
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith('/js/') or path.startswith('/css/'):
+            response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+        return response
+
+
+app.add_middleware(CacheControlMiddleware)
+
+
 # CORS — restrict to configured frontend origin
 app.add_middleware(
     CORSMiddleware,
@@ -311,6 +382,7 @@ app.include_router(notes.router)
 app.include_router(contacts_list.router)
 app.include_router(contact.router)
 app.include_router(activity.router)
+app.include_router(blacklist.router, prefix="/api/blacklist")
 
 from fortress.api.routes.websocket import router as websocket_router
 app.include_router(websocket_router)

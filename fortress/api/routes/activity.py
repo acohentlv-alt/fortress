@@ -79,14 +79,17 @@ async def get_activity(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """Return recent activity log entries. Admin-only."""
+    """Return recent activity log entries. Admin sees all; head sees their workspace; users get 403."""
     user = getattr(request.state, "user", None)
-    if not user or getattr(user, "role", None) != "admin":
-        return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs."})
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "Non authentifié."})
+
+    role = getattr(user, "role", None)
+    if role not in ("admin", "head"):
+        return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs et responsables."})
 
     await _ensure_table()
 
-    # Map period to interval
     interval_map = {
         "day": "1 day",
         "week": "7 days",
@@ -101,21 +104,33 @@ async def get_activity(
     elif action_type == "batches":
         action_filter = "AND action IN ('batch_launched', 'batch_completed', 'batch_failed', 'upload', 'export', 'cancel_job', 'delete_job')"
 
+    # Head sees only their own workspace activity (by user_id in their workspace)
+    if role == "head":
+        ws_filter = """AND user_id IN (
+            SELECT id FROM users WHERE workspace_id = %s
+        )"""
+        base_params: tuple = (interval, user.workspace_id)
+    else:
+        ws_filter = ""
+        base_params = (interval,)
+
     try:
         rows = await fetch_all(f"""
             SELECT id, user_id, username, action, target_type, target_id, details, created_at
             FROM activity_log
             WHERE created_at >= NOW() - %s::interval
+            {ws_filter}
             {action_filter}
             ORDER BY created_at DESC
             LIMIT %s OFFSET %s
-        """, (interval, limit, offset))
+        """, base_params + (limit, offset))
 
         count_row = await fetch_one(f"""
             SELECT COUNT(*) AS total FROM activity_log
             WHERE created_at >= NOW() - %s::interval
+            {ws_filter}
             {action_filter}
-        """, (interval,))
+        """, base_params)
         total = (count_row or {}).get("total", 0)
 
         return {

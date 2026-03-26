@@ -13,7 +13,7 @@ Performance notes (for 3K contacts/month growth):
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one
@@ -51,6 +51,7 @@ def _format_count(exact_count: int) -> dict:
 @router.get("")
 @router.get("/list")
 async def list_contacts(
+    request: Request,
     q: str = Query(None, description="Search by name, SIREN, phone, or email"),
     department: str = Query(None, description="Filter by department code"),
     naf_code: str = Query(None, description="Filter by NAF code prefix"),
@@ -58,34 +59,50 @@ async def list_contacts(
     offset: int = Query(0, ge=0),
 ):
     """Return a flat, paginated list of all enriched contacts + officers."""
+    user = getattr(request.state, "user", None)
 
     where_parts: list[str] = []
     params: list = []
 
+    # Workspace filter — admin sees all, others scoped to their workspace
+    if user and not user.is_admin:
+        where_parts.append("qt.workspace_id = %s")
+        params.append(user.workspace_id)
+
     if q:
         clean_q = q.strip()
-        # Smart search: digits = SIREN prefix, letters = name prefix / ILIKE
+        # Smart search: digits = SIREN prefix, MAPS prefix, letters = full text
         clean_digits = clean_q.replace(" ", "")
         if clean_digits.isdigit():
             # SIREN prefix search
-            where_parts.append("co.siren LIKE %s")
+            where_parts.append("(co.siren LIKE %s)")
             params.append(f"{clean_digits}%")
+        elif clean_q.upper().startswith("MAPS"):
+            # MAPS ID search
+            where_parts.append("(co.siren ILIKE %s)")
+            params.append(f"{clean_q}%")
         elif len(clean_q) <= 2:
             # Short text: prefix on denomination
             where_parts.append("co.denomination LIKE %s")
             params.append(f"{clean_q.upper()}%")
         else:
-            # Longer text: search across multiple fields
+            # Longer text: search across all useful fields
             where_parts.append("""(
                 co.denomination ILIKE %s
-                OR co.siren = %s
+                OR co.enseigne ILIKE %s
+                OR co.siren ILIKE %s
+                OR co.ville ILIKE %s
+                OR co.naf_code ILIKE %s
+                OR co.departement = %s
                 OR ct.phone ILIKE %s
                 OR ct.email ILIKE %s
+                OR ct.website ILIKE %s
                 OR o.nom ILIKE %s
                 OR o.prenom ILIKE %s
             )""")
             like = f"%{clean_q}%"
-            params.extend([like, clean_q, like, like, like, like])
+            dept_q = clean_q.strip()
+            params.extend([like, like, like, like, like, dept_q, like, like, like, like, like])
 
     if department:
         where_parts.append("co.departement = %s")

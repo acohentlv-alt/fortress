@@ -25,24 +25,37 @@ from fortress.models import Company, Contact, Officer
 log = structlog.get_logger(__name__)
 
 
-async def upsert_company(conn: Any, company: Company) -> None:
+async def upsert_company(conn: Any, company: Company, allow_real_siren: bool = False) -> None:
     """Insert or update a company row in the companies table.
 
     On conflict (siren already exists), updates the mutable fields
     (address, status, NAF code, etc.) while preserving the original
     created_at and fortress_id.
+
+    allow_real_siren: if False (default), real SIRENE rows (non-MAPS) that already
+    exist are never overwritten — the write is silently skipped to protect
+    government data. Pass True only for legacy pipelines and CSV upload that
+    intentionally write real SIREN records.
     """
+    if not company.siren.startswith("MAPS") and not allow_real_siren:
+        cur = await conn.execute(
+            "SELECT 1 FROM companies WHERE siren = %s", (company.siren,)
+        )
+        row = await cur.fetchone()
+        if row:
+            return  # Row exists — protect real SIRENE record from overwrite
+
     await conn.execute(
         """
         INSERT INTO companies (
             siren, siret_siege, denomination, naf_code, naf_libelle,
             forme_juridique, adresse, code_postal, ville, departement, region,
-            statut, date_creation, tranche_effectif, latitude, longitude
+            statut, date_creation, tranche_effectif, latitude, longitude, workspace_id
         )
         VALUES (
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s
         )
         ON CONFLICT (siren) DO UPDATE SET
             siret_siege      = EXCLUDED.siret_siege,
@@ -60,6 +73,7 @@ async def upsert_company(conn: Any, company: Company) -> None:
             tranche_effectif = EXCLUDED.tranche_effectif,
             latitude         = COALESCE(EXCLUDED.latitude, companies.latitude),
             longitude        = COALESCE(EXCLUDED.longitude, companies.longitude),
+            workspace_id     = COALESCE(EXCLUDED.workspace_id, companies.workspace_id),
             updated_at       = NOW()
         """,
         (
@@ -79,6 +93,7 @@ async def upsert_company(conn: Any, company: Company) -> None:
             company.tranche_effectif,
             company.latitude,
             company.longitude,
+            company.workspace_id,
         ),
     )
 
@@ -217,6 +232,7 @@ async def bulk_tag_query(
     conn: Any,
     sirens: list[str],
     batch_name: str,
+    workspace_id: int | None = None,
 ) -> None:
     """Tag multiple companies for a query in a single batch.
 
@@ -230,11 +246,11 @@ async def bulk_tag_query(
     async with conn.cursor() as cur:
         await cur.executemany(
             """
-            INSERT INTO batch_tags (siren, batch_name, tagged_at)
-            VALUES (%s, %s, %s)
+            INSERT INTO batch_tags (siren, batch_name, tagged_at, workspace_id)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (siren, batch_name) DO NOTHING
             """,
-            [(siren, batch_name, now) for siren in sirens],
+            [(siren, batch_name, now, workspace_id) for siren in sirens],
         )
 
 
@@ -249,6 +265,7 @@ async def log_audit(
     detail: str | None = None,
     duration_ms: int | None = None,
     search_query: str | None = None,
+    workspace_id: int | None = None,
 ) -> None:
     """Write one row to the batch_log table.
 
@@ -259,8 +276,8 @@ async def log_audit(
     await conn.execute(
         """
         INSERT INTO batch_log
-            (batch_id, siren, action, result, source_url, detail, duration_ms, search_query)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (batch_id, siren, action, result, source_url, detail, duration_ms, search_query, workspace_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (batch_id, siren, action, result, source_url, detail, duration_ms, search_query),
+        (batch_id, siren, action, result, source_url, detail, duration_ms, search_query, workspace_id),
     )

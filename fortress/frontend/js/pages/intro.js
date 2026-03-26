@@ -16,6 +16,17 @@
 import { registerCleanup } from '../app.js';
 
 export function renderIntro(container) {
+    // Remove page-container constraints for full-bleed landing
+    const pageContainer = container.closest('.page-container');
+    if (pageContainer) {
+        pageContainer.style.padding = '0';
+        pageContainer.style.maxWidth = 'none';
+    }
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        mainContent.style.background = 'transparent';
+    }
+    document.body.style.overflow = 'auto';
 
     container.innerHTML = `
         <div class="landing">

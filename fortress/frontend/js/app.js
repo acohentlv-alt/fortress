@@ -13,6 +13,7 @@ import { renderOpenQuery } from './pages/open-query.js';
 import { renderUpload } from './pages/upload.js';
 import { renderContacts } from './pages/contacts.js';
 import { renderActivity } from './pages/activity.js';
+import { renderBlacklist } from './pages/blacklist.js';
 import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
@@ -38,8 +39,8 @@ const routes = [
     { pattern: /^#?\/?$/, handler: renderDashboard, nav: 'dashboard' },
     { pattern: /^#\/dashboard$/, handler: renderDashboard, nav: 'dashboard' },
     { pattern: /^#\/department\/(.+)$/, handler: renderDepartment, nav: 'dashboard' },
-    { pattern: /^#\/job\/(.+)$/, handler: renderJob, nav: 'dashboard' },
-    { pattern: /^#\/company\/(.+)$/, handler: renderCompany, nav: 'search' },
+    { pattern: /^#\/job\/(.+)$/, handler: renderJob, nav: 'none' },
+    { pattern: /^#\/company\/(.+)$/, handler: renderCompany, nav: 'none' },
     { pattern: /^#\/search/, handler: renderSearch, nav: 'search' },
     { pattern: /^#\/new-batch$/, handler: renderNewBatch, nav: 'new-batch' },
     { pattern: /^#\/open-query$/, handler: renderOpenQuery, nav: 'query' },
@@ -48,6 +49,7 @@ const routes = [
     { pattern: /^#\/upload$/, handler: renderUpload, nav: 'upload' },
     { pattern: /^#\/contacts$/, handler: renderContacts, nav: 'contacts' },
     { pattern: /^#\/activity$/, handler: renderActivity, nav: 'activity' },
+    { pattern: /^#\/blacklist$/, handler: renderBlacklist, nav: 'blacklist' },
     { pattern: /^#\/login$/, handler: renderLogin, nav: 'none' },
     { pattern: /^#\/intro$/, handler: renderIntro, nav: 'none' },
 ];
@@ -108,10 +110,10 @@ function _showLoginPage() {
     renderLogin(getPageContent(), (user) => {
         // On successful login — restore app UI
         _showSidebar(true);
+        _setupSidebarToggle();
         _updateUserDisplay(user);
         _setupLogout();
         _setupRunningJobs();
-        initGlobalSearch();
         // Navigate to dashboard
         window.location.hash = '#/';
         navigate();
@@ -156,6 +158,16 @@ async function navigate() {
     }
 
     const container = getPageContent();
+
+    // Restore page-container constraints (may have been removed by landing page)
+    const pageContainer = document.querySelector('.page-container');
+    if (pageContainer) {
+        pageContainer.style.padding = '';
+        pageContainer.style.maxWidth = '';
+    }
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) mainContent.style.background = '';
+    document.body.style.overflow = '';
 
     // Find matching route
     for (const route of routes) {
@@ -205,46 +217,6 @@ async function navigate() {
     `;
 }
 
-// ── Global Search ────────────────────────────────────────────────
-function initGlobalSearch() {
-    const input = document.getElementById('global-search');
-    if (!input) return;
-    let debounceTimer;
-
-    function _doSearch(q) {
-        if (!q) return;
-        const hash = window.location.hash || '#/';
-        const onDashboard = hash === '#/' || hash === '#/dashboard' || hash === '';
-        if (onDashboard) {
-            // On dashboard: switch to "Toutes les Données" tab and search within it
-            const btn = document.getElementById('btn-all-data');
-            if (btn) { btn.click(); }
-            // Set the search term in the All Data search input after a tick
-            setTimeout(() => {
-                const allDataSearch = document.getElementById('alldata-search');
-                if (allDataSearch) { allDataSearch.value = q; allDataSearch.dispatchEvent(new Event('input')); }
-            }, 100);
-        } else {
-            window.location.hash = `#/search?q=${encodeURIComponent(q)}`;
-        }
-    }
-
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            const q = input.value.trim();
-            if (q) { _doSearch(q); input.blur(); }
-        }
-    });
-
-    input.addEventListener('input', () => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            const q = input.value.trim();
-            if (q.length >= 3) { _doSearch(q); }
-        }, 500);
-    });
-}
-
 // ── Running Job Badge ────────────────────────────────────────────
 let _runningJobsInterval = null;
 
@@ -272,8 +244,12 @@ async function initApp() {
     const user = await getCurrentUser();
 
     if (!user) {
-        // Not authenticated — show intro page
-        _showIntroPage();
+        // Not authenticated — check if navigating to login, otherwise show intro
+        if (window.location.hash === '#/login') {
+            _showLoginPage();
+        } else {
+            _showIntroPage();
+        }
         return;
     }
 
@@ -285,7 +261,6 @@ async function initApp() {
     // Hide "Requête Libre" for ALL users (placeholder, not launched)
     const queryNav = document.getElementById('nav-query');
     if (queryNav) queryNav.style.display = 'none';
-    initGlobalSearch();
     navigate();
     _setupRunningJobs();
 }
@@ -310,8 +285,8 @@ function _setupSidebarToggle() {
 
     const storedState = localStorage.getItem('fortress_sidebar_collapsed');
     
-    // Default load state
-    if (storedState === '0' && window.innerWidth > 1100) {
+    // Default: collapsed. Only expand if user explicitly chose it AND screen is wide
+    if (storedState === '0' && window.innerWidth > 1400) {
         _applyState(false);
     } else {
         _applyState(true);
@@ -321,20 +296,27 @@ function _setupSidebarToggle() {
     brandBtn.title = 'Fixer/réduire le menu';
 
     // Click to pin/unpin
+    let _suppressHover = false;
+
     brandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        
-        // Always kill hover state before applying pin state
+
         sidebar.classList.remove('hover-expanded');
-        
+
         const willCollapse = !sidebar.classList.contains('collapsed');
         _applyState(willCollapse);
         localStorage.setItem('fortress_sidebar_collapsed', willCollapse ? '1' : '0');
+
+        // Suppress hover-expand for 300ms after click to prevent immediate re-expand
+        if (willCollapse) {
+            _suppressHover = true;
+            setTimeout(() => { _suppressHover = false; }, 300);
+        }
     });
 
     // JS Hover Architecture (Overlay tray)
     sidebar.addEventListener('mouseenter', () => {
-        if (sidebar.classList.contains('collapsed')) {
+        if (sidebar.classList.contains('collapsed') && !_suppressHover) {
             sidebar.classList.add('hover-expanded');
         }
     });
@@ -348,7 +330,7 @@ function _setupSidebarToggle() {
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-            if (window.innerWidth <= 1100 && !sidebar.classList.contains('collapsed')) {
+            if (window.innerWidth <= 1400 && !sidebar.classList.contains('collapsed')) {
                 _applyState(true);
                 sidebar.classList.remove('hover-expanded');
             }

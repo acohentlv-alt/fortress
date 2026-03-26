@@ -10,20 +10,21 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.get("")
-async def list_jobs():
-    """All jobs with status and progress — shared workspace."""
+async def list_jobs(request: Request):
+    """All jobs with status and progress — scoped by workspace."""
+    user = getattr(request.state, "user", None)
 
-    base_query = """
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: list = [user.workspace_id]
+    else:
+        ws_filter = ""
+        ws_params = []
+
+    base_query = f"""
         SELECT
-            sj.batch_id, sj.batch_name, 
-            CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
-                     THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     THEN 'failed'
-                ELSE sj.status 
-            END AS status,
+            sj.batch_id, sj.batch_name,
+            sj.status AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,
@@ -35,16 +36,17 @@ async def list_jobs():
             UPPER(SPLIT_PART(sj.batch_name, ' ', 1)) AS sector,
             sj.user_id,
             sj.worker_id,
-            sj.mode
+            sj.mode,
+            sj.workspace_id
         FROM batch_data sj
         WHERE sj.status != 'deleted'
+        {ws_filter}
     """
 
-    # Shared workspace: all users see all jobs
     rows = await fetch_all(
-        base_query + " ORDER BY sj.updated_at DESC"
+        base_query + " ORDER BY sj.updated_at DESC",
+        tuple(ws_params) if ws_params else None,
     )
-
     return rows
 
 
@@ -69,7 +71,7 @@ async def delete_job(batch_id: str, request: Request):
         
         raw_status = row[0]
         idle_seconds = row[5] or 0
-        is_stale = idle_seconds > 180
+        is_stale = idle_seconds > 600
         if raw_status == "in_progress" and not is_stale:
             return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
 
@@ -183,14 +185,7 @@ async def get_job(batch_id: str):
     job = await fetch_one("""
         SELECT
             sj.batch_id, sj.batch_name, 
-            CASE 
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     AND COALESCE(sj.companies_qualified, 0) >= COALESCE(sj.batch_size, sj.total_companies, 1)
-                     THEN 'completed'
-                WHEN sj.status IN ('in_progress', 'queued', 'triage') AND EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) > 180
-                     THEN 'failed'
-                ELSE sj.status 
-            END AS status,
+            sj.status AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,
@@ -199,7 +194,8 @@ async def get_job(batch_id: str):
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
-            sj.mode
+            sj.mode,
+            sj.shortfall_reason
         FROM batch_data sj
         WHERE sj.batch_id = %s
     """, (batch_id,))
@@ -216,7 +212,15 @@ async def get_job(batch_id: str):
         ORDER BY co.departement
     """, (job["batch_name"],))
 
-    return {**job, "departments": depts}
+    pending_row = await fetch_one("""
+        SELECT COUNT(DISTINCT co.siren) AS pending_links
+        FROM batch_log bl
+        JOIN companies co ON co.siren = bl.siren
+        WHERE bl.batch_id = %s AND co.link_confidence = 'pending'
+    """, (batch_id,))
+    pending_links = (pending_row or {}).get("pending_links", 0)
+
+    return {**job, "departments": depts, "pending_links": pending_links}
 
 
 @router.get("/{batch_id}/companies")
@@ -295,6 +299,7 @@ async def get_job_companies(
             co.forme_juridique, co.adresse, co.code_postal, co.ville,
             co.departement, co.region, co.statut, co.date_creation,
             co.tranche_effectif, co.fortress_id,
+            co.linked_siren, co.link_confidence, co.link_method,
             bc.phone, bc.email, bc.email_type, bc.website,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
             bc.rating, bc.review_count, bc.maps_url, bc.contact_source,
@@ -374,15 +379,18 @@ async def get_job_quality(batch_id: str):
             "rate": round(100 * s["success"] / s["total"]) if s["total"] else 0,
         }
 
-    # Count companies with officers and/or financial data (INPI results)
+    # Count companies with officers and/or financial data (INPI results).
+    # For Maps Discovery batches, officers/financials live on the linked real SIREN,
+    # not on the MAPS entity — so we follow linked_siren via COALESCE.
     inpi_stat = await fetch_one("""
         WITH bs AS (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s)
         SELECT
-            COUNT(DISTINCT o.siren) AS with_officers,
-            COUNT(DISTINCT CASE WHEN co.chiffre_affaires IS NOT NULL THEN co.siren END) AS with_financials
+            COUNT(DISTINCT CASE WHEN o.siren IS NOT NULL THEN bs.siren END) AS with_officers,
+            COUNT(DISTINCT CASE WHEN real.chiffre_affaires IS NOT NULL THEN bs.siren END) AS with_financials
         FROM bs
         JOIN companies co ON co.siren = bs.siren
-        LEFT JOIN officers o ON o.siren = bs.siren
+        LEFT JOIN companies real ON real.siren = co.linked_siren
+        LEFT JOIN officers o ON o.siren = COALESCE(co.linked_siren, co.siren)
     """, (batch_id,))
     with_officers = (inpi_stat or {}).get("with_officers", 0)
     with_financials = (inpi_stat or {}).get("with_financials", 0)

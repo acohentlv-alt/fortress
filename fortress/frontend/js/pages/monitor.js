@@ -87,12 +87,12 @@ async function renderMonitorList(container) {
             </div>
         `}
 
-        ${jobsList.filter(j => j.status === 'completed').length > 0 ? `
+        ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).length > 0 ? `
             <h2 style="font-size:var(--font-lg); font-weight:600; margin-top:var(--space-2xl); margin-bottom:var(--space-lg)">
                 Terminés récemment
             </h2>
             <div class="job-list">
-                ${jobsList.filter(j => j.status === 'completed').slice(0, 5).map(j => `
+                ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).slice(0, 5).map(j => `
                     <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
                         <div class="job-card-info">
                             <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
@@ -141,8 +141,7 @@ async function renderJobMonitor(container, batchId) {
                 </div>
 
                 <!-- Metric Cards -->
-                <div style="flex:1; min-width:280px">
-                    <div class="monitor-metrics">
+                <div class="monitor-metrics" style="flex:1; min-width:280px">
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-scraped">0</div>
                             <div class="monitor-metric-label">Complétées</div>
@@ -161,7 +160,6 @@ async function renderJobMonitor(container, batchId) {
                             <div class="monitor-metric-label">Substitutions</div>
                         </div>
                         ` : '<div id="mon-replaced" style="display:none">0</div>'}
-                    </div>
                 </div>
             </div>
         </div>
@@ -308,7 +306,9 @@ async function renderJobMonitor(container, batchId) {
         const failed = job.companies_failed || 0;
         const replaced = job.replaced_count || 0;
         // Progress = qualified companies / batch_size (only phone-confirmed count)
-        const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
+        // If no qualified but triage_green exists (all-green batch), use green count for ring
+        const effectiveCompleted = qualified > 0 ? qualified : (job.triage_green || 0);
+        const pct = Math.min(100, Math.round((effectiveCompleted / Math.max(batchSize, 1)) * 100));
         const isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
         const isUpload = job.mode === 'upload';
 
@@ -344,9 +344,16 @@ async function renderJobMonitor(container, batchId) {
         }
 
         // ── Metric Counters — animate only on change ────────────
-        if (qualified !== previousValues.scraped) {
-            previousValues.scraped = qualified;  // Show qualified count as "Complétées"
-            animateCounter($.scraped, qualified);
+        const completedValue = qualified > 0 ? qualified : (job.triage_green || 0);
+        const completedLabel = qualified > 0 ? 'Complétées' : (job.triage_green || 0) > 0 ? 'Connues' : 'Complétées';
+        if (completedValue !== previousValues.scraped) {
+            previousValues.scraped = completedValue;
+            animateCounter($.scraped, completedValue);
+            // Update the label below the counter
+            const scrapedLabel = $.scraped?.nextElementSibling;
+            if (scrapedLabel && scrapedLabel.classList.contains('monitor-metric-label')) {
+                scrapedLabel.textContent = completedLabel;
+            }
         }
         if (failed !== previousValues.failed) {
             previousValues.failed = failed;
@@ -416,7 +423,17 @@ async function renderJobMonitor(container, batchId) {
         } catch { /* gauges are optional */ }
 
         // ── Completion State ────────────────────────────────────
-        if (!isRunning && job.status === 'completed') {
+        if (!isRunning && job.status === 'completed' && qualified === 0 && (job.triage_green || 0) > 0) {
+            $.completion.style.display = 'block';
+            $.completion.innerHTML = `
+                <div class="completion-card" style="border-left: 4px solid var(--success); background: color-mix(in srgb, var(--bg-surface) 90%, var(--success));">
+                    <div class="completion-icon" style="background:rgba(16,185,129,0.1); color:var(--success)">✅</div>
+                    <div class="completion-title" style="color:var(--success)">Toutes les entreprises sont connues</div>
+                    <div class="completion-subtitle">Les ${scraped} entreprises étaient déjà dans votre base — aucune nouvelle extraction nécessaire.</div>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--success); color:var(--text)">📋 Voir les résultats</a>
+                </div>
+            `;
+        } else if (!isRunning && job.status === 'completed') {
             $.completion.style.display = 'block';
             $.completion.innerHTML = `
                 <div class="completion-card">
@@ -440,9 +457,18 @@ async function renderJobMonitor(container, batchId) {
 
         // ── Footer ──────────────────────────────────────────────
         let footerText = `Actualisation automatique · ${formatDateTime(job.updated_at)}`;
-        if (!isRunning) {
-            footerText = job.status === 'failed' 
-                ? `Batch interrompu · ${formatDateTime(job.updated_at)}` 
+        if (isRunning && job.updated_at) {
+            const idleSec = (Date.now() - new Date(job.updated_at).getTime()) / 1000;
+            if (idleSec > 30) {
+                const minutes = Math.floor(idleSec / 60);
+                const staleLabel = minutes > 0
+                    ? `⏳ Dernière mise à jour il y a ${minutes} min`
+                    : `⏳ Dernière mise à jour il y a moins d'une min`;
+                footerText = `Actualisation automatique · ${formatDateTime(job.updated_at)} · ${staleLabel}`;
+            }
+        } else if (!isRunning) {
+            footerText = job.status === 'failed'
+                ? `Batch interrompu · ${formatDateTime(job.updated_at)}`
                 : `Batch terminé · ${formatDateTime(job.updated_at)}`;
         }
         $.footer.textContent = footerText;
@@ -481,10 +507,22 @@ async function renderJobMonitor(container, batchId) {
                     }
                 }
             } catch { /* cards are optional display */ }
-        } else if (scraped === 0) {
+        } else if (scraped === 0 && qualified === 0) {
             $.cards.innerHTML = `
                 <div style="text-align:center; color:var(--text-muted); font-style:italic; padding:var(--space-lg); grid-column:1/-1">
                     ${isRunning ? '⏳ En attente des premières données...' : 'Aucune entreprise collectée'}
+                </div>
+            `;
+        } else if (!isRunning && qualified === 0 && scraped > 0) {
+            $.cards.innerHTML = `
+                <div style="text-align:center; color:var(--success); padding:var(--space-lg); grid-column:1/-1">
+                    ✅ Toutes les ${scraped} entreprises étaient déjà enrichies — aucune nouvelle extraction nécessaire.
+                </div>
+            `;
+        } else if (!isRunning && qualified > 0 && scraped === qualified) {
+            $.cards.innerHTML = `
+                <div style="text-align:center; color:var(--success); padding:var(--space-lg); grid-column:1/-1">
+                    ✅ Toutes les ${qualified} entreprises étaient déjà enrichies — aucune nouvelle extraction nécessaire.
                 </div>
             `;
         }

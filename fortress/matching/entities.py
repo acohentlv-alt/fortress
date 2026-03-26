@@ -63,6 +63,35 @@ def _extract_street_key(normalized: str) -> str:
     return normalized
 
 
+_STREET_ABBREVS = {
+    "rte": "route", "r": "rue",
+    "av": "avenue", "ave": "avenue",
+    "bd": "boulevard", "blvd": "boulevard",
+    "ch": "chemin", "chem": "chemin",
+    "pl": "place",
+    "all": "allee", "imp": "impasse",
+    "pass": "passage", "sq": "square",
+    "res": "residence", "lot": "lotissement",
+    "zac": "zac", "za": "zone artisanale",
+    "zi": "zone industrielle",
+}
+
+
+def normalize_street_key(street_key: str) -> str:
+    """Normalize French street type abbreviations in a street key.
+
+    'rte de la plage' → 'route de la plage'
+    '16 av des pins'  → '16 avenue des pins'
+    """
+    if not street_key:
+        return ""
+    tokens = street_key.split()
+    normalized = []
+    for t in tokens:
+        normalized.append(_STREET_ABBREVS.get(t, t))
+    return " ".join(normalized)
+
+
 # ---------------------------------------------------------------------------
 # Denomination normalisation (for fuzzy matching)
 # ---------------------------------------------------------------------------

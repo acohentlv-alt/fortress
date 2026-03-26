@@ -199,6 +199,7 @@ export function companyCard(company, opts = {}) {
                     <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
                         ${removeBtn}
                         ${company.maps_url ? `<a href="${company.maps_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Google Maps" style="color:var(--text-muted);text-decoration:none;font-size:14px">🗺️</a>` : ''}
+                        ${company.link_confidence === 'pending' ? '<span class="glass-badge glass-badge--gold" style="font-size:var(--font-xs)">Lien en attente</span>' : ''}
                         ${statutBadge(company.statut)}
                     </div>
                 </div>
@@ -221,6 +222,7 @@ export function companyCard(company, opts = {}) {
                 <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
                     ${statutBadge(company.statut)}
                     ${formeJuridiqueBadge(company.forme_juridique)}
+                    ${company.link_confidence === 'pending' ? '<span class="glass-badge glass-badge--gold">Lien en attente</span>' : ''}
                 </div>
             </div>
             <div class="company-card-location">
@@ -506,10 +508,17 @@ export function renderProgressRing(pct, size = 120, strokeWidth = 6) {
  * @param {boolean} opts.danger   - If true, confirm button is red
  * @param {Function} opts.onConfirm - Async callback when confirmed
  */
-export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, onConfirm }) {
+export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, checkboxLabel = null, onConfirm }) {
     // Remove any existing modal
     const existing = document.getElementById('confirm-modal-overlay');
     if (existing) existing.remove();
+
+    const checkboxHtml = checkboxLabel ? `
+        <div style="margin-top:var(--space-md); display:flex; align-items:flex-start; gap:var(--space-sm)">
+            <input type="checkbox" id="modal-checkbox" style="margin-top:2px; cursor:pointer; flex-shrink:0">
+            <label for="modal-checkbox" style="font-size:var(--font-sm); color:var(--text-secondary); cursor:pointer; line-height:1.4">${checkboxLabel}</label>
+        </div>
+    ` : '';
 
     const overlay = document.createElement('div');
     overlay.id = 'confirm-modal-overlay';
@@ -517,7 +526,7 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
     overlay.innerHTML = `
         <div class="modal-content">
             <h3 class="modal-title">${title}</h3>
-            <div class="modal-body">${body}</div>
+            <div class="modal-body">${body}${checkboxHtml}</div>
             <div class="modal-actions">
                 <button id="modal-cancel" class="btn btn-secondary">Annuler</button>
                 <button id="modal-confirm" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${confirmLabel}</button>
@@ -550,8 +559,11 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
         const btn = document.getElementById('modal-confirm');
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> …';
+        const checkboxChecked = checkboxLabel
+            ? (document.getElementById('modal-checkbox')?.checked ?? false)
+            : false;
         try {
-            await onConfirm();
+            await onConfirm(checkboxChecked);
         } catch (err) {
             console.error('Modal confirm error:', err);
         }

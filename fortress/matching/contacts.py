@@ -17,6 +17,11 @@ import json
 import re
 import unicodedata
 from typing import Any
+from urllib.parse import urlparse
+
+import structlog
+
+log = structlog.get_logger("fortress.matching.contacts")
 
 # ---------------------------------------------------------------------------
 # Phone regexes — French formats
@@ -715,10 +720,17 @@ _DIRECTOR_KEYWORDS = re.compile(
 
 # Hébergeur section — everything after these keywords is about the hosting provider
 _HEBERGEUR_KEYWORDS = re.compile(
-    r"hébergeur|hébergement|hebergeur|hebergement"
+    r"h[ée]bergeur\s+du\s+site"
+    r"|h[ée]bergement\s+du\s+site"
+    r"|h[ée]bergement\s+web"
+    r"|prestataire\s+d[''']h[ée]bergement"
+    r"|soci[ée]t[ée]\s+d[''']h[ée]bergement"
+    r"|stockage\s+direct\s+et\s+permanent"
     r"|hosting\s+provider"
-    r"|site\s+hébergé"
-    r"|site\s+heberge",
+    r"|site\s+h[ée]berg[ée]"
+    r"|h[ée]berg[ée]\s+par"
+    r"|h[ée]bergeur\s*:"
+    r"|h[ée]bergement\s*:",
     re.IGNORECASE,
 )
 
@@ -738,9 +750,10 @@ _EFFECTIF_RE = re.compile(
     re.IGNORECASE,
 )
 
-# French name pattern: 1-3 capitalized words
+# French name pattern: 3 alternatives covering mixed-case, title case, and ALL CAPS
 _NAME_RE = re.compile(
-    r"(?:M(?:me|r|\.)?\.?\s+)?([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+){0,2})"
+    r"(?:M(?:me|r|\.)?\.?\s+)?([A-ZÀ-Ÿ][a-zà-ÿ]+(?:-[A-ZÀ-Ÿ][a-zà-ÿ]+)?\s+[A-ZÀ-Ÿ]{2,}(?:\s+[A-ZÀ-Ÿ]{2,})?)"
+    r"|(?:M(?:me|r|\.)?\.?\s+)?([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-ZÀ-Ÿ][a-zà-ÿ]+){0,2})"
     r"|([A-ZÀ-Ÿ]{2,}(?:\s+[A-ZÀ-Ÿ]{2,}){0,2})"
 )
 
@@ -827,7 +840,7 @@ def extract_mentions_legales(
 
         name_match = _NAME_RE.search(after_keyword)
         if name_match:
-            name = (name_match.group(1) or name_match.group(2) or "").strip()
+            name = (name_match.group(1) or name_match.group(2) or name_match.group(3) or "").strip()
             # Reject if name matches a known hébergeur
             if name and name.lower() not in _HEBERGEUR_NAMES and len(name) > 3:
                 result["director_name"] = name
@@ -882,3 +895,193 @@ def extract_mentions_legales(
 
     return result
 
+
+# ---------------------------------------------------------------------------
+# Best email / best phone selection (moved from processing/enricher.py)
+# Used by the Enrichir button in companies.py
+# ---------------------------------------------------------------------------
+
+_PREFERRED_EMAIL_PREFIXES: tuple[str, ...] = (
+    "contact",
+    "info",
+    "commercial",
+    "vente",
+    "ventes",
+    "accueil",
+    "bonjour",
+    "hello",
+    "secretariat",
+    "direction",
+)
+
+
+def _extract_domain(url: str) -> str | None:
+    """Return the registered domain (SLD + TLD) from a URL, or None."""
+    try:
+        netloc = urlparse(url).netloc.lower().lstrip("www.")
+        parts = netloc.split(".")
+        if len(parts) >= 2:
+            return ".".join(parts[-2:])
+        return parts[0] if parts else None
+    except ValueError:
+        return None
+
+
+def _email_domain_matches(email: str, website_url: str | None) -> bool:
+    """Return True if the email domain is plausibly related to the company website."""
+    if not website_url:
+        return True
+
+    website_domain = _extract_domain(website_url)
+    if not website_domain:
+        return True
+
+    _, _, email_domain = email.partition("@")
+    email_sld = _extract_domain("https://" + email_domain)
+    if not email_sld:
+        return False
+
+    if email_sld == website_domain:
+        return True
+
+    site_root = website_domain.split(".")[0]
+    mail_root = email_sld.split(".")[0]
+    mail_root_clean = re.sub(r"[^a-z0-9]", "", mail_root)
+    site_root_clean = re.sub(r"[^a-z0-9]", "", site_root)
+    if len(site_root_clean) >= 4 and (
+        site_root_clean in mail_root_clean or mail_root_clean in site_root_clean
+    ):
+        return True
+
+    return False
+
+
+def _best_email(
+    emails: list[str],
+    website_url: str | None,
+    siren: str,
+    company_name: str | None = None,
+) -> str | None:
+    """Pick the single best business email from a list.
+
+    Selection strategy (in order):
+      1. Remove junk emails and personal-domain emails.
+      2. Keep only emails whose domain matches the company website.
+      3. Prefer emails with a preferred prefix (contact@ > info@ > commercial@…).
+      4. Fall back to the first domain-matching email if no preferred prefix found.
+      5. Return None if nothing usable.
+    """
+    if not emails:
+        return None
+
+    usable = [e for e in emails if not is_personal_email(e, company_name)]
+    if not usable:
+        return None
+
+    domain_matched: list[str] = [
+        e for e in usable if _email_domain_matches(e, website_url)
+    ]
+    candidates = domain_matched if domain_matched else usable
+
+    local_map: dict[str, str] = {}
+    for email in candidates:
+        local = email.split("@")[0]
+        local_map[local] = email
+
+    for prefix in _PREFERRED_EMAIL_PREFIXES:
+        if prefix in local_map:
+            chosen = local_map[prefix]
+            if chosen not in domain_matched:
+                log.debug(
+                    "contacts.email_domain_mismatch_accepted",
+                    email=chosen,
+                    website=website_url,
+                    siren=siren,
+                )
+            return chosen
+
+    return candidates[0]
+
+
+_PHONE_DIGITS_RE = re.compile(r"[\s.\-()]")
+
+_DEPT_TO_PHONE_PREFIX: dict[str, str] = {}
+
+for _d in ("75", "77", "78", "91", "92", "93", "94", "95"):
+    _DEPT_TO_PHONE_PREFIX[_d] = "01"
+
+for _d in ("14", "22", "27", "28", "29", "35", "36", "37", "41", "44", "45",
+           "49", "50", "53", "56", "61", "72", "76", "85"):
+    _DEPT_TO_PHONE_PREFIX[_d] = "02"
+
+for _d in ("02", "08", "10", "18", "21", "25", "39", "51", "52", "54", "55",
+           "57", "58", "59", "60", "62", "67", "68", "70", "71", "80", "88",
+           "89", "90"):
+    _DEPT_TO_PHONE_PREFIX[_d] = "03"
+
+for _d in ("01", "03", "04", "05", "06", "07", "11", "13", "15", "26", "30",
+           "34", "38", "42", "43", "48", "63", "66", "69", "73", "74", "83",
+           "84", "2A", "2B"):
+    _DEPT_TO_PHONE_PREFIX[_d] = "04"
+
+for _d in ("09", "12", "16", "17", "19", "23", "24", "31", "32", "33", "40",
+           "46", "47", "64", "65", "79", "81", "82", "86", "87"):
+    _DEPT_TO_PHONE_PREFIX[_d] = "05"
+
+del _d
+
+
+def _best_phone(
+    phones: list[str],
+    siren: str,
+    departement: str | None = None,
+) -> str | None:
+    """Pick the best phone from a list, preferring geographic match + landlines.
+
+    Priority:
+      1. Landline matching company's département (e.g. 05 for dépt 33)
+      2. Other geographic landlines (01-05)
+      3. Mobile (06-07)
+      4. VoIP (09)
+    """
+    if not phones:
+        return None
+
+    valid = [p for p in phones if _is_valid_french_phone(p)]
+    if not valid:
+        log.debug("contacts.all_phones_invalid", phones=phones, siren=siren)
+        return None
+
+    expected_prefix = _DEPT_TO_PHONE_PREFIX.get(departement or "", None)
+
+    def _phone_priority(p: str) -> int:
+        digits = _PHONE_DIGITS_RE.sub("", p)
+        if digits.startswith("+33") and len(digits) == 12:
+            digits = "0" + digits[3:]
+        prefix = digits[:2]
+
+        if expected_prefix and prefix == expected_prefix:
+            return 0
+        if prefix in ("01", "02", "03", "04", "05"):
+            return 1
+        if prefix in ("06", "07"):
+            return 2
+        if prefix == "09":
+            return 3
+        return 4
+
+    chosen = sorted(valid, key=_phone_priority)[0]
+    if expected_prefix:
+        chosen_digits = _PHONE_DIGITS_RE.sub("", chosen)
+        if chosen_digits.startswith("+33"):
+            chosen_digits = "0" + chosen_digits[3:]
+        if chosen_digits[:2] != expected_prefix:
+            log.debug(
+                "contacts.phone_geo_mismatch",
+                siren=siren,
+                departement=departement,
+                expected_prefix=expected_prefix,
+                chosen_prefix=chosen_digits[:2],
+                chosen=chosen,
+            )
+    return chosen

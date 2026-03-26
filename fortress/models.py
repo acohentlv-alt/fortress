@@ -70,6 +70,7 @@ class Company(BaseModel):
     latitude: Decimal | None = None
     longitude: Decimal | None = None
     fortress_id: int | None = None
+    workspace_id: int | None = None  # Set for MAPS entities; NULL for real SIRENE records
     missing_fields: list[str] = []  # Set by triage for YELLOW companies only
 
 

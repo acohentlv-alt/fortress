@@ -33,7 +33,7 @@ export async function renderUpload(container) {
         <!-- Upload Zone -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div id="drop-zone" style="
-                border: 2px dashed var(--border-color);
+                border: 2px dashed var(--border-default);
                 border-radius: var(--radius-lg);
                 padding: var(--space-3xl, 48px) var(--space-xl);
                 text-align: center;

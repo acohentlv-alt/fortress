@@ -7,11 +7,19 @@
  * UX: Initially loads 5 pages (250 rows). User can "Charger plus" for more.
  */
 
-import { getContactsList, bulkExportCSV, extractApiError, checkHealth } from '../api.js';
-import { escapeHtml, showToast } from '../components.js';
+import { getContactsList, bulkExportCSV, extractApiError, checkHealth, startDeepEnrich } from '../api.js';
+import { escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
+import { showAddEntityModal } from '../components/add-entity-modal.js';
+
+let selectionMode = false;
+let selectedSirens = new Set();
 
 export async function renderContacts(container) {
+    // Reset selection state when page is entered
+    selectedSirens.clear();
+    selectionMode = false;
+
     let currentDepartment = '';
     let currentNafCode = '';
     let currentQuery = '';
@@ -27,13 +35,21 @@ export async function renderContacts(container) {
                 <h1 class="page-title">📇 Contacts</h1>
                 <p class="page-subtitle">Vue complète de tous les contacts enrichis — téléphones, emails, dirigeants</p>
             </div>
-            <button class="btn btn-secondary" id="contacts-export-btn" style="white-space:nowrap">
-                📥 Exporter CSV
-            </button>
+            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center">
+                <button class="btn btn-secondary" id="contacts-select-toggle" style="white-space:nowrap">
+                    ☑ Sélectionner
+                </button>
+                <button class="btn btn-secondary" id="contacts-export-btn" style="white-space:nowrap">
+                    📥 Exporter CSV
+                </button>
+                <button class="btn btn-secondary" id="contacts-add-entity" style="white-space:nowrap">
+                    ➕ Ajouter
+                </button>
+            </div>
         </div>
 
         <!-- Search + Filters -->
-        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-lg); flex-wrap:wrap; max-width:900px">
+        <div class="search-filters-row">
             <div style="flex:1; min-width:260px; position:relative">
                 <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">🔍</span>
                 <input type="text" id="contacts-search"
@@ -79,6 +95,99 @@ export async function renderContacts(container) {
     let debounceTimer;
     let nafTimer;
 
+    // ── Bulk bar helpers ──────────────────────────────────────────
+    function _updateContactsBulkBar() {
+        let bar = document.getElementById('bulk-action-bar');
+        if (selectedSirens.size === 0) {
+            _removeContactsBulkBar();
+            return;
+        }
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'bulk-action-bar';
+            bar.className = 'bulk-action-bar';
+            document.body.appendChild(bar);
+        }
+        const n = selectedSirens.size;
+        bar.innerHTML = `
+            <span class="bulk-count">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
+            <button class="btn btn-secondary" id="contacts-bulk-select-all">Tout sélectionner</button>
+            <button class="btn btn-primary" id="contacts-bulk-enrich">🚀 Enrichir via site web</button>
+            <button class="btn btn-danger" id="contacts-bulk-delete">🗑️ Supprimer</button>
+        `;
+
+        document.getElementById('contacts-bulk-select-all').onclick = () => {
+            const boxes = document.querySelectorAll('.contact-checkbox');
+            const allChecked = [...boxes].every(b => b.checked);
+            boxes.forEach(b => {
+                b.checked = !allChecked;
+                if (!allChecked) selectedSirens.add(b.dataset.siren);
+                else selectedSirens.delete(b.dataset.siren);
+            });
+            renderTable();
+        };
+
+        document.getElementById('contacts-bulk-enrich').onclick = async () => {
+            const sirens = [...selectedSirens];
+            if (!sirens.length) return;
+            if (sirens.length > 20) {
+                showToast('Maximum 20 entreprises par enrichissement', 'error');
+                return;
+            }
+            showToast(`Enrichissement de ${sirens.length} entreprise(s)…`, 'info');
+            const result = await startDeepEnrich(sirens);
+            if (result && result._ok !== false) {
+                showToast(`Enrichissement lancé pour ${sirens.length} entreprise(s)`, 'success');
+                selectionMode = false;
+                selectedSirens.clear();
+                _removeContactsBulkBar();
+                renderTable();
+            } else {
+                showToast("Erreur lors de l'enrichissement", 'error');
+            }
+        };
+
+        document.getElementById('contacts-bulk-delete').onclick = () => {
+            const sirens = [...selectedSirens];
+            if (!sirens.length) return;
+            showConfirmModal({
+                title: `Supprimer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} ?`,
+                body: `<p>Supprimer définitivement ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} de la base de données</p>`,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                checkboxLabel: 'Également ajouter à la liste noire',
+                onConfirm: async (blacklist) => {
+                    let ok = 0;
+                    for (const siren of sirens) {
+                        const res = await fetch(`/api/companies/${encodeURIComponent(siren)}/delete`, {
+                            method: 'DELETE',
+                            credentials: 'same-origin',
+                        });
+                        if (res.ok) ok++;
+                        if (blacklist) {
+                            await fetch('/api/blacklist', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ siren, reason: 'Supprimé en masse' }),
+                                credentials: 'same-origin',
+                            });
+                        }
+                    }
+                    showToast(`${ok}/${sirens.length} supprimée(s)`, 'success');
+                    selectionMode = false;
+                    selectedSirens.clear();
+                    _removeContactsBulkBar();
+                    doSearch();
+                }
+            });
+        };
+    }
+
+    function _removeContactsBulkBar() {
+        const bar = document.getElementById('bulk-action-bar');
+        if (bar) bar.remove();
+    }
+
     // ── Render the table from accumulated results ────────────────
     function renderTable() {
         if (allResults.length === 0) {
@@ -108,6 +217,7 @@ export async function renderContacts(container) {
                 <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
                     <thead>
                         <tr>
+                            ${selectionMode ? '<th class="contacts-th" style="width:40px"></th>' : ''}
                             <th class="contacts-th">Entreprise</th>
                             <th class="contacts-th" style="white-space:nowrap">SIREN</th>
                             <th class="contacts-th">📞 Tél</th>
@@ -120,7 +230,13 @@ export async function renderContacts(container) {
                     </thead>
                     <tbody>
                         ${allResults.map(r => `
-                            <tr class="contacts-row" onclick="window.location.hash='#/company/${r.siren}'">
+                            <tr class="contacts-row" onclick="window.location.hash='#/company/${r.siren}'"
+                                ${selectionMode && selectedSirens.has(r.siren) ? 'style="background:rgba(99,102,241,0.08)"' : ''}>
+                                ${selectionMode ? `
+                                <td style="width:40px; text-align:center" onclick="event.stopPropagation()">
+                                    <input type="checkbox" class="contact-checkbox" data-siren="${escapeHtml(r.siren)}"
+                                           ${selectedSirens.has(r.siren) ? 'checked' : ''}>
+                                </td>` : ''}
                                 <td class="contacts-td" style="font-weight:500; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
                                     ${escapeHtml(r.denomination || '—')}
                                 </td>
@@ -139,7 +255,7 @@ export async function renderContacts(container) {
                                 </td>
                                 <td class="contacts-td" style="max-width:160px; overflow:hidden; text-overflow:ellipsis">
                                     ${r.website
-                                        ? `<a href="${r.website.startsWith('http') ? r.website : 'https://' + r.website}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 25))}</a>`
+                                        ? `<a href="${r.website.startsWith('http') ? r.website : 'https://' + r.website}" target="_blank" rel="noopener" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 25))}</a>`
                                         : '<span style="color:var(--text-disabled)">—</span>'}
                                 </td>
                                 <td class="contacts-td" style="white-space:nowrap">
@@ -179,6 +295,18 @@ export async function renderContacts(container) {
         const loadMoreBtn = document.getElementById('contacts-load-more');
         if (loadMoreBtn) {
             loadMoreBtn.addEventListener('click', () => loadMore());
+        }
+
+        // Wire checkboxes when in selection mode
+        if (selectionMode) {
+            document.querySelectorAll('.contact-checkbox').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    if (cb.checked) selectedSirens.add(cb.dataset.siren);
+                    else selectedSirens.delete(cb.dataset.siren);
+                    _updateContactsBulkBar();
+                });
+            });
+            _updateContactsBulkBar();
         }
     }
 
@@ -278,7 +406,24 @@ export async function renderContacts(container) {
         nafTimer = setTimeout(() => {
             currentNafCode = nafFilter.value.trim();
             doSearch();
-        }, 500);
+        }, 400);
+    });
+
+    // Select toggle button
+    document.getElementById('contacts-select-toggle')?.addEventListener('click', () => {
+        selectionMode = !selectionMode;
+        const btn = document.getElementById('contacts-select-toggle');
+        if (btn) btn.textContent = selectionMode ? '✖ Annuler' : '☑ Sélectionner';
+        if (!selectionMode) {
+            selectedSirens.clear();
+            _removeContactsBulkBar();
+        }
+        renderTable();
+    });
+
+    // Add entity button
+    document.getElementById('contacts-add-entity')?.addEventListener('click', () => {
+        showAddEntityModal({ onSuccess: () => doSearch() });
     });
 
     // Export button
@@ -287,9 +432,21 @@ export async function renderContacts(container) {
         btn.disabled = true;
         btn.textContent = '⏳ Export...';
         try {
-            // Export all enriched contacts (not just current page)
-            await bulkExportCSV({ format: 'csv' });
-            showToast('Export CSV téléchargé ✅', 'success');
+            const sirens = allResults.map(r => r.siren);
+            const resp = await fetch('/api/export/bulk/csv', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sirens }),
+                credentials: 'same-origin',
+            });
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'contacts_export.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Export CSV téléchargé', 'success');
         } catch (err) {
             showToast('Erreur d\'export: ' + err.message, 'error');
         } finally {

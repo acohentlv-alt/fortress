@@ -364,3 +364,34 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS siren_match BOOLEAN;
 -- Financial data — resultat_net from Recherche Entreprises API
 -- ---------------------------------------------------------------------------
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS resultat_net BIGINT;
+
+-- ---------------------------------------------------------------------------
+-- Workspace isolation — Phase B
+-- Each client has a private workspace. Admin sees all. Real SIRENs are shared.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS workspaces (
+    id         SERIAL PRIMARY KEY,
+    name       VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- Users belong to a workspace (NULL = admin, no workspace)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id);
+
+-- role now supports 'head' (workspace owner) in addition to 'admin' | 'user'
+-- No schema change needed — VARCHAR(20) already supports it.
+
+-- workspace_id on data tables (NULL = admin-created or pre-workspace data)
+ALTER TABLE batch_data    ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id);
+ALTER TABLE batch_log     ADD COLUMN IF NOT EXISTS workspace_id INTEGER;
+ALTER TABLE batch_tags    ADD COLUMN IF NOT EXISTS workspace_id INTEGER;
+ALTER TABLE companies     ADD COLUMN IF NOT EXISTS workspace_id INTEGER;   -- set only for MAPS entities
+ALTER TABLE company_notes ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE;
+ALTER TABLE contacts      ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_batch_data_workspace ON batch_data(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_companies_workspace  ON companies(workspace_id) WHERE workspace_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_batch_tags_workspace ON batch_tags(workspace_id);
+
+-- Seed: default workspace and data assignment handled at runtime (main.py startup)

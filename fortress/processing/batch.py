@@ -181,7 +181,7 @@ async def run_query(
         async def _on_save(company: Company, contact: Contact) -> None:
             """Persist one company+contact immediately after qualification."""
             async with pool.connection() as save_conn:
-                await upsert_company(save_conn, company)
+                await upsert_company(save_conn, company, allow_real_siren=True)
                 await bulk_tag_query(save_conn, [company.siren], batch_name)
                 await upsert_contact(save_conn, contact)
                 await log_audit(
@@ -239,7 +239,7 @@ async def run_query(
         async with pool.connection() as conn:
             for company in wave_companies:
                 if company.siren not in saved_companies:
-                    await upsert_company(conn, company)
+                    await upsert_company(conn, company, allow_real_siren=True)
                     await bulk_tag_query(conn, [company.siren], batch_name)
                     seen_set.mark_seen(company.model_dump())
 
