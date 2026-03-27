@@ -29,6 +29,8 @@ export function registerCleanup(fn) {
 }
 
 function _runCleanup() {
+    // Remove any lingering modal overlays
+    document.querySelectorAll('#confirm-modal-overlay, .modal-overlay, #bulk-action-bar').forEach(el => el.remove());
     while (_cleanupFns.length > 0) {
         try { _cleanupFns.pop()(); } catch { /* swallow */ }
     }

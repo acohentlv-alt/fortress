@@ -159,7 +159,7 @@ export async function renderContacts(container) {
                 onConfirm: async (blacklist) => {
                     let ok = 0;
                     for (const siren of sirens) {
-                        const res = await fetch(`/api/companies/${encodeURIComponent(siren)}/delete`, {
+                        const res = await fetch(`/api/companies/${encodeURIComponent(siren)}/tags/`, {
                             method: 'DELETE',
                             credentials: 'same-origin',
                         });
@@ -191,14 +191,31 @@ export async function renderContacts(container) {
     // ── Render the table from accumulated results ────────────────
     function renderTable() {
         if (allResults.length === 0) {
+            const hasFilter = currentDepartment || currentNafCode;
+            let emptyText;
+            let emptySubtext;
+            if (currentQuery) {
+                emptyText = `Aucun contact trouvé pour "${escapeHtml(currentQuery)}"`;
+                emptySubtext = 'Essayez un autre terme de recherche.';
+            } else if (currentDepartment && currentNafCode) {
+                emptyText = `Aucun contact dans ce département pour ce code NAF`;
+                emptySubtext = 'Essayez de modifier les filtres.';
+            } else if (currentDepartment) {
+                emptyText = `Aucun contact dans ce département`;
+                emptySubtext = 'Essayez un autre département ou supprimez le filtre.';
+            } else if (currentNafCode) {
+                emptyText = `Aucun contact pour ce code NAF`;
+                emptySubtext = 'Essayez un autre code NAF ou supprimez le filtre.';
+            } else {
+                emptyText = 'Aucun contact enrichi';
+                emptySubtext = 'Les contacts apparaissent ici après une recherche Maps ou un import CSV';
+            }
             resultsEl.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">📇</div>
-                    <div class="empty-state-text">${currentQuery
-                        ? `Aucun contact trouvé pour "${escapeHtml(currentQuery)}"`
-                        : 'Aucun contact enrichi'}</div>
+                    <div class="empty-state-text">${emptyText}</div>
                     <p style="color:var(--text-muted); font-size:var(--font-sm)">
-                        Les contacts apparaissent ici après une recherche Maps ou un import CSV
+                        ${emptySubtext}
                     </p>
                 </div>
             `;

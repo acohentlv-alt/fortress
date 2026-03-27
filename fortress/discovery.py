@@ -966,7 +966,7 @@ async def run(batch_id: str) -> None:
                             # Tag to this batch but skip re-scraping
                             async with pool.connection() as tag_conn:
                                 await bulk_tag_query(tag_conn, [lookup_siren], batch_name,
-                                                     workspace_id=batch_workspace_id)
+                                                     workspace_id=batch_workspace_id, batch_id=batch_id)
                             companies_discovered += 1
                             return
                         else:
@@ -1055,7 +1055,7 @@ async def run(batch_id: str) -> None:
                     # Persist to DB immediately
                     async with pool.connection() as conn:
                         await upsert_company(conn, company)
-                        await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id)
+                        await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
                         await upsert_contact(conn, contact)
 
                         # Store link metadata on the MAPS entity

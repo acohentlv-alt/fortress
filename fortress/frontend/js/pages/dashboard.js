@@ -16,6 +16,14 @@ let _selected = GlobalSelection;
 let _searchTerm = '';
 const API_BASE = '/api';
 
+// Module-level cache for getDepartments — avoids duplicate API calls within same session
+let _cachedDepartments = null;
+async function _getDepartmentsCached() {
+    if (_cachedDepartments !== null) return _cachedDepartments;
+    _cachedDepartments = await getDepartments();
+    return _cachedDepartments;
+}
+
 export async function renderDashboard(container) {
     // Show loading state
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -25,7 +33,7 @@ export async function renderDashboard(container) {
     try {
         [stats, departments, jobs, pendingLinksData] = await Promise.all([
             getDashboardStats(),
-            getDepartments(),
+            _getDepartmentsCached(),
             getJobs(),
             getPendingLinks(),
         ]);
@@ -176,7 +184,7 @@ export async function renderDashboard(container) {
         setActiveToggle('btn-by-dept');
         const view = document.getElementById('dashboard-view');
         view.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-        const depts = await getDepartments();
+        const depts = await _getDepartmentsCached();
         renderByLocation(depts, container);
     });
 
@@ -226,7 +234,7 @@ async function _loadAnalysisView(rootContainer) {
     const [data, batchData, depts] = await Promise.all([
         getAnalysis(),
         getBatchAnalysis(),
-        getDepartments(),
+        _getDepartmentsCached(),
     ]);
     if (!data || data._ok === false) {
         view.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>';
@@ -327,35 +335,47 @@ function _renderByUpload(data, rootContainer) {
     }
 
     view.innerHTML = `
-        <div class="card" style="margin-bottom:var(--space-xl); padding:var(--space-xl)">
-            <div style="display:flex; align-items:center; gap:var(--space-lg); margin-bottom:var(--space-xl)">
-                <div style="font-size:2.5rem">📤</div>
-                <div>
-                    <div style="font-size:var(--font-2xl); font-weight:800; color:var(--text-primary)">${totalSirens.toLocaleString('fr-FR')}</div>
-                    <div style="color:var(--text-muted); font-size:var(--font-sm)">SIRENs importés au total</div>
+        <div style="margin-bottom:var(--space-xl)">
+            <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom:var(--space-2xl)">
+                <div class="stat-card">
+                    <div class="stat-card-icon">📤</div>
+                    <div class="stat-card-value">${totalSirens.toLocaleString('fr-FR')}</div>
+                    <div class="stat-card-label">SIRENs importés</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-icon">📁</div>
+                    <div class="stat-card-value">${uploads.length}</div>
+                    <div class="stat-card-label">Fichier${uploads.length > 1 ? 's' : ''} importé${uploads.length > 1 ? 's' : ''}</div>
                 </div>
             </div>
 
-            <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
-                <thead>
-                    <tr>
-                        <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Fichier</th>
-                        <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">SIRENs</th>
-                        <th style="text-align:right; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">Date</th>
-                        <th style="width:40px"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${uploads.map(u => `
-                        <tr class="upload-row clickable-row" data-batch-id="${escapeHtml(u.batch_id || '')}" style="cursor:pointer; transition:background 0.15s">
-                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500">${escapeHtml(u.source_file || '—')}</td>
-                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--accent); font-weight:700; text-align:right">${(u.siren_count || 0).toLocaleString('fr-FR')}</td>
-                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-muted); text-align:right; white-space:nowrap">${formatDateTime(u.uploaded_at)}</td>
-                            <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); text-align:center; color:var(--accent)">👁️</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
+            <div style="display:flex; flex-direction:column; gap:var(--space-md)">
+                ${uploads.map(u => {
+                    const rawName = u.source_file || '';
+                    const displayName = rawName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ').trim() || '—';
+                    const sirenCount = (u.siren_count || 0).toLocaleString('fr-FR');
+                    const bid = escapeHtml(u.batch_id || '');
+                    return `
+                    <div class="card card-clickable upload-row" data-batch-id="${bid}"
+                         style="padding:var(--space-lg) var(--space-xl); display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg)">
+                        <div style="display:flex; align-items:center; gap:var(--space-lg); min-width:0; flex:1">
+                            <div style="font-size:2rem; flex-shrink:0">📄</div>
+                            <div style="min-width:0">
+                                <div style="font-weight:700; color:var(--text-primary); font-size:var(--font-md); white-space:nowrap; overflow:hidden; text-overflow:ellipsis">${escapeHtml(displayName)}</div>
+                                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px">${formatDateTime(u.uploaded_at)}</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:var(--space-xl); flex-shrink:0">
+                            <div style="text-align:right">
+                                <div style="font-size:var(--font-lg); font-weight:700; color:var(--accent)">${sirenCount}</div>
+                                <div style="font-size:var(--font-xs); color:var(--text-muted)">SIRENs</div>
+                            </div>
+                            <div style="color:var(--text-muted); font-size:var(--font-sm)">→</div>
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
         </div>
     `;
 
@@ -367,8 +387,6 @@ function _renderByUpload(data, rootContainer) {
                 window.location.hash = `#/job/${encodeURIComponent(bid)}`;
             }
         });
-        row.addEventListener('mouseover', () => row.style.background = 'var(--bg-hover)');
-        row.addEventListener('mouseout', () => row.style.background = '');
     });
 }
 

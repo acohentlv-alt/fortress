@@ -400,11 +400,15 @@ function _buildBreadcrumb(co, tags) {
     const items = [{ label: 'Dashboard', href: '#/' }];
 
     // Determine origin from tags
-    let parentLabel = 'Recherche';
-    let parentHref = '#/search';
+    // MAPS entities without tags → show "Dashboard" (they came from a batch, just lost their tag)
+    // Real SIREN companies without tags → show "Recherche" (found via SIRENE search)
+    const isMaps = co.siren && co.siren.startsWith('MAPS');
+    let parentLabel = isMaps ? 'Dashboard' : 'Recherche';
+    let parentHref = isMaps ? '#/' : '#/search';
 
     if (tags && tags.length > 0) {
-        const firstTag = tags[0].batch_name || '';
+        const tag = tags[0];
+        const firstTag = tag.batch_name || '';
         if (firstTag.startsWith('upload_') || firstTag.startsWith('Import: ')) {
             parentLabel = 'Import / Export';
             parentHref = '#/upload';
@@ -412,9 +416,14 @@ function _buildBreadcrumb(co, tags) {
             parentLabel = 'Recherche';
             parentHref = '#/search';
         } else if (firstTag) {
-            // Batch result — link to the job
+            // Batch result — link to the job using batch_id (UUID) for correct routing
             parentLabel = firstTag;
-            parentHref = `#/job/${encodeURIComponent(firstTag)}`;
+            if (tag.batch_id) {
+                parentHref = `#/job/${encodeURIComponent(tag.batch_id)}`;
+            } else {
+                // Fallback for old rows without batch_id
+                parentHref = '#/';
+            }
         }
     }
 

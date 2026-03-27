@@ -725,6 +725,16 @@
     position: relative;
 }
 
+/* Invisible full-card link overlay — enables right-click/middle-click/screen reader */
+.company-card-link {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    text-decoration: none;
+    color: inherit;
+    border-radius: inherit;
+}
+
 .company-card > .card-remove-btn {
     position: absolute;
     top: 8px;
@@ -2996,6 +3006,8 @@
     font-size: 13px;
     transition: all 0.15s ease;
     opacity: 0.7;
+    position: relative;
+    z-index: 2;
 }
 .action-btn:hover { opacity: 1; }
 .action-btn-confirm { color: var(--success, #22c55e); }

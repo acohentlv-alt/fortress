@@ -173,7 +173,8 @@ export function companyCard(company, opts = {}) {
     ` : '';
     const checkbox = opts.selectable ? `
         <input type="checkbox" class="card-checkbox" data-siren="${siren}"
-            onclick="event.stopPropagation();" ${opts.checked ? 'checked' : ''}>
+            onclick="event.stopPropagation();" ${opts.checked ? 'checked' : ''}
+            style="position:relative; z-index:2">
     ` : '';
 
     // Detect if company has ANY enrichment data
@@ -182,8 +183,9 @@ export function companyCard(company, opts = {}) {
     // Compact row for SIRENE-only companies (no enrichment)
     if (!hasData && !opts.forceExpand) {
         return `
-            <div class="company-card company-card-compact${opts.checked ? ' card-selected' : ''}" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'"
+            <div class="company-card company-card-compact${opts.checked ? ' card-selected' : ''}" data-siren="${siren}"
                  style="padding:var(--space-md) var(--space-lg); min-height:auto">
+                <a href="#/company/${siren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-md)">
                     ${checkbox}
                     <div style="min-width:0; flex:1">
@@ -196,9 +198,9 @@ export function companyCard(company, opts = {}) {
                             ${company.naf_libelle ? `<span style="color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px">· ${escapeHtml(company.naf_libelle)}</span>` : ''}
                         </div>
                     </div>
-                    <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
+                    <div style="display:flex; gap:6px; align-items:center; flex-shrink:0; position:relative; z-index:2">
                         ${removeBtn}
-                        ${company.maps_url ? `<a href="${company.maps_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Google Maps" style="color:var(--text-muted);text-decoration:none;font-size:14px">🗺️</a>` : ''}
+                        ${company.maps_url ? `<a href="${company.maps_url}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Google Maps" style="color:var(--text-muted);text-decoration:none;font-size:14px;position:relative;z-index:2">🗺️</a>` : ''}
                         ${company.link_confidence === 'pending' ? '<span class="glass-badge glass-badge--gold" style="font-size:var(--font-xs)">Lien en attente</span>' : ''}
                         ${statutBadge(company.statut)}
                     </div>
@@ -209,7 +211,8 @@ export function companyCard(company, opts = {}) {
 
     // Full card for enriched companies
     return `
-        <div class="company-card${opts.checked ? ' card-selected' : ''}" data-siren="${siren}" onclick="window.location.hash='#/company/${siren}'">
+        <div class="company-card${opts.checked ? ' card-selected' : ''}" data-siren="${siren}">
+            <a href="#/company/${siren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
             ${removeBtn}
             <div class="company-card-header">
                 <div style="display:flex; align-items:flex-start; gap:var(--space-sm); min-width:0; flex:1">
@@ -219,7 +222,7 @@ export function companyCard(company, opts = {}) {
                         <div class="company-card-siren">${formatSiren(siren)}</div>
                     </div>
                 </div>
-                <div style="display:flex; gap:6px; align-items:center; flex-shrink:0">
+                <div style="display:flex; gap:6px; align-items:center; flex-shrink:0; position:relative; z-index:2">
                     ${statutBadge(company.statut)}
                     ${formeJuridiqueBadge(company.forme_juridique)}
                     ${company.link_confidence === 'pending' ? '<span class="glass-badge glass-badge--gold">Lien en attente</span>' : ''}

@@ -233,6 +233,7 @@ async def bulk_tag_query(
     sirens: list[str],
     batch_name: str,
     workspace_id: int | None = None,
+    batch_id: str | None = None,
 ) -> None:
     """Tag multiple companies for a query in a single batch.
 
@@ -246,11 +247,11 @@ async def bulk_tag_query(
     async with conn.cursor() as cur:
         await cur.executemany(
             """
-            INSERT INTO batch_tags (siren, batch_name, tagged_at, workspace_id)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (siren, batch_name) DO NOTHING
+            INSERT INTO batch_tags (siren, batch_name, tagged_at, workspace_id, batch_id)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (siren, batch_name) DO UPDATE SET batch_id = EXCLUDED.batch_id WHERE batch_tags.batch_id IS NULL
             """,
-            [(siren, batch_name, now, workspace_id) for siren in sirens],
+            [(siren, batch_name, now, workspace_id, batch_id) for siren in sirens],
         )
 
 

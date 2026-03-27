@@ -51,10 +51,15 @@ async def login(request: Request):
             content={"error": "Nom d'utilisateur et mot de passe requis."},
         )
 
-    # Look up user in database
+    # Look up user and update last_login in a single DB connection
     try:
         async with get_conn() as conn:
             user = await get_user_by_username(conn, username)
+            if user and verify_password(password, user["password_hash"]):
+                try:
+                    await update_last_login(conn, user["id"])
+                except Exception:
+                    pass  # Non-critical — don't block login if timestamp fails
     except RuntimeError:
         return JSONResponse(
             status_code=503,
@@ -90,13 +95,6 @@ async def login(request: Request):
         samesite="lax",
         secure=settings.secure_cookies,  # True when FRONTEND_URL is https://
     )
-
-    # Update last_login
-    try:
-        async with get_conn() as conn:
-            await update_last_login(conn, user["id"])
-    except Exception:
-        pass  # Non-critical
 
     logger.info("auth.login_ok", extra={"username": username, "role": user["role"]})
     return response

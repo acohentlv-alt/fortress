@@ -223,6 +223,16 @@ async def lifespan(app: FastAPI):
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_siren ON batch_tags(siren)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_siren ON contacts(siren)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_data_status ON batch_data(status)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_link_confidence ON companies (link_confidence)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_batch_id ON batch_tags (batch_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_upper_batch_name ON batch_tags (UPPER(batch_name))")
+
+                # Backfill batch_tags.batch_id from batch_data (idempotent — only updates NULLs)
+                await conn.execute("""
+                    UPDATE batch_tags bt SET batch_id = bd.batch_id
+                    FROM batch_data bd
+                    WHERE bt.batch_name = bd.batch_name AND bt.batch_id IS NULL
+                """)
 
                 # Seed default workspace and assign existing data (idempotent)
                 await conn.execute("INSERT INTO workspaces (name) VALUES ('Default') ON CONFLICT (name) DO NOTHING")

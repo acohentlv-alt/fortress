@@ -1229,8 +1229,8 @@ async def _get_company_impl(siren: str):
 
     # Query tags (which jobs found this company)
     tags = await fetch_all("""
-        SELECT batch_name, tagged_at
-        FROM batch_tags
+        SELECT bt.batch_id, batch_name, tagged_at
+        FROM batch_tags bt
         WHERE siren = %s
         ORDER BY tagged_at DESC
     """, (siren,))
