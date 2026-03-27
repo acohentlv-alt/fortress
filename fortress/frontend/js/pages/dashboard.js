@@ -442,7 +442,7 @@ function _renderPendingLinks(data, rootContainer) {
                                     ? `<span style="color:var(--warning); font-weight:500">${escapeHtml(r.suggested_name)}</span><br><span style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(r.suggested_siren || '')}</span>`
                                     : `<span style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(r.suggested_siren || '—')}</span>`}
                             </td>
-                            <td class="contacts-td reason-toggle" data-idx="${idx}">
+                            <td class="contacts-td reason-toggle" data-idx="${idx}" onclick="event.stopPropagation()">
                                 <span class="reason-chevron">▸</span>
                                 <span style="color:var(--text-secondary); font-size:var(--font-xs)">${escapeHtml(reasonDisplay)}</span>
                             </td>
