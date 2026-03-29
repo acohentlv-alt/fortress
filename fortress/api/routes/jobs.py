@@ -47,6 +47,36 @@ async def list_jobs(request: Request):
         base_query + " ORDER BY sj.updated_at DESC",
         tuple(ws_params) if ws_params else None,
     )
+
+    # Watchdog: auto-complete orphaned batches (in_progress but idle >10 min)
+    orphaned = [
+        r["batch_id"] for r in rows
+        if r.get("status") == "in_progress"
+        and r.get("updated_at")
+        and (__import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ) - r["updated_at"]).total_seconds() > 600
+    ]
+    if orphaned:
+        try:
+            async with get_conn() as conn:
+                for bid in orphaned:
+                    await conn.execute(
+                        """UPDATE batch_data SET status = 'completed',
+                           shortfall_reason = COALESCE(shortfall_reason,
+                               'Le processus pipeline s''est arrêté. Relancez le batch pour continuer.'),
+                           updated_at = NOW()
+                           WHERE batch_id = %s AND status = 'in_progress'""",
+                        (bid,),
+                    )
+                await conn.commit()
+            # Update in-memory rows
+            for r in rows:
+                if r["batch_id"] in orphaned:
+                    r["status"] = "completed"
+        except Exception:
+            pass  # Non-fatal
+
     return rows
 
 
@@ -184,7 +214,7 @@ async def get_job(batch_id: str):
     """Single job detail with progress info."""
     job = await fetch_one("""
         SELECT
-            sj.batch_id, sj.batch_name, 
+            sj.batch_id, sj.batch_name,
             sj.status AS status,
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
@@ -195,12 +225,40 @@ async def get_job(batch_id: str):
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.mode,
-            sj.shortfall_reason
+            sj.shortfall_reason,
+            EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds
         FROM batch_data sj
         WHERE sj.batch_id = %s
     """, (batch_id,))
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+    # Watchdog: if batch is in_progress but no update in 10+ minutes, mark as completed.
+    # The worker process likely crashed (Render restart, OOM, etc.).
+    idle = job.get("idle_seconds") or 0
+    if job["status"] == "in_progress" and idle > 600:
+        scraped = job.get("companies_scraped") or 0
+        batch_size = job.get("batch_size") or 0
+        shortfall = (
+            f"Le processus pipeline s'est arrêté après {scraped} entreprises "
+            f"(objectif : {batch_size}). Relancez le batch pour continuer."
+        ) if scraped < batch_size else None
+        try:
+            async with get_conn() as conn:
+                await conn.execute(
+                    """UPDATE batch_data SET status = 'completed',
+                       shortfall_reason = COALESCE(shortfall_reason, %s),
+                       updated_at = NOW()
+                       WHERE batch_id = %s AND status = 'in_progress'""",
+                    (shortfall, batch_id),
+                )
+                await conn.commit()
+            job = {**job, "status": "completed", "shortfall_reason": shortfall}
+        except Exception:
+            pass  # Non-fatal — just show stale data
+
+    # Remove internal field from response
+    job = {k: v for k, v in job.items() if k != "idle_seconds"}
 
     # Also get departments this job touches
     depts = await fetch_all("""

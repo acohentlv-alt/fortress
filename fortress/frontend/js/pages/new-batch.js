@@ -312,7 +312,7 @@ export async function renderNewBatch(container) {
                 `;
 
                 setTimeout(() => {
-                    window.location.hash = '#/monitor';
+                    window.location.hash = `#/monitor/${encodeURIComponent(result.batch_id)}`;
                 }, 3000);
             } else {
                 const errorMsg = extractApiError(result);

@@ -2,22 +2,22 @@
  * Fortress SPA — Main Application & Router
  */
 
-import { renderDashboard } from './pages/dashboard.js';
-import { renderDepartment } from './pages/department.js';
-import { renderJob } from './pages/job.js';
-import { renderCompany } from './pages/company.js?v=13';
-import { renderSearch } from './pages/search.js';
-import { renderMonitor } from './pages/monitor.js';
-import { renderNewBatch } from './pages/new-batch.js';
-import { renderOpenQuery } from './pages/open-query.js';
-import { renderUpload } from './pages/upload.js';
-import { renderContacts } from './pages/contacts.js';
-import { renderActivity } from './pages/activity.js';
-import { renderBlacklist } from './pages/blacklist.js';
-import { renderAdmin } from './pages/admin.js';
-import { renderLogin } from './pages/login.js';
-import { renderIntro } from './pages/intro.js';
-import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
+import { renderDashboard } from './pages/dashboard.js?v=19';
+import { renderDepartment } from './pages/department.js?v=19';
+import { renderJob } from './pages/job.js?v=19';
+import { renderCompany } from './pages/company.js?v=19';
+import { renderSearch } from './pages/search.js?v=19';
+import { renderMonitor } from './pages/monitor.js?v=19';
+import { renderNewBatch } from './pages/new-batch.js?v=19';
+import { renderOpenQuery } from './pages/open-query.js?v=19';
+import { renderUpload } from './pages/upload.js?v=19';
+import { renderContacts } from './pages/contacts.js?v=19';
+import { renderActivity } from './pages/activity.js?v=19';
+import { renderBlacklist } from './pages/blacklist.js?v=19';
+import { renderAdmin } from './pages/admin.js?v=19';
+import { renderLogin } from './pages/login.js?v=19';
+import { renderIntro } from './pages/intro.js?v=19';
+import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js?v=19';
 
 // ── Navigation Generation Counter ───────────────────────────────
 // Each navigate() call increments _navGeneration. Page handlers
