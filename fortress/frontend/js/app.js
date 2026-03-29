@@ -17,7 +17,8 @@ import { renderBlacklist } from './pages/blacklist.js?v=19';
 import { renderAdmin } from './pages/admin.js?v=19';
 import { renderLogin } from './pages/login.js?v=19';
 import { renderIntro } from './pages/intro.js?v=19';
-import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js?v=19';
+import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
+import { initI18n, changeLanguage, getLang, t } from './i18n.js';
 
 // ── Navigation Generation Counter ───────────────────────────────
 // Each navigate() call increments _navGeneration. Page handlers
@@ -222,7 +223,7 @@ async function navigate() {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">❌</div>
-                        <div class="empty-state-text">Erreur de chargement</div>
+                        <div class="empty-state-text">${t('app.loadingError')}</div>
                         <p style="color: var(--text-muted)">${err.message}</p>
                     </div>
                 `;
@@ -235,8 +236,8 @@ async function navigate() {
     container.innerHTML = `
         <div class="empty-state">
             <div class="empty-state-icon">🔍</div>
-            <div class="empty-state-text">Page introuvable</div>
-            <a href="#/" class="btn btn-primary">Retour au Dashboard</a>
+            <div class="empty-state-text">${t('app.pageNotFound')}</div>
+            <a href="#/" class="btn btn-primary">${t('app.backToDashboard')}</a>
         </div>
     `;
 }
@@ -249,7 +250,7 @@ async function checkRunningJobs() {
     const badge = document.getElementById('header-running-badge');
     if (stats && stats.running_jobs > 0) {
         badge.style.display = 'inline-flex';
-        badge.textContent = `⏳ ${stats.running_jobs} batch en cours`;
+        badge.textContent = `⏳ ${stats.running_jobs} ${t('app.runningBatch')}`;
     } else {
         badge.style.display = 'none';
     }
@@ -264,6 +265,18 @@ function _setupRunningJobs() {
 // ── App Init ─────────────────────────────────────────────────────
 
 async function initApp() {
+    // Initialize i18n before any rendering
+    await initI18n();
+
+    // Wire language toggle
+    const langToggle = document.getElementById('lang-toggle');
+    if (langToggle) {
+        langToggle.addEventListener('click', () => {
+            const newLang = getLang() === 'fr' ? 'en' : 'fr';
+            changeLanguage(newLang);
+        });
+    }
+
     // Check session with backend — cookie is sent automatically
     const user = await getCurrentUser();
 
@@ -324,7 +337,7 @@ function _setupSidebarToggle() {
     }
 
     brandBtn.style.cursor = 'pointer';
-    brandBtn.title = 'Fixer/réduire le menu';
+    brandBtn.title = t('sidebar.pinMenu');
 
     // Click to pin/unpin
     let _suppressHover = false;
