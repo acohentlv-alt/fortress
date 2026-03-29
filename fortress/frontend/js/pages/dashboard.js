@@ -117,8 +117,8 @@ export async function renderDashboard(container, gen) {
 
         <!-- View Toggle -->
         <div class="view-toggle">
-            ${user?.role === 'admin' ? '<button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>' : ''}
-            <button class="view-toggle-btn ${user?.role !== 'admin' ? 'active' : ''}" id="btn-by-job">📋 Par Recherche</button>
+            ${(user?.role === 'admin' || user?.role === 'head') ? '<button class="view-toggle-btn active" id="btn-analysis">📊 Analyse</button>' : ''}
+            <button class="view-toggle-btn ${(user?.role !== 'admin' && user?.role !== 'head') ? 'active' : ''}" id="btn-by-job">📋 Par Recherche</button>
             <button class="view-toggle-btn" id="btn-by-dept">📍 Par Département</button>
             <button class="view-toggle-btn" id="btn-by-upload">📤 Par Upload</button>
             <button class="view-toggle-btn" id="btn-pending-links">🔗 Liens en attente${pendingBadge}</button>
@@ -131,7 +131,7 @@ export async function renderDashboard(container, gen) {
     // Render initial view — only on first visit (before any tab has been chosen)
     // On subsequent visits, _currentTab will have been set and the restore block below handles it.
     if (_currentTab === 'stats') {
-        if (user?.role === 'admin') {
+        if (user?.role === 'admin' || user?.role === 'head') {
             _loadAnalysisView(container);
         } else {
             const byJobData = await getDashboardStatsByJob();
@@ -224,7 +224,7 @@ export async function renderDashboard(container, gen) {
         document.getElementById('btn-by-upload')?.click();
     } else if (_currentTab === 'pending-links') {
         document.getElementById('btn-pending-links')?.click();
-    } else if (_currentTab === 'analyse' && user?.role === 'admin') {
+    } else if (_currentTab === 'analyse' && (user?.role === 'admin' || user?.role === 'head')) {
         document.getElementById('btn-analysis')?.click();
     }
     // Note: the initial render above (lines 119-128) already loaded the default view on first visit.

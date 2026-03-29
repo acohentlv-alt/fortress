@@ -287,16 +287,28 @@ async def get_analysis(request: Request):
     Returns: quality, gaps, enrichers, pipeline.
     Queries run in parallel groups using asyncio.gather for speed.
     """
-    # Workspace-aware cache key
-    ws_id = getattr(request.state, "workspace_id", None) if hasattr(request, "state") else None
-    cache_key = f"analysis_{ws_id or 'admin'}"
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        wid = user.workspace_id
+        cache_key = f"analysis_ws_{wid}"
+        scope_clause = "WHERE qt.workspace_id = %s"
+        scope_params: tuple = (wid,)
+        batch_ws = "AND workspace_id = %s"
+        batch_ws_params: tuple = (wid,)
+        tag_ws = "AND qt.workspace_id = %s"
+        tag_ws_params: tuple = (wid,)
+    else:
+        cache_key = "analysis_admin"
+        scope_clause = ""
+        scope_params = ()
+        batch_ws = ""
+        batch_ws_params = ()
+        tag_ws = ""
+        tag_ws_params = ()
+
     cached = _cached(cache_key, 120)
     if cached is not None:
         return cached
-
-    scope_clause = ""
-    scope_params: tuple = ()
-    jobs_where = "WHERE sj.status != 'deleted'"
 
     # Semaphore: limit to 4 concurrent DB connections from this endpoint
     sem = asyncio.Semaphore(4)
@@ -344,7 +356,7 @@ async def get_analysis(request: Request):
     # ── Group 2: Enricher stats (all-time + 24h) + outcomes ────────────
     async def _group_enrichers():
         audit_stats, audit_24h, outcomes = await asyncio.gather(
-            _fetch_all_sem("""
+            _fetch_all_sem(f"""
                 SELECT
                     action,
                     COUNT(*) AS total,
@@ -352,32 +364,33 @@ async def get_analysis(request: Request):
                     ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms,
                     MAX(timestamp) AS last_run
                 FROM batch_log
-                WHERE action IN ('maps_lookup', 'website_crawl')
+                WHERE action IN ('maps_lookup', 'website_crawl') {batch_ws}
                 GROUP BY action
-            """),
-            _fetch_all_sem("""
+            """, batch_ws_params if batch_ws_params else None),
+            _fetch_all_sem(f"""
                 SELECT
                     action,
                     COUNT(*) AS total,
                     COUNT(*) FILTER (WHERE result = 'success') AS success
                 FROM batch_log
                 WHERE action IN ('maps_lookup', 'website_crawl')
-                  AND timestamp >= NOW() - INTERVAL '24 hours'
+                  AND timestamp >= NOW() - INTERVAL '24 hours' {batch_ws}
                 GROUP BY action
-            """),
-            _fetch_all_sem("""
+            """, batch_ws_params if batch_ws_params else None),
+            _fetch_all_sem(f"""
                 SELECT outcome, COUNT(*) AS count
-                FROM enrichment_log
+                FROM enrichment_log el
+                {'WHERE el.siren IN (SELECT qt.siren FROM batch_tags qt WHERE qt.workspace_id = %s)' if scope_params else ''}
                 GROUP BY outcome
                 ORDER BY count DESC
-            """),
+            """, scope_params if scope_params else None),
         )
         return audit_stats, audit_24h, outcomes
 
     # ── Group 3: Pipeline counts + weekly trend + recent jobs ──────────
     async def _group_pipeline():
         pipeline_counts, weekly_trend, recent_jobs = await asyncio.gather(
-            _fetch_one_sem("""
+            _fetch_one_sem(f"""
                 SELECT
                     COUNT(*) FILTER (WHERE status = 'completed')        AS completed_total,
                     COUNT(*) FILTER (WHERE status = 'failed')           AS failed_total,
@@ -392,8 +405,8 @@ async def get_analysis(request: Request):
                     SUM(COALESCE(companies_qualified, 0))               AS total_qualified,
                     SUM(COALESCE(replaced_count, 0))                    AS total_replaced
                 FROM batch_data
-                WHERE status != 'deleted'
-            """),
+                WHERE status != 'deleted' {batch_ws}
+            """, batch_ws_params if batch_ws_params else None),
             _fetch_all_sem(f"""
                 WITH weekly_jobs AS (
                     SELECT
@@ -407,7 +420,7 @@ async def get_analysis(request: Request):
                     JOIN batch_tags qt ON UPPER(qt.batch_name) = UPPER(sj.batch_name)
                     LEFT JOIN contacts ct ON ct.siren = qt.siren
                     WHERE sj.status = 'completed'
-                      AND sj.created_at >= NOW() - INTERVAL '12 weeks'
+                      AND sj.created_at >= NOW() - INTERVAL '12 weeks' {batch_ws.replace('workspace_id', 'sj.workspace_id')} {tag_ws}
                     GROUP BY week, sj.batch_name
                 )
                 SELECT
@@ -423,7 +436,7 @@ async def get_analysis(request: Request):
                 FROM weekly_jobs
                 GROUP BY week
                 ORDER BY week ASC
-            """),
+            """, batch_ws_params + tag_ws_params if (batch_ws_params or tag_ws_params) else None),
             _fetch_all_sem(f"""
                 SELECT
                     sj.batch_id, sj.batch_name,
@@ -432,17 +445,17 @@ async def get_analysis(request: Request):
                     COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
                     sj.created_at
                 FROM batch_data sj
-                {jobs_where}
+                WHERE sj.status != 'deleted' {batch_ws.replace('workspace_id', 'sj.workspace_id')}
                 ORDER BY sj.created_at DESC
                 LIMIT 5
-            """),
+            """, batch_ws_params if batch_ws_params else None),
         )
         return pipeline_counts, weekly_trend, recent_jobs
 
     # ── Group 4: Top searches + recent searches + week comparison ──────
     async def _group_searches():
         top_searches, recent_searches, week_row = await asyncio.gather(
-            _fetch_all_sem("""
+            _fetch_all_sem(f"""
                 SELECT sj.batch_name, COUNT(*) AS company_count,
                     ROUND(100.0 * COUNT(CASE WHEN c.phone IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS phone_rate,
                     ROUND(100.0 * COUNT(CASE WHEN c.email IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS email_rate
@@ -452,19 +465,20 @@ async def get_analysis(request: Request):
                 LEFT JOIN LATERAL (
                     SELECT MAX(phone) AS phone, MAX(email) AS email FROM contacts WHERE siren = bt.siren
                 ) c ON true
+                WHERE 1=1 {'AND bt.workspace_id = %s' if tag_ws_params else ''}
                 GROUP BY sj.batch_name
                 ORDER BY company_count DESC
                 LIMIT 5
-            """),
-            _fetch_all_sem("""
+            """, tag_ws_params if tag_ws_params else None),
+            _fetch_all_sem(f"""
                 SELECT DISTINCT sj.batch_name, sj.created_at
                 FROM batch_data sj
                 WHERE sj.created_at >= NOW() - INTERVAL '7 days'
-                  AND sj.status != 'deleted'
+                  AND sj.status != 'deleted' {batch_ws.replace('workspace_id', 'sj.workspace_id')}
                 ORDER BY sj.created_at DESC
                 LIMIT 10
-            """),
-            _fetch_one_sem("""
+            """, batch_ws_params if batch_ws_params else None),
+            _fetch_one_sem(f"""
                 SELECT
                     COUNT(CASE WHEN bt.tagged_at >= NOW() - INTERVAL '7 days' THEN 1 END) AS this_week_companies,
                     COUNT(CASE WHEN bt.tagged_at >= NOW() - INTERVAL '14 days'
@@ -474,7 +488,8 @@ async def get_analysis(request: Request):
                                           AND sj.created_at < NOW() - INTERVAL '7 days' THEN sj.batch_id END) AS last_week_batches
                 FROM batch_tags bt
                 JOIN batch_data sj ON sj.batch_id = bt.batch_id
-            """),
+                WHERE 1=1 {'AND bt.workspace_id = %s' if tag_ws_params else ''}
+            """, tag_ws_params if tag_ws_params else None),
         )
         return top_searches, recent_searches, week_row
 
@@ -610,8 +625,21 @@ async def get_batch_analysis(request: Request):
     System batches (SYNC_CRAWL, ENTITY_MERGE, MANUAL_EDIT) are excluded.
     Uses 3 bulk queries instead of N×3 per-batch queries.
     """
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        wid = user.workspace_id
+        bd_ws = "AND bd.workspace_id = %s"
+        bd_ws_params: tuple = (wid,)
+        qt_ws = "AND qt.workspace_id = %s"
+        qt_ws_params: tuple = (wid,)
+    else:
+        bd_ws = ""
+        bd_ws_params = ()
+        qt_ws = ""
+        qt_ws_params = ()
+
     # ── Get last 10 user-facing batches from batch_data ─────────────────
-    batches = await fetch_all("""
+    batches = await fetch_all(f"""
         SELECT
             bd.batch_id,
             bd.batch_name,
@@ -630,10 +658,10 @@ async def get_batch_analysis(request: Request):
         FROM batch_data bd
         WHERE bd.status != 'deleted'
           AND bd.batch_name IS NOT NULL
-          AND bd.batch_name != ''
+          AND bd.batch_name != '' {bd_ws}
         ORDER BY bd.created_at DESC
         LIMIT 10
-    """)
+    """, bd_ws_params if bd_ws_params else None)
 
     if not batches:
         return {"batches": []}
@@ -661,16 +689,16 @@ async def get_batch_analysis(request: Request):
         bulk_actions[bid][row["action"]] = {"total": row["total"], "success": row["success"]}
 
     # ── Bulk query 2: async actions per batch_name (upper) ───────────────
-    bulk_async_rows = await fetch_all("""
+    bulk_async_rows = await fetch_all(f"""
         SELECT UPPER(qt.batch_name) AS batch_name_upper,
                bl.action,
                COUNT(DISTINCT qt.siren) AS total,
                COUNT(DISTINCT qt.siren) FILTER (WHERE bl.result = 'success' OR bl.result = 'filtered') AS success
         FROM batch_log bl
         JOIN batch_tags qt ON bl.siren = qt.siren
-        WHERE UPPER(qt.batch_name) = ANY(%s)
+        WHERE UPPER(qt.batch_name) = ANY(%s) {qt_ws}
         GROUP BY UPPER(qt.batch_name), bl.action
-    """, (batch_names_upper,))
+    """, (batch_names_upper,) + qt_ws_params)
 
     # Shape: { batch_name_upper -> { action -> {total, success} } }
     bulk_async: dict = {}
@@ -681,7 +709,7 @@ async def get_batch_analysis(request: Request):
         bulk_async[bnu][row["action"]] = {"total": row["total"], "success": row["success"]}
 
     # ── Bulk query 3: hit rates per batch_name (upper) ───────────────────
-    bulk_hits_rows = await fetch_all("""
+    bulk_hits_rows = await fetch_all(f"""
         SELECT UPPER(qt.batch_name) AS batch_name_upper,
                COUNT(DISTINCT qt.siren) AS tagged,
                COUNT(DISTINCT qt.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
@@ -689,9 +717,9 @@ async def get_batch_analysis(request: Request):
                COUNT(DISTINCT qt.siren) FILTER (WHERE ct.website IS NOT NULL) AS with_website
         FROM batch_tags qt
         LEFT JOIN contacts ct ON ct.siren = qt.siren
-        WHERE UPPER(qt.batch_name) = ANY(%s)
+        WHERE UPPER(qt.batch_name) = ANY(%s) {qt_ws}
         GROUP BY UPPER(qt.batch_name)
-    """, (batch_names_upper,))
+    """, (batch_names_upper,) + qt_ws_params)
 
     # Shape: { batch_name_upper -> {tagged, with_phone, with_email, with_website} }
     bulk_hits: dict = {row["batch_name_upper"]: row for row in (bulk_hits_rows or [])}
@@ -939,6 +967,11 @@ async def get_all_data(
         where_parts.append("co.naf_code ILIKE %s")
         params.append(f"{naf_code.strip()}%")
 
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        where_parts.append("co.siren IN (SELECT qt.siren FROM batch_tags qt WHERE qt.workspace_id = %s)")
+        params.append(user.workspace_id)
+
     where_clause = (" AND ".join(where_parts)) if where_parts else "TRUE"
 
     # Count total enriched companies matching filters
@@ -993,9 +1026,20 @@ async def get_stats_by_sector(request: Request):
     Uses a CTE to pre-split batch_name, avoiding SQL grouping violations
     when calculating batch counts and running status in subqueries.
     """
-    # Shared workspace — no user scoping
-    scope_clause = ""
-    scope_params: tuple = ()
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        wid = user.workspace_id
+        scope_clause = "WHERE qt.workspace_id = %s"
+        scope_params: tuple = (wid,)
+        bd_ws = "AND sj2.workspace_id = %s"
+        bd_ws2 = "AND sj3.workspace_id = %s"
+        extra_params: tuple = (wid, wid)
+    else:
+        scope_clause = ""
+        scope_params = ()
+        bd_ws = ""
+        bd_ws2 = ""
+        extra_params = ()
 
     rows = await fetch_all(f"""
         WITH sector_data AS (
@@ -1018,17 +1062,17 @@ async def get_stats_by_sector(request: Request):
             (SELECT COUNT(DISTINCT sj2.batch_id)
              FROM batch_data sj2
              WHERE UPPER(SPLIT_PART(sj2.batch_name, ' ', 1)) = normalized_sector
-               AND sj2.status != 'deleted'
+               AND sj2.status != 'deleted' {bd_ws}
             ) AS batch_count,
             (SELECT BOOL_OR(sj3.status = 'in_progress')
              FROM batch_data sj3
-             WHERE UPPER(SPLIT_PART(sj3.batch_name, ' ', 1)) = normalized_sector
+             WHERE UPPER(SPLIT_PART(sj3.batch_name, ' ', 1)) = normalized_sector {bd_ws2}
             ) AS has_running,
             ARRAY_AGG(DISTINCT normalized_dept) FILTER (WHERE normalized_dept != '') AS departments
         FROM sector_data
         GROUP BY normalized_sector
         ORDER BY companies DESC
-    """, scope_params)
+    """, scope_params + extra_params if (scope_params or extra_params) else None)
     return rows
 
 

@@ -67,13 +67,13 @@ function _timeAgo(dateStr) {
 }
 
 export async function renderActivity(container) {
-    // Admin guard
+    // Admin + head guard
     const user = getCachedUser();
-    if (!user || user.role !== 'admin') {
+    if (!user || (user.role !== 'admin' && user.role !== 'head')) {
         container.innerHTML = `
             <div class="empty-state" style="margin-top:var(--space-2xl)">
                 <div class="empty-state-icon">🔒</div>
-                <div class="empty-state-text">Accès réservé aux administrateurs</div>
+                <div class="empty-state-text">Accès réservé aux administrateurs et responsables</div>
             </div>
         `;
         return;
