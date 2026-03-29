@@ -6,6 +6,7 @@
  */
 
 import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser, getPendingLinks } from '../api.js';
+import { isStale } from '../app.js';
 import { showAddEntityModal } from '../components/add-entity-modal.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { GlobalSelection } from '../state.js';
@@ -24,7 +25,7 @@ async function _getDepartmentsCached() {
     return _cachedDepartments;
 }
 
-export async function renderDashboard(container) {
+export async function renderDashboard(container, gen) {
     // Show loading state
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
@@ -43,6 +44,10 @@ export async function renderDashboard(container) {
         jobs = null;
         pendingLinksData = null;
     }
+
+    // If the user navigated away while these API calls were in flight, bail out.
+    // (gen is undefined for internal retries — those are always valid)
+    if (gen !== undefined && isStale(gen)) return;
     // Helper: check if a response is an API error (not a valid data payload)
     const isErr = (r) => !r || (r._ok === false);
 

@@ -422,6 +422,28 @@ async function renderJobMonitor(container, batchId) {
             `;
         } catch { /* gauges are optional */ }
 
+        // ── Info Banner for running all-GREEN batches ───────────
+        // When a batch is still running but all entities so far were GREEN (already
+        // enriched), explain to the user why "Complétées" stays at 0 — or why it
+        // shows the green count instead. This only shows during RUNNING state.
+        const triageGreen = job.triage_green || 0;
+        const infoBannerId = 'mon-green-info-banner';
+        let infoBanner = document.getElementById(infoBannerId);
+        if (isRunning && triageGreen > 0 && qualified === 0) {
+            if (!infoBanner) {
+                infoBanner = document.createElement('div');
+                infoBanner.id = infoBannerId;
+                infoBanner.style.cssText = 'background:color-mix(in srgb, var(--bg-surface) 90%, var(--success)); border-left:4px solid var(--success); border-radius:var(--radius-md); padding:var(--space-md) var(--space-lg); margin-bottom:var(--space-xl); font-size:var(--font-sm); color:var(--text-secondary);';
+                infoBanner.innerHTML = `<span style="color:var(--success); font-weight:600">✅ ${triageGreen} entreprise${triageGreen > 1 ? 's' : ''} déjà enrichie${triageGreen > 1 ? 's' : ''} dans votre base</span> — aucun nouveau traitement nécessaire.`;
+                $.completion.parentElement.insertBefore(infoBanner, $.completion);
+            } else {
+                infoBanner.innerHTML = `<span style="color:var(--success); font-weight:600">✅ ${triageGreen} entreprise${triageGreen > 1 ? 's' : ''} déjà enrichie${triageGreen > 1 ? 's' : ''} dans votre base</span> — aucun nouveau traitement nécessaire.`;
+            }
+            infoBanner.style.display = 'block';
+        } else if (infoBanner) {
+            infoBanner.style.display = 'none';
+        }
+
         // ── Completion State ────────────────────────────────────
         if (!isRunning && job.status === 'completed' && qualified === 0 && (job.triage_green || 0) > 0) {
             $.completion.style.display = 'block';

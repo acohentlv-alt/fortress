@@ -78,6 +78,12 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
         "libelle naf 2008", "libelle naf", "libelle activite",
         "naf libelle", "secteur activite",
         "secteur d activite",
+        "type d activite", "type activite",
+    ]),
+    # NOTE: companies.statut must be BEFORE forme_juridique so exact match on "statut"
+    # hits here, not "statut juridique" → forme_juridique via substring match.
+    ("companies", "statut", [
+        "statut", "etat", "statut entreprise", "actif inactif",
     ]),
     ("companies", "forme_juridique", [
         "forme juridique", "statut juridique", "legal form",
@@ -128,6 +134,7 @@ ALIAS_REGISTRY: list[tuple[str, str, list[str]]] = [
         "date de fondation", "date fondation",
         "annee de fondation",
         "date creation", "founded",
+        "annee de creation", "annee creation",
     ]),
     ("companies", "type_etablissement", [
         "type d etablissement", "type etablissement",
@@ -201,7 +208,7 @@ SKIP_PATTERNS: set[str] = {
     "phone additional info", "tps", "telephone preference service",
     "non mailing indicator", "fps", "fax preference service",
     "emps", "email preference service",
-    "pays", "code pays", "etat",  # We know it's France
+    "pays", "code pays",  # We know it's France
     "complement d adresse", "complement d adresse postale",
     "rue postale", "boite postale", "adresse postale",
     "registration address", "pays d enregistrement",

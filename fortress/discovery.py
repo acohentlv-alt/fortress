@@ -967,7 +967,17 @@ async def run(batch_id: str) -> None:
                             async with pool.connection() as tag_conn:
                                 await bulk_tag_query(tag_conn, [lookup_siren], batch_name,
                                                      workspace_id=batch_workspace_id, batch_id=batch_id)
+                                await log_audit(
+                                    tag_conn,
+                                    batch_id=batch_id,
+                                    siren=lookup_siren,
+                                    action="green",
+                                    result="skipped",
+                                    detail="Entreprise déjà enrichie — aucune nouvelle extraction nécessaire",
+                                    workspace_id=batch_workspace_id,
+                                )
                             companies_discovered += 1
+                            qualified += 1
                             return
                         else:
                             triage_bucket = "YELLOW"

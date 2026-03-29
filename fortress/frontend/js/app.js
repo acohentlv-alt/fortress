@@ -18,6 +18,18 @@ import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 
+// ── Navigation Generation Counter ───────────────────────────────
+// Each navigate() call increments _navGeneration. Page handlers
+// receive this value and call isStale(gen) after every `await`
+// before writing to the DOM — if another navigate() fired while
+// they were awaiting, they bail out instead of overwriting the
+// new page's content.
+let _navGeneration = 0;
+
+export function isStale(gen) {
+    return gen !== _navGeneration;
+}
+
 // ── Page Cleanup System ──────────────────────────────────────────
 // Pages register cleanup functions (e.g. clearInterval) that must
 // run before navigating away. Without this, polling intervals from
@@ -140,6 +152,7 @@ function _setupLogout() {
 // ── Navigation ───────────────────────────────────────────────────
 
 async function navigate() {
+    const gen = ++_navGeneration;
     const hash = window.location.hash || '#/';
 
     // Intro + Login routes — skip auth check
@@ -190,7 +203,7 @@ async function navigate() {
             // Show loading then render
             showLoading();
             try {
-                await route.handler(container, ...match.slice(1));
+                await route.handler(container, ...match.slice(1), gen);
                 // Page transition animation
                 container.style.animation = 'none';
                 container.offsetHeight; // force reflow
