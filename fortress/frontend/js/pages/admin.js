@@ -96,7 +96,7 @@ export async function renderAdmin(container, gen) {
 
         <div id="admin-form-area"></div>
 
-        <div class="card">
+        <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
                 <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
                     Comptes utilisateurs
