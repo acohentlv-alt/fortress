@@ -45,6 +45,7 @@ _CSV_COLUMNS = [
     ("Note Google", "rating"),
     ("Avis Google", "review_count"),
     ("Source", "contact_source"),
+    ("Notes", "notes"),
 ]
 
 
@@ -84,10 +85,16 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
             bc.phone, bc.email, bc.website,
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source
+            bc.rating, bc.review_count, bc.contact_source,
+            cn.notes
         FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN (
+            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+            FROM company_notes
+            GROUP BY siren
+        ) cn ON cn.siren = co.siren
         ORDER BY co.denomination
     """, (batch_id, batch_id))
 
@@ -130,10 +137,16 @@ async def export_master_csv(request: Request):
             bc.phone, bc.email, bc.website,
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source
+            bc.rating, bc.review_count, bc.contact_source,
+            cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN (
+            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+            FROM company_notes
+            GROUP BY siren
+        ) cn ON cn.siren = co.siren
         ORDER BY co.denomination
     """)
     if not rows:
@@ -190,10 +203,16 @@ async def export_master_xlsx(request: Request):
             bc.phone, bc.email, bc.website,
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source
+            bc.rating, bc.review_count, bc.contact_source,
+            cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN (
+            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+            FROM company_notes
+            GROUP BY siren
+        ) cn ON cn.siren = co.siren
         ORDER BY co.denomination
     """)
     return _to_xlsx(rows, "fortress_master.xlsx")
@@ -300,9 +319,15 @@ async def export_bulk_csv(body: BulkExportRequest):
             bc.phone, bc.email, bc.website,
             bc.address, bc.maps_url,
             bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source
+            bc.rating, bc.review_count, bc.contact_source,
+            cn.notes
         FROM companies co
         LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN (
+            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+            FROM company_notes
+            GROUP BY siren
+        ) cn ON cn.siren = co.siren
         WHERE co.siren = ANY(%s)
         ORDER BY co.denomination
     """, (body.sirens, body.sirens))
