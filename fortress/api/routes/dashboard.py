@@ -1136,37 +1136,47 @@ async def get_pending_links(request: Request):
 
 @router.delete("/sector/{sector_name}/tags")
 async def delete_sector_tags(sector_name: str, request: Request):
-    """Remove all batch_tags for a sector. Soft-deletes associated jobs. Admin only."""
+    """Remove all batch_tags for a sector. Soft-deletes associated jobs.
+    Admin: only affects NULL-workspace data. Head: only affects their workspace.
+    Regular users get 403.
+    """
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
 
     user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
 
     async with get_conn() as conn:
-        # Find all batch_names matching this sector
+        # Find all batch_names matching this sector (scoped)
         qnames = await conn.execute(
-            "SELECT DISTINCT batch_name FROM batch_tags WHERE UPPER(SPLIT_PART(batch_name, ' ', 1)) = UPPER(%s)",
-            (sector_name,),
+            f"SELECT DISTINCT batch_name FROM batch_tags WHERE UPPER(SPLIT_PART(batch_name, ' ', 1)) = UPPER(%s) {ws_scope}",
+            (sector_name,) + ws_params,
         )
         names = [r[0] for r in await qnames.fetchall()]
 
         if not names:
             return JSONResponse(status_code=404, content={"error": "Secteur introuvable"})
 
-        # Delete tags
+        # Delete tags (scoped)
         deleted = await conn.execute(
-            "DELETE FROM batch_tags WHERE UPPER(SPLIT_PART(batch_name, ' ', 1)) = UPPER(%s)",
-            (sector_name,),
+            f"DELETE FROM batch_tags WHERE UPPER(SPLIT_PART(batch_name, ' ', 1)) = UPPER(%s) {ws_scope}",
+            (sector_name,) + ws_params,
         )
         tag_count = deleted.rowcount or 0
 
-        # Soft-delete jobs
+        # Soft-delete jobs (scoped)
         for name in names:
             await conn.execute(
-                "UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_name = %s AND status != 'deleted'",
-                (name,),
+                f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_name = %s AND status != 'deleted' {ws_scope}",
+                (name,) + ws_params,
             )
         await conn.commit()
 
@@ -1175,21 +1185,31 @@ async def delete_sector_tags(sector_name: str, request: Request):
 
 @router.delete("/department/{dept}/tags")
 async def delete_department_tags(dept: str, request: Request):
-    """Remove all batch_tags for companies in a specific department. Admin only."""
+    """Remove all batch_tags for companies in a specific department.
+    Admin: only affects NULL-workspace tags. Head: only affects their workspace.
+    Regular users get 403.
+    """
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
 
     user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND bt.workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND bt.workspace_id = %s"
+        ws_params = (user.workspace_id,)
 
     async with get_conn() as conn:
-        deleted = await conn.execute("""
-            DELETE FROM batch_tags
-            WHERE siren IN (
+        deleted = await conn.execute(f"""
+            DELETE FROM batch_tags bt
+            WHERE bt.siren IN (
                 SELECT siren FROM companies WHERE departement = %s
-            )
-        """, (dept,))
+            ) {ws_scope}
+        """, (dept,) + ws_params)
         tag_count = deleted.rowcount or 0
         await conn.commit()
 
@@ -1201,29 +1221,39 @@ async def delete_department_tags(dept: str, request: Request):
 
 @router.delete("/job-group/{batch_name}")
 async def delete_job_group(batch_name: str, request: Request):
-    """Soft-delete all batches with this batch_name (case-insensitive) and remove their tags. Admin only."""
+    """Soft-delete all batches with this batch_name (case-insensitive) and remove their tags.
+    Admin: only affects NULL-workspace batches. Head: only affects their workspace.
+    Regular users get 403.
+    """
     from fastapi.responses import JSONResponse
     from fortress.api.db import get_conn
 
     user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
 
     async with get_conn() as conn:
-        # Soft-delete all matching jobs
+        # Soft-delete all matching jobs (scoped)
         jobs_result = await conn.execute(
-            "UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE UPPER(batch_name) = UPPER(%s) AND status != 'deleted' RETURNING batch_id",
-            (batch_name,),
+            f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE UPPER(batch_name) = UPPER(%s) AND status != 'deleted' {ws_scope} RETURNING batch_id",
+            (batch_name,) + ws_params,
         )
         job_ids = [r[0] for r in await jobs_result.fetchall()]
 
         if not job_ids:
-            return JSONResponse(status_code=404, content={"error": "Groupe de jobs introuvable"})
+            return JSONResponse(status_code=404, content={"error": "Groupe de jobs introuvable ou accès refusé"})
 
-        # Remove batch_tags for this group
+        # Remove batch_tags for this group (scoped)
         tag_result = await conn.execute(
-            "DELETE FROM batch_tags WHERE UPPER(batch_name) = UPPER(%s)",
-            (batch_name,),
+            f"DELETE FROM batch_tags WHERE UPPER(batch_name) = UPPER(%s) {ws_scope}",
+            (batch_name,) + ws_params,
         )
         tag_count = tag_result.rowcount or 0
         await conn.commit()

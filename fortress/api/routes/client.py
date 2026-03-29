@@ -318,49 +318,45 @@ async def client_stats(request: Request):
 
 @router.delete("/clear")
 async def clear_client_sirens(request: Request):
-    """Clear all client-uploaded data (upload-mode jobs and their batch_tags)."""
+    """Clear client-uploaded data (upload-mode jobs and their batch_tags).
+    Admin: only clears NULL-workspace uploads.
+    Head: only clears their workspace uploads.
+    Regular users get 403.
+    """
     user = getattr(request.state, "user", None)
-    is_admin = getattr(user, "is_admin", False) if user else False
-    ws_id = getattr(user, "workspace_id", None) if user else None
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
 
     try:
         async with get_conn() as conn:
-            # Get upload job batch_names to clear their tags
-            if is_admin or ws_id is None:
-                jobs = await conn.execute(
-                    "SELECT batch_name FROM batch_data WHERE mode = 'upload'"
-                )
-            else:
-                jobs = await conn.execute(
-                    "SELECT batch_name FROM batch_data WHERE mode = 'upload' AND workspace_id = %s",
-                    (ws_id,),
-                )
+            # Get upload job batch_names to clear their tags (scoped)
+            jobs = await conn.execute(
+                f"SELECT batch_name FROM batch_data WHERE mode = 'upload' {ws_scope}",
+                ws_params if ws_params else None,
+            )
             job_rows = await jobs.fetchall()
             batch_names = [r[0] for r in job_rows] if job_rows else []
 
             deleted_tags = 0
             for qn in batch_names:
-                if is_admin or ws_id is None:
-                    res = await conn.execute(
-                        "DELETE FROM batch_tags WHERE batch_name = %s", (qn,)
-                    )
-                else:
-                    res = await conn.execute(
-                        "DELETE FROM batch_tags WHERE batch_name = %s AND workspace_id = %s",
-                        (qn, ws_id),
-                    )
+                res = await conn.execute(
+                    f"DELETE FROM batch_tags WHERE batch_name = %s {ws_scope}",
+                    (qn,) + ws_params,
+                )
                 deleted_tags += res.rowcount
 
-            # Delete the upload jobs themselves
-            if is_admin or ws_id is None:
-                res = await conn.execute(
-                    "DELETE FROM batch_data WHERE mode = 'upload'"
-                )
-            else:
-                res = await conn.execute(
-                    "DELETE FROM batch_data WHERE mode = 'upload' AND workspace_id = %s",
-                    (ws_id,),
-                )
+            # Delete the upload jobs themselves (scoped)
+            res = await conn.execute(
+                f"DELETE FROM batch_data WHERE mode = 'upload' {ws_scope}",
+                ws_params if ws_params else None,
+            )
             deleted_jobs = res.rowcount
             await conn.commit()
 

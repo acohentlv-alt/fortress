@@ -236,12 +236,12 @@ async def lifespan(app: FastAPI):
                     WHERE bt.batch_name = bd.batch_name AND bt.batch_id IS NULL
                 """)
 
-                # Seed first workspace if none exists, and assign orphaned data (idempotent)
+                # Seed first workspace if none exists — name-independent, idempotent
                 await conn.execute("""
                     INSERT INTO workspaces (name) VALUES ('Cindy')
                     ON CONFLICT DO NOTHING
                 """)
-                # Use the first workspace (by id) for backfills — name-independent
+                # Assign non-admin users without a workspace to the first workspace
                 first_ws = await (await conn.execute(
                     "SELECT id FROM workspaces ORDER BY id LIMIT 1"
                 )).fetchone()
@@ -252,26 +252,31 @@ async def lifespan(app: FastAPI):
                         WHERE workspace_id IS NULL AND role != 'admin'
                     """, (ws_id,))
                     await conn.execute("UPDATE users SET role = 'head' WHERE username = 'olivierhaddad' AND role != 'admin'")
+                    # Assign MAPS companies created by non-admin users to their workspace
                     await conn.execute("""
                         UPDATE companies SET workspace_id = %s
                         WHERE siren LIKE 'MAPS%%' AND workspace_id IS NULL
                     """, (ws_id,))
-                    await conn.execute("""
-                        UPDATE batch_data SET workspace_id = %s
-                        WHERE workspace_id IS NULL
-                    """, (ws_id,))
-                    await conn.execute("""
-                        UPDATE batch_log SET workspace_id = %s
-                        WHERE workspace_id IS NULL
-                    """, (ws_id,))
-                    await conn.execute("""
-                        UPDATE batch_tags SET workspace_id = %s
-                        WHERE workspace_id IS NULL
-                    """, (ws_id,))
-                    await conn.execute("""
-                        UPDATE blacklisted_sirens SET workspace_id = %s
-                        WHERE workspace_id IS NULL
-                    """, (ws_id,))
+
+                # ── Targeted workspace migration (idempotent) ─────────────────
+                # Assign batch_data launched by non-admin users that still have NULL workspace_id
+                # to that user's workspace. Admin batches stay NULL.
+                await conn.execute("""
+                    UPDATE batch_data bd SET workspace_id = u.workspace_id
+                    FROM users u WHERE u.id = bd.user_id
+                    AND bd.workspace_id IS NULL AND u.workspace_id IS NOT NULL AND u.role != 'admin'
+                """)
+                # Propagate workspace_id from batch_data down to batch_tags and batch_log
+                await conn.execute("""
+                    UPDATE batch_tags bt SET workspace_id = bd.workspace_id
+                    FROM batch_data bd WHERE bd.batch_id = bt.batch_id
+                    AND bt.workspace_id IS NULL AND bd.workspace_id IS NOT NULL
+                """)
+                await conn.execute("""
+                    UPDATE batch_log bl SET workspace_id = bd.workspace_id
+                    FROM batch_data bd WHERE bd.batch_id = bl.batch_id
+                    AND bl.workspace_id IS NULL AND bd.workspace_id IS NOT NULL
+                """)
                 logger.info("✅ Workspace isolation migrations complete")
 
                 # ── System log table ────────────────────────────────

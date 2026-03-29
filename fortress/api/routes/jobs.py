@@ -82,91 +82,78 @@ async def list_jobs(request: Request):
 
 @router.delete("/{batch_id}")
 async def delete_job(batch_id: str, request: Request):
-    """Soft-delete a batch. Removes batch_tags but preserves company/contact data. Admin only."""
+    """Soft-delete a batch. Removes batch_tags but preserves company/contact data.
+    Admin can only delete NULL-workspace batches. Head can only delete their workspace batches.
+    Regular users get 403.
+    """
     user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "Authentification requise"})
+
+    # Regular users cannot delete
+    if user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    # Determine workspace scope for this user
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            """SELECT status, batch_name, companies_scraped, batch_size, updated_at,
-                      EXTRACT(EPOCH FROM (NOW() - updated_at)) AS idle_seconds,
-                      COALESCE(companies_qualified, 0) AS companies_qualified
-               FROM batch_data WHERE batch_id = %s""",
-            (batch_id,),
+            f"""SELECT status, batch_name, workspace_id,
+                      EXTRACT(EPOCH FROM (NOW() - updated_at)) AS idle_seconds
+               FROM batch_data WHERE batch_id = %s {ws_scope}""",
+            (batch_id,) + ws_params,
         )).fetchone()
 
         if not row:
-            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
-        
+            # Could be not found OR belongs to a different workspace
+            return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
+
         raw_status = row[0]
-        idle_seconds = row[5] or 0
+        idle_seconds = row[3] or 0
         is_stale = idle_seconds > 600
         if raw_status == "in_progress" and not is_stale:
             return JSONResponse(status_code=409, content={"error": "Arrêtez le batch d'abord"})
 
         batch_name = row[1]
 
-        # ── Hard delete: contacts, audit, tags, job ──────────────────
-        # 1. Get all SIRENs that belong to THIS batch (via batch_log)
-        batch_sirens = await (await conn.execute(
-            "SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s",
-            (batch_id,),
-        )).fetchall()
-        siren_list = [r[0] for r in batch_sirens] if batch_sirens else []
+        # ── Soft delete: mark status='deleted' + remove batch_tags ───
+        # Never delete contacts, batch_log, or enrichment_log
 
-        deleted_contacts = 0
-        if siren_list:
-            # 2. Delete contacts for these SIRENs (only source='website_crawl' or 'google_maps')
-            #    Keep 'upload' source contacts (user-uploaded data)
-            result = await conn.execute(
-                "DELETE FROM contacts WHERE siren = ANY(%s) AND source NOT IN ('upload', 'client_upload')",
-                (siren_list,),
-            )
-            deleted_contacts = result.rowcount
-
-        # 3. Delete batch_log rows for this batch
-        result = await conn.execute(
-            "DELETE FROM batch_log WHERE batch_id = %s",
-            (batch_id,),
-        )
-        deleted_audit = result.rowcount
-
-        # 4. Delete enrichment_log rows for this batch
+        # 1. Soft-delete the batch_data row
         await conn.execute(
-            "DELETE FROM enrichment_log WHERE batch_id = %s",
-            (batch_id,),
+            f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_id = %s {ws_scope}",
+            (batch_id,) + ws_params,
         )
 
-        # 5. Delete batch_tags for these SIRENs + this batch_name
-        if siren_list:
-            await conn.execute(
-                "DELETE FROM batch_tags WHERE batch_name = %s AND siren = ANY(%s)",
-                (batch_name, siren_list),
-            )
-
-        # 6. Hard delete the job row itself
-        await conn.execute(
-            "DELETE FROM batch_data WHERE batch_id = %s",
-            (batch_id,),
+        # 2. Delete batch_tags for this batch (scoped by workspace)
+        deleted_tags_result = await conn.execute(
+            f"DELETE FROM batch_tags WHERE batch_id = %s {ws_scope}",
+            (batch_id,) + ws_params,
         )
+        deleted_tags = deleted_tags_result.rowcount or 0
+
         await conn.commit()
 
     await log_activity(
         user_id=getattr(user, 'id', None),
-        username=getattr(user, 'username', 'admin'),
+        username=getattr(user, 'username', 'unknown'),
         action='delete_job',
         target_type='job',
         target_id=batch_id,
-        details=f"Suppression complète du batch {batch_name or batch_id}: {deleted_contacts} contacts, {deleted_audit} audit, {len(siren_list)} entreprises",
+        details=f"Suppression (soft) du batch {batch_name or batch_id}: {deleted_tags} tags supprimés",
     )
 
     return {
         "deleted": True,
         "batch_id": batch_id,
-        "deleted_contacts": deleted_contacts,
-        "deleted_audit": deleted_audit,
-        "sirens_affected": len(siren_list),
+        "batch_name": batch_name,
+        "deleted_tags": deleted_tags,
     }
 
 

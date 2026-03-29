@@ -113,13 +113,31 @@ async def add_to_blacklist(request: Request):
 
 @router.delete("/{siren}")
 async def remove_from_blacklist(siren: str, request: Request):
-    """Remove a SIREN from the blacklist."""
+    """Remove a SIREN from the blacklist.
+    Admin: only removes NULL-workspace entries.
+    Head: only removes their workspace entries.
+    Regular users get 403.
+    """
+    user = getattr(request.state, "user", None)
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
+
     async with get_conn() as conn:
-        await conn.execute(
-            "DELETE FROM blacklisted_sirens WHERE siren = %s",
-            (siren,),
+        result = await conn.execute(
+            f"DELETE FROM blacklisted_sirens WHERE siren = %s {ws_scope}",
+            (siren,) + ws_params,
         )
         await conn.commit()
 
-    logger.info("blacklist.remove", siren=siren)
+    if result.rowcount == 0:
+        return JSONResponse(status_code=404, content={"error": "Entrée introuvable ou accès refusé"})
+
+    logger.info("blacklist.remove siren=%s", siren)
     return {"status": "ok"}

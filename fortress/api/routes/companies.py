@@ -1051,20 +1051,25 @@ async def get_enrich_history(siren: str, request: Request):
 
 @router.delete("/{siren}/tags/{batch_name}")
 async def untag_company(siren: str, batch_name: str, request: Request):
-    """Remove a company from a batch's results (untag only — never deletes data)."""
+    """Remove a company from a batch's results (untag only — never deletes data).
+    Admin: only deletes tags where workspace_id IS NULL.
+    Head: only deletes tags for their workspace.
+    """
     is_admin, ws_id = _get_workspace_filter(request)
-    if not is_admin and ws_id is not None:
-        tag_owner = await fetch_one(
-            "SELECT workspace_id FROM batch_tags WHERE siren = %s AND batch_name = %s LIMIT 1",
-            (siren, batch_name),
-        )
-        if tag_owner and tag_owner.get("workspace_id") != ws_id:
-            return JSONResponse(status_code=403, content={"error": "Accès refusé."})
+
+    if is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    elif ws_id is not None:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (ws_id,)
+    else:
+        return JSONResponse(status_code=403, content={"error": "Accès refusé."})
 
     async with get_conn() as conn:
         result = await conn.execute(
-            "DELETE FROM batch_tags WHERE siren = %s AND batch_name = %s RETURNING siren",
-            (siren, batch_name),
+            f"DELETE FROM batch_tags WHERE siren = %s AND batch_name = %s {ws_scope} RETURNING siren",
+            (siren, batch_name) + ws_params,
         )
         row = await result.fetchone()
         if not row:
@@ -1075,23 +1080,30 @@ async def untag_company(siren: str, batch_name: str, request: Request):
 
 @router.delete("/{siren}/tags/")
 async def untag_company_all(siren: str, request: Request):
-    """Remove a company from ALL query results (all tags). Never deletes data."""
+    """Remove a company from ALL query results (all tags). Never deletes data.
+    Admin: only deletes tags where workspace_id IS NULL.
+    Head: only deletes tags for their workspace.
+    """
     is_admin, ws_id = _get_workspace_filter(request)
+
+    if is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    elif ws_id is not None:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (ws_id,)
+    else:
+        return JSONResponse(status_code=403, content={"error": "Accès refusé."})
+
     async with get_conn() as conn:
-        if is_admin or ws_id is None:
-            result = await conn.execute(
-                "DELETE FROM batch_tags WHERE siren = %s RETURNING siren",
-                (siren,),
-            )
-        else:
-            result = await conn.execute(
-                "DELETE FROM batch_tags WHERE siren = %s AND workspace_id = %s RETURNING siren",
-                (siren, ws_id),
-            )
+        result = await conn.execute(
+            f"DELETE FROM batch_tags WHERE siren = %s {ws_scope} RETURNING siren",
+            (siren,) + ws_params,
+        )
         rows = await result.fetchall()
         count = len(rows)
         if count == 0:
-            return JSONResponse(status_code=404, content={"error": "No tags found for this SIREN"})
+            return JSONResponse(status_code=404, content={"error": "Aucun tag trouvé pour ce SIREN"})
         await conn.commit()
     return {"untagged": True, "siren": siren, "removed_count": count}
 
