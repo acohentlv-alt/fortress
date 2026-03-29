@@ -6,6 +6,7 @@
  */
 
 import { loginUser } from '../api.js';
+import { t } from '../i18n.js';
 
 export function renderLogin(container, onSuccess) {
     container.innerHTML = `
@@ -17,39 +18,39 @@ export function renderLogin(container, onSuccess) {
                         <span class="login-logo-icon">🏰</span>
                         <span class="login-logo-text">Fortress</span>
                     </div>
-                    <h2 class="login-form-title">Connexion</h2>
-                    <p class="login-form-subtitle">Accédez à votre tableau de bord</p>
+                    <h2 class="login-form-title">${t('login.title')}</h2>
+                    <p class="login-form-subtitle">${t('login.subtitle')}</p>
                 </div>
 
                 <!-- Form -->
                 <form id="login-form" autocomplete="on">
                     <div class="login-field">
-                        <label class="login-label" for="login-username">Nom d'utilisateur</label>
+                        <label class="login-label" for="login-username">${t('login.username')}</label>
                         <div class="login-input-wrap">
                             <span class="login-input-icon">👤</span>
                             <input type="text" id="login-username"
-                                placeholder="Entrez votre identifiant"
+                                placeholder="${t('login.username')}"
                                 autocomplete="username" autofocus
                                 class="login-input">
                         </div>
                     </div>
 
                     <div class="login-field">
-                        <label class="login-label" for="login-password">Mot de passe</label>
+                        <label class="login-label" for="login-password">${t('login.password')}</label>
                         <div class="login-input-wrap">
                             <span class="login-input-icon">🔒</span>
                             <input type="password" id="login-password"
-                                placeholder="Entrez votre mot de passe"
+                                placeholder="${t('login.password')}"
                                 autocomplete="current-password"
                                 class="login-input" style="padding-right:44px">
                             <button type="button" id="toggle-password" class="login-toggle-password"
-                                title="Afficher le mot de passe"
-                                aria-label="Afficher ou masquer le mot de passe">👁️</button>
+                                title="${t('login.showPassword')}"
+                                aria-label="${t('login.showPassword')}">${'👁️'}</button>
                         </div>
                     </div>
 
                     <button type="submit" id="login-submit" class="login-submit-btn">
-                        Se connecter →
+                        ${t('login.submit')} →
                     </button>
                 </form>
 
@@ -60,7 +61,7 @@ export function renderLogin(container, onSuccess) {
                 <!-- Back to intro -->
                 <div style="text-align:center; margin-top:var(--space-xl)">
                     <a href="#/intro" style="color:var(--text-muted); font-size:var(--font-sm); text-decoration:none">
-                        ← Retour à la page d'accueil
+                        ← ${t('login.backToHome')}
                     </a>
                 </div>
             </div>
@@ -74,7 +75,7 @@ export function renderLogin(container, onSuccess) {
         const isPassword = passwordInput.type === 'password';
         passwordInput.type = isPassword ? 'text' : 'password';
         toggleBtn.textContent = isPassword ? '🙈' : '👁️';
-        toggleBtn.title = isPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe';
+        toggleBtn.title = isPassword ? t('login.hidePassword') : t('login.showPassword');
     });
 
     // ── Form submission ─────────────────────────────────────────
@@ -88,12 +89,12 @@ export function renderLogin(container, onSuccess) {
 
         if (!username || !password) {
             errorDiv.style.display = 'block';
-            errorText.textContent = 'Veuillez remplir tous les champs.';
+            errorText.textContent = t('login.fillAllFields');
             return;
         }
 
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> Connexion…';
+        btn.innerHTML = `<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></span> ${t('login.submitting')}`;
         errorDiv.style.display = 'none';
 
         const result = await loginUser(username, password);
@@ -104,7 +105,7 @@ export function renderLogin(container, onSuccess) {
             errorDiv.style.display = 'block';
             errorText.textContent = result.error;
             btn.disabled = false;
-            btn.textContent = 'Se connecter →';
+            btn.textContent = `${t('login.submit')} →`;
             const card = btn.closest('.login-form-card');
             card.style.animation = 'shake 0.4s ease';
             setTimeout(() => { card.style.animation = ''; }, 400);

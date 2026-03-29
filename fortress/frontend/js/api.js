@@ -495,6 +495,18 @@ export async function getWorkspaces() {
     return await request('/admin/workspaces');
 }
 
+export async function createWorkspace(data) {
+    return await postJSON('/admin/workspaces', data);
+}
+
+export async function updateWorkspace(workspaceId, data) {
+    return await patchJSON(`/admin/workspaces/${workspaceId}`, data);
+}
+
+export async function deleteWorkspace(workspaceId) {
+    return await request(`/admin/workspaces/${workspaceId}`, { method: 'DELETE' });
+}
+
 export async function getCurrentUser() {
     try {
         const resp = await fetch(`${API_BASE}/auth/me`, {

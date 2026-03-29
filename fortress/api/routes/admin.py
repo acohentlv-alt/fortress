@@ -257,20 +257,167 @@ async def deactivate_user(user_id: int, request: Request):
 
 @router.get("/workspaces")
 async def list_workspaces(request: Request):
-    """List all workspaces. Admin only."""
+    """List all workspaces with user count and head info. Admin only."""
     admin = _get_admin(request)
     if not admin:
         return JSONResponse(status_code=403, content={"error": "Admin requis."})
 
-    rows = await fetch_all("SELECT id, name, created_at FROM workspaces ORDER BY name")
+    rows = await fetch_all(
+        """SELECT w.id, w.name, w.created_at,
+                  COUNT(u.id) FILTER (WHERE u.active = TRUE OR u.active IS NULL) AS user_count,
+                  (SELECT username FROM users WHERE workspace_id = w.id AND role = 'head' AND (active = TRUE OR active IS NULL) LIMIT 1) AS head_username
+           FROM workspaces w
+           LEFT JOIN users u ON u.workspace_id = w.id
+           GROUP BY w.id, w.name, w.created_at
+           ORDER BY w.name"""
+    )
     return {"workspaces": [
         {
             "id": r["id"],
             "name": r["name"],
             "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            "user_count": r["user_count"] or 0,
+            "head_username": r["head_username"],
         }
         for r in (rows or [])
     ]}
+
+
+@router.post("/workspaces")
+async def create_workspace(request: Request):
+    """Create a new workspace. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Corps invalide."})
+
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Le nom de l'espace de travail est requis."})
+    if len(name) > 100:
+        return JSONResponse(status_code=400, content={"error": "Le nom ne peut pas dépasser 100 caractères."})
+
+    async with get_conn() as conn:
+        try:
+            cur = await conn.execute(
+                "INSERT INTO workspaces (name) VALUES (%s) RETURNING id, name, created_at",
+                (name,)
+            )
+            row = await cur.fetchone()
+            await conn.commit()
+        except Exception as e:
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                return JSONResponse(status_code=409, content={"error": f"L'espace de travail '{name}' existe déjà."})
+            raise
+
+    logger.info("admin.workspace_created", extra={"name": name, "by": admin.username})
+    return {
+        "created": True,
+        "workspace": {
+            "id": row[0],
+            "name": row[1],
+            "created_at": row[2].isoformat() if row[2] else None,
+        }
+    }
+
+
+@router.patch("/workspaces/{workspace_id}")
+async def update_workspace(workspace_id: int, request: Request):
+    """Rename a workspace. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Corps invalide."})
+
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Le nom de l'espace de travail est requis."})
+    if len(name) > 100:
+        return JSONResponse(status_code=400, content={"error": "Le nom ne peut pas dépasser 100 caractères."})
+
+    async with get_conn() as conn:
+        # Check workspace exists
+        cur = await conn.execute("SELECT id FROM workspaces WHERE id = %s", (workspace_id,))
+        if not await cur.fetchone():
+            return JSONResponse(status_code=404, content={"error": "Espace de travail introuvable."})
+
+        try:
+            cur = await conn.execute(
+                "UPDATE workspaces SET name = %s WHERE id = %s RETURNING id, name, created_at",
+                (name, workspace_id)
+            )
+            row = await cur.fetchone()
+            await conn.commit()
+        except Exception as e:
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                return JSONResponse(status_code=409, content={"error": f"L'espace de travail '{name}' existe déjà."})
+            raise
+
+    logger.info("admin.workspace_updated", extra={"workspace_id": workspace_id, "name": name, "by": admin.username})
+    return {
+        "updated": True,
+        "workspace": {
+            "id": row[0],
+            "name": row[1],
+            "created_at": row[2].isoformat() if row[2] else None,
+        }
+    }
+
+
+@router.delete("/workspaces/{workspace_id}")
+async def delete_workspace(workspace_id: int, request: Request):
+    """Delete a workspace. Admin only. Refuses if last workspace, has users, or has data."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    async with get_conn() as conn:
+        # Check it's not the last workspace
+        cur = await conn.execute("SELECT COUNT(*) FROM workspaces")
+        row = await cur.fetchone()
+        if row and row[0] <= 1:
+            return JSONResponse(status_code=400, content={"error": "Impossible de supprimer le dernier espace de travail."})
+
+        # Check workspace exists and get name
+        cur = await conn.execute("SELECT name FROM workspaces WHERE id = %s", (workspace_id,))
+        ws_row = await cur.fetchone()
+        if not ws_row:
+            return JSONResponse(status_code=404, content={"error": "Espace de travail introuvable."})
+        ws_name = ws_row[0]
+
+        # Check for active users
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM users WHERE workspace_id = %s AND (active = TRUE OR active IS NULL)",
+            (workspace_id,)
+        )
+        row = await cur.fetchone()
+        user_count = row[0] if row else 0
+        if user_count > 0:
+            return JSONResponse(status_code=400, content={"error": f"Impossible de supprimer : {user_count} utilisateur(s) encore assigné(s)."})
+
+        # Check for data in batch_data
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM batch_data WHERE workspace_id = %s",
+            (workspace_id,)
+        )
+        row = await cur.fetchone()
+        if row and row[0] > 0:
+            return JSONResponse(status_code=400, content={"error": "Impossible de supprimer : cet espace contient encore des données (batches, entreprises)."})
+
+        # Safe to delete
+        await conn.execute("DELETE FROM workspaces WHERE id = %s", (workspace_id,))
+        await conn.commit()
+
+    logger.info("admin.workspace_deleted", extra={"workspace_id": workspace_id, "name": ws_name, "by": admin.username})
+    return {"deleted": True, "name": ws_name}
 
 
 @router.get("/deploy-status")

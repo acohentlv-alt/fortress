@@ -5,6 +5,7 @@
 import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
+import { t } from '../i18n.js';
 
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;
@@ -27,9 +28,9 @@ export async function renderJob(container, batchId) {
         container.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">${isServerError ? '⚠️' : '❌'}</div>
-                <div class="empty-state-text">${isServerError ? 'Serveur temporairement indisponible' : 'Job introuvable'}</div>
-                <p style="color:var(--text-muted)">${isServerError ? 'Veuillez réessayer dans quelques instants.' : ''}</p>
-                <a href="#/" class="btn btn-primary">Retour au Dashboard</a>
+                <div class="empty-state-text">${isServerError ? t('job.serverUnavailable') : t('job.jobNotFound')}</div>
+                <p style="color:var(--text-muted)">${isServerError ? t('job.retryInMoment') : ''}</p>
+                <a href="#/" class="btn btn-primary">${t('job.backToDashboard')}</a>
             </div>
         `;
         return;
@@ -51,24 +52,24 @@ export async function renderJob(container, batchId) {
             <div>
                 <h1 class="page-title">
                     ${escapeHtml(job.batch_name)}
-                    ${job.batch_number ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-muted); margin-left:var(--space-sm)">Batch #${job.batch_number}</span>` : ''}
+                    ${job.batch_number ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-muted); margin-left:var(--space-sm)">${t('job.batchNumber', { number: job.batch_number })}</span>` : ''}
                 </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)">
                     ${statusBadge(job.status)}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
-                        Créé le ${formatDateTime(job.created_at)}
+                        ${t('job.createdOn')} ${formatDateTime(job.created_at)}
                     </span>
-                    ${(job.triage_green || 0) > 0 ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3)">🟢 ${job.triage_green} données existantes</span>` : ''}
+                    ${(job.triage_green || 0) > 0 ? `<span class="badge" style="background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3)">🟢 ${job.triage_green} ${t('job.existingData')}</span>` : ''}
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-sm)">
                 <a href="${getExportUrl(batchId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
                 <a href="${getExportUrl(batchId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
                 <a href="${getExportUrl(batchId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
-                ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="Relancer ce batch">🔄 Relancer</button>` : ''}
-                <button id="btn-delete-job" class="btn btn-secondary" title="Supprimer ce batch" style="color:var(--danger)">🗑️</button>
+                ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
+                <button id="btn-delete-job" class="btn btn-secondary" title="${t('job.delete')}" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
-            `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">📡 Suivi Live</a>` : ''}
+            `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">${t('job.liveMonitor')}</a>` : ''}
             </div>
         </div>
 
@@ -81,11 +82,11 @@ export async function renderJob(container, batchId) {
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                <span style="font-weight:600">Progression — ${batchSize} entreprises</span>
+                <span style="font-weight:600">${t('job.progress')} — ${t('job.companiesCount', { count: batchSize, plural: batchSize > 1 ? 's' : '' })}</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
-                    <span style="color:var(--text-secondary); font-weight:500">${qualified} entreprise${qualified !== 1 ? 's' : ''} trouvée${qualified !== 1 ? 's' : ''}</span>
-                    ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">⏳ ${job.pending_links} lien${job.pending_links > 1 ? 's' : ''} en attente</span>` : ''}
-                    <button id="toggle-provenance" title="Détails du traitement" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
+                    <span style="color:var(--text-secondary); font-weight:500">${qualified} ${t('job.foundLabel', { plural: qualified !== 1 ? 's' : '' })}</span>
+                    ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">${t('job.pendingLinks', { count: job.pending_links, plural: job.pending_links > 1 ? 's' : '' })}</span>` : ''}
+                    <button id="toggle-provenance" title="${t('job.provenanceDetails')}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
                 </div>
             </div>
             ${job.status === 'in_progress' ? `
@@ -94,7 +95,7 @@ export async function renderJob(container, batchId) {
             </div>` : ''}
             <div id="provenance-panel" style="display:none; margin-top:var(--space-lg); padding:var(--space-lg); background:var(--bg-secondary); border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
                 <div style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
-                    Détails du traitement
+                    ${t('job.provenanceDetails')}
                 </div>
                 ${scraped > 0 ? `<div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md)">
                     🔍 <strong>${scraped}</strong> entreprises évaluées — <strong>${qualified}</strong> retenues, <strong>${scraped - qualified}</strong> ignorées car déjà enrichies par Maps ou sans correspondance.
@@ -103,7 +104,7 @@ export async function renderJob(container, batchId) {
                     ♻️ <strong>${job.triage_green}</strong> entreprise${job.triage_green > 1 ? 's étaient' : ' était'} déjà dans la base de données avec des données Maps complètes.
                 </div>` : ''}
                 <div id="provenance-sources" style="display:flex; gap:var(--space-xl); flex-wrap:wrap; font-size:var(--font-sm)">
-                    <span style="color:var(--text-secondary)">Chargement…</span>
+                    <span style="color:var(--text-secondary)">${t('job.provenanceSources')}</span>
                 </div>
             </div>
         </div>
@@ -111,18 +112,18 @@ export async function renderJob(container, batchId) {
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                Qualité des données
+                ${t('job.qualityTitle')}
             </h3>
             <div style="display:flex; gap:var(--space-2xl); justify-content:center; flex-wrap:wrap">
-                ${renderGauge(q.phone_pct || 0, '📞 Téléphone')}
+                ${renderGauge(q.phone_pct || 0, '📞 Tél.')}
                 ${renderGauge(q.email_pct || 0, '✉️ Email')}
-                ${renderGauge(q.website_pct || 0, '🌐 Site web')}
-                ${renderGauge(q.officers_pct || 0, '👤 Dirigeants')}
-                ${renderGauge(q.financials_pct || 0, '💰 Financier')}
-                ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
+                ${renderGauge(q.website_pct || 0, '🌐 Web')}
+                ${renderGauge(q.officers_pct || 0, '👤')}
+                ${renderGauge(q.financials_pct || 0, '💰')}
+                ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗')}
             </div>
             <div style="text-align:center; font-size:var(--font-sm); color:var(--text-muted); margin-top:var(--space-lg)">
-                ${batchSize} entreprises collectées
+                ${t('job.companiesCount', { count: batchSize, plural: batchSize > 1 ? 's' : '' })}
             </div>
         </div>
 
@@ -130,7 +131,7 @@ export async function renderJob(container, batchId) {
         ${job.departments && job.departments.length > 0 ? `
             <div class="card" style="margin-bottom:var(--space-xl)">
                 <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                    Départements couverts
+                    ${t('job.deptsCovered')}
                 </h3>
                 <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
                     ${job.departments.map(d => `
@@ -144,15 +145,15 @@ export async function renderJob(container, batchId) {
 
         <!-- Companies -->
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
-            <h2 style="font-size:var(--font-lg); font-weight:600">Entreprises</h2>
+            <h2 style="font-size:var(--font-lg); font-weight:600">${t('job.companiesLabel')}</h2>
             <div style="display:flex; gap:var(--space-sm)">
-                <button id="btn-select-mode" class="btn-select-mode" title="Sélectionner">
-                    ☑ Sélectionner
+                <button id="btn-select-mode" class="btn-select-mode" title="${t('job.selectMode')}">
+                    ${t('job.selectMode')}
                 </button>
                 <select id="job-sort" style="background:var(--bg-input); border:1px solid var(--border-default); border-radius:var(--radius-sm); padding:var(--space-sm) var(--space-md); color:var(--text-primary); font-family:var(--font-family); font-size:var(--font-sm)">
-                    <option value="completude">Tri: Complétude</option>
-                    <option value="name">Tri: Nom</option>
-                    <option value="date">Tri: Date création</option>
+                    <option value="completude">${t('job.sortCompleteness')}</option>
+                    <option value="name">${t('job.sortName')}</option>
+                    <option value="date">${t('job.sortDate')}</option>
                 </select>
             </div>
         </div>
@@ -195,7 +196,7 @@ export async function renderJob(container, batchId) {
                 };
                 const entries = Object.entries(q.sources);
                 if (entries.length === 0) {
-                    container.innerHTML = '<span style="color:var(--text-muted)">Aucune donnée de source disponible</span>';
+                    container.innerHTML = `<span style="color:var(--text-muted)">${t('job.noSourceData')}</span>`;
                     return;
                 }
                 container.innerHTML = entries.map(([action, data]) => {
@@ -203,7 +204,7 @@ export async function renderJob(container, batchId) {
                     const color = data.rate >= 70 ? 'var(--success)' : data.rate >= 40 ? 'var(--warning)' : 'var(--text-muted)';
                     return `<div style="display:flex;flex-direction:column;gap:2px;padding:var(--space-sm) var(--space-md);background:var(--bg-elevated);border-radius:var(--radius-sm);min-width:180px">
                         <span style="font-weight:600">${label}</span>
-                        <span style="color:${color}">${data.success}/${data.total} réussies (${data.rate}%)</span>
+                        <span style="color:${color}">${data.success}/${data.total} (${data.rate}%)</span>
                     </div>`;
                 }).join('');
             }
@@ -223,24 +224,23 @@ export async function renderJob(container, batchId) {
     if (deleteBtn) {
         deleteBtn.addEventListener('click', () => {
             showConfirmModal({
-                title: '🗑️ Supprimer ce batch ?',
+                title: t('job.confirmDelete'),
                 body: `
                     <p><strong>Batch :</strong> ${escapeHtml(job.batch_name)}</p>
-                    <p><strong>Créé le :</strong> ${formatDateTime(job.created_at)}</p>
+                    <p><strong>${t('job.createdOn')} :</strong> ${formatDateTime(job.created_at)}</p>
                     <p><strong>${scraped}</strong> entreprises collectées</p>
-                    <p style="color:var(--danger)">⚠️ <strong>Suppression complète :</strong> contacts enrichis, historique d'audit et tags seront effacés.</p>
-                    <p style="color:var(--text-muted)">Les fiches entreprises (SIRENE) et les données importées manuellement restent dans la base.</p>
+                    <p style="color:var(--danger)">⚠️ <strong>${t('job.confirmDeleteWithInfo')}</strong></p>
+                    <p style="color:var(--text-muted)">${t('job.confirmDeleteKeep')}</p>
                 `,
-                confirmLabel: 'Supprimer définitivement',
+                confirmLabel: t('job.deleteConfirmPermanent'),
                 danger: true,
                 onConfirm: async () => {
                     const result = await deleteJob(batchId);
                     if (result._ok !== false) {
-                        const msg = `Batch supprimé : ${result.deleted_contacts || 0} contacts, ${result.sirens_affected || 0} entreprises nettoyées`;
-                        showToast(msg, 'success');
+                        showToast(t('job.deleteSuccess', { contacts: result.deleted_contacts || 0, sirens: result.sirens_affected || 0 }), 'success');
                         window.location.hash = '#/';
                     } else {
-                        showToast(result.error || 'Erreur lors de la suppression', 'error');
+                        showToast(result.error || t('job.deleteError'), 'error');
                     }
                 },
             });
@@ -287,23 +287,22 @@ async function loadCompanies(batchId, page, sort) {
                 <div style="padding:var(--space-2xl); background:var(--bg-secondary); border-radius:var(--radius-md); border:1px solid rgba(34,197,94,0.3); text-align:center; max-width:560px; margin:0 auto">
                     <div style="font-size:2.5rem; margin-bottom:var(--space-lg)">✅</div>
                     <div style="font-size:var(--font-lg); font-weight:600; color:rgb(34,197,94); margin-bottom:var(--space-md)">
-                        Toutes les entreprises sont déjà enrichies
+                        ${t('job.allEnriched')}
                     </div>
                     <p style="color:var(--text-secondary); margin-bottom:var(--space-lg)">
-                        Les <strong>${greenCount}</strong> entreprises trouvées pour <em>${escapeHtml(batchName)}</em> ont déjà été enrichies par Google Maps dans notre base de données.
+                        ${t('job.allEnrichedBody', { count: greenCount, name: escapeHtml(batchName) })}
                     </p>
                     <p style="color:var(--text-muted); font-size:var(--font-sm); margin-bottom:var(--space-xl)">
-                        Pour rechercher de nouvelles entreprises, essayez un secteur ou un département différent,
-                        ou attendez que de nouvelles entreprises s'enregistrent dans SIRENE.
+                        ${t('job.allEnrichedSub')}
                     </p>
-                    <a href="#/new-batch" class="btn btn-primary">🚀 Nouvelle recherche</a>
+                    <a href="#/new-batch" class="btn btn-primary">${t('job.newSearch')}</a>
                 </div>
             `;
         } else {
             companiesContainer.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">📭</div>
-                    <div class="empty-state-text">Aucune entreprise trouvée</div>
+                    <div class="empty-state-text">${t('job.noCompaniesFound')}</div>
                 </div>
             `;
         }
@@ -320,7 +319,7 @@ async function loadCompanies(batchId, page, sort) {
         // Group by search_query
         const groups = new Map();
         for (const c of data.companies) {
-            const key = c.search_query || '(sans requête)';
+            const key = c.search_query || t('job.noQueryGroup');
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push(c);
         }
@@ -329,7 +328,7 @@ async function loadCompanies(batchId, page, sort) {
                 <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border-radius:var(--radius-sm); border-left:3px solid var(--accent)">
                     <span style="font-size:var(--font-sm); color:var(--accent); font-weight:600">🔍 ${escapeHtml(query)}</span>
                     <span style="font-size:var(--font-xs); color:var(--text-muted); margin-left:auto">
-                        ${companies.length} résultat${companies.length > 1 ? 's' : ''}
+                        ${t('job.queriesResultCount', { count: companies.length, plural: companies.length > 1 ? 's' : '' })}
                         ${(() => { const p = companies.filter(c => c.link_confidence === 'pending').length; return p > 0 ? `<span style="color:rgb(245,158,11); margin-left:6px">⏳ ${p} en attente</span>` : ''; })()}
                     </span>
                 </div>
@@ -385,11 +384,11 @@ async function loadCompanies(batchId, page, sort) {
                 const name = card?.querySelector('.company-card-name')?.textContent || siren;
 
                 showConfirmModal({
-                    title: 'Supprimer cette entreprise ?',
-                    body: `<p>Retirer <strong>${escapeHtml(name)}</strong> de ce batch</p>`,
-                    confirmLabel: 'Supprimer',
+                    title: t('job.removeConfirmTitle'),
+                    body: `<p>${t('job.removeConfirmBody', { name: escapeHtml(name) })}</p>`,
+                    confirmLabel: t('common.delete'),
                     danger: true,
-                    checkboxLabel: 'Également ajouter à la liste noire (ne plus jamais scraper)',
+                    checkboxLabel: t('job.alsoBlacklist'),
                     onConfirm: async (checkboxChecked) => {
                         const result = await untagCompany(siren, _currentBatchName);
                         if (result._ok !== false) {
@@ -403,7 +402,7 @@ async function loadCompanies(batchId, page, sort) {
                                     });
                                 } catch { /* best effort */ }
                             }
-                            showToast(`${name} retirée`, 'success');
+                            showToast(t('job.removeSuccess', { name }), 'success');
                             if (card) {
                                 card.classList.add('card-fade-out');
                                 card.addEventListener('animationend', async () => {
@@ -414,7 +413,7 @@ async function loadCompanies(batchId, page, sort) {
                                 await loadCompanies(_currentBatchId, _currentPage, _currentSort);
                             }
                         } else {
-                            showToast('Erreur lors du retrait', 'error');
+                            showToast(t('job.removeError'), 'error');
                         }
                     },
                 });
@@ -447,7 +446,7 @@ function _setupSelectionMode(batchId) {
     btn.addEventListener('click', () => {
         selectionMode = !selectionMode;
         btn.classList.toggle('active', selectionMode);
-        btn.innerHTML = selectionMode ? '✖ Annuler' : '☑ Sélectionner';
+        btn.innerHTML = selectionMode ? t('job.cancelSelect') : t('job.selectMode');
         if (!selectionMode) {
             selectedSirens.clear();
             _removeBulkBar();
@@ -472,10 +471,10 @@ function _updateBulkBar() {
     }
     const n = selectedSirens.size;
     bar.innerHTML = `
-        <span class="bulk-count">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
-        <button class="btn btn-secondary" id="bulk-select-all">Tout sélectionner</button>
-        <button class="btn btn-primary" id="bulk-enrich-web">🚀 Enrichir via site web</button>
-        <button class="btn btn-danger" id="bulk-delete">🗑️ Supprimer</button>
+        <span class="bulk-count">${t('job.selected', { count: n, plural: n > 1 ? 's' : '' })}</span>
+        <button class="btn btn-secondary" id="bulk-select-all">${t('job.selectAll')}</button>
+        <button class="btn btn-primary" id="bulk-enrich-web">${t('job.enrichWeb')}</button>
+        <button class="btn btn-danger" id="bulk-delete">${t('job.bulkDelete')}</button>
     `;
 
     // Select all on current page
@@ -504,19 +503,19 @@ function _updateBulkBar() {
         const sirens = [...selectedSirens];
         if (!sirens.length) return;
         if (sirens.length > 20) {
-            showToast('Maximum 20 entreprises par enrichissement', 'error');
+            showToast(t('job.maxEnrich'), 'error');
             return;
         }
-        showToast(`Enrichissement de ${sirens.length} entreprise(s)…`, 'info');
+        showToast(t('job.enrichLaunching', { count: sirens.length }), 'info');
         const result = await startDeepEnrich(sirens);
         if (result && result._ok !== false) {
-            showToast(`Enrichissement lancé pour ${sirens.length} entreprise(s)`, 'success');
+            showToast(t('job.enrichLaunched', { count: sirens.length }), 'success');
             selectionMode = false;
             selectedSirens.clear();
             _removeBulkBar();
             await loadCompanies(_currentBatchId, _currentPage, _currentSort);
         } else {
-            showToast("Erreur lors de l'enrichissement", 'error');
+            showToast(t('job.enrichError'), 'error');
         }
     };
 
@@ -534,11 +533,11 @@ async function _bulkDelete() {
     const sirens = [...selectedSirens];
     if (!sirens.length) return;
     showConfirmModal({
-        title: `Supprimer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} ?`,
-        body: `<p>Retirer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} de ce batch</p>`,
-        confirmLabel: 'Supprimer',
+        title: t('job.bulkDeleteTitle', { count: sirens.length, plural: sirens.length > 1 ? 's' : '' }),
+        body: `<p>${t('job.bulkDeleteBody', { count: sirens.length, plural: sirens.length > 1 ? 's' : '' })}</p>`,
+        confirmLabel: t('job.suppressPermanent'),
         danger: true,
-        checkboxLabel: 'Également ajouter à la liste noire',
+        checkboxLabel: t('job.alsoBlacklistBulk'),
         onConfirm: async (blacklist) => {
             let ok = 0;
             for (const siren of sirens) {
@@ -553,7 +552,7 @@ async function _bulkDelete() {
                     });
                 }
             }
-            showToast(`${ok}/${sirens.length} supprimée(s)`, 'success');
+            showToast(t('job.bulkDeleteSuccess', { ok, total: sirens.length }), 'success');
             selectionMode = false;
             selectedSirens.clear();
             _removeBulkBar();

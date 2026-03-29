@@ -18,6 +18,7 @@ import { renderAdmin } from './pages/admin.js?v=19';
 import { renderLogin } from './pages/login.js?v=19';
 import { renderIntro } from './pages/intro.js?v=19';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
+import { initI18n, changeLanguage, getLang, t, translateDOM, onLanguageChange } from './i18n.js';
 
 // ── Navigation Generation Counter ───────────────────────────────
 // Each navigate() call increments _navGeneration. Page handlers
@@ -264,6 +265,22 @@ function _setupRunningJobs() {
 // ── App Init ─────────────────────────────────────────────────────
 
 async function initApp() {
+    // Initialize i18n before anything renders
+    await initI18n();
+
+    // Wire language toggle — use event delegation on document for reliability
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'lang-toggle') {
+            e.preventDefault();
+            e.stopPropagation();
+            const newLang = getLang() === 'fr' ? 'en' : 'fr';
+            changeLanguage(newLang);
+        }
+    });
+
+    // Re-render current page when language changes
+    onLanguageChange(() => navigate());
+
     // Check session with backend — cookie is sent automatically
     const user = await getCurrentUser();
 

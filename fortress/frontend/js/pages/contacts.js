@@ -7,10 +7,11 @@
  * UX: Initially loads 5 pages (250 rows). User can "Charger plus" for more.
  */
 
-import { getContactsList, bulkExportCSV, extractApiError, checkHealth, startDeepEnrich } from '../api.js';
+import { getContactsList, bulkExportCSV, extractApiError, checkHealth } from '../api.js';
 import { escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
 import { showAddEntityModal } from '../components/add-entity-modal.js';
+import { t } from '../i18n.js';
 
 let selectionMode = false;
 let selectedSirens = new Set();
@@ -32,18 +33,18 @@ export async function renderContacts(container) {
     container.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:var(--space-md); margin-bottom:var(--space-xl)">
             <div>
-                <h1 class="page-title">📇 Contacts</h1>
-                <p class="page-subtitle">Vue complète de tous les contacts enrichis — téléphones, emails, dirigeants</p>
+                <h1 class="page-title">📇 ${t('contacts.title')}</h1>
+                <p class="page-subtitle">${t('contacts.subtitle')}</p>
             </div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center">
                 <button class="btn btn-secondary" id="contacts-select-toggle" style="white-space:nowrap">
-                    ☑ Sélectionner
+                    ${t('contacts.selectToggle')}
                 </button>
                 <button class="btn btn-secondary" id="contacts-export-btn" style="white-space:nowrap">
-                    📥 Exporter CSV
+                    ${t('contacts.exportCSV')}
                 </button>
                 <button class="btn btn-secondary" id="contacts-add-entity" style="white-space:nowrap">
-                    ➕ Ajouter
+                    ${t('contacts.addEntity')}
                 </button>
             </div>
         </div>
@@ -53,7 +54,7 @@ export async function renderContacts(container) {
             <div style="flex:1; min-width:260px; position:relative">
                 <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted)">🔍</span>
                 <input type="text" id="contacts-search"
-                    placeholder="Rechercher par nom, SIREN, tél, email, dirigeant..."
+                    placeholder="${t('contacts.searchPlaceholder')}"
                     style="width:100%; padding:var(--space-sm) var(--space-md); padding-left:36px;
                            background:var(--bg-input); border:1px solid var(--border-default);
                            border-radius:var(--radius-sm); color:var(--text-primary);
@@ -68,13 +69,13 @@ export async function renderContacts(container) {
                 style="min-width:160px; background:var(--bg-input); border:1px solid var(--border-default);
                        border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-sm);
                        padding:var(--space-sm) var(--space-md)">
-                <option value="">Dépt:</option>
+                <option value="">${t('contacts.deptFilter')}</option>
                 ${DEPARTMENTS.map(([code, name]) =>
                     `<option value="${code}">${code} — ${escapeHtml(name)}</option>`
                 ).join('')}
             </select>
             <input type="text" id="contacts-naf-filter"
-                placeholder="NAF (ex: 55.30Z)"
+                placeholder="${t('contacts.nafPlaceholder')}"
                 style="width:130px; background:var(--bg-input); border:1px solid var(--border-default);
                        border-radius:var(--radius-sm); color:var(--text-primary); font-size:var(--font-sm);
                        padding:var(--space-sm) var(--space-md); font-family:var(--font-family)"
@@ -95,6 +96,18 @@ export async function renderContacts(container) {
     let debounceTimer;
     let nafTimer;
 
+    // ── Delegated checkbox handler (one listener, works for all rows) ──
+    resultsEl.addEventListener('change', (e) => {
+        if (!selectionMode) return;
+        const cb = e.target.closest('.contact-checkbox');
+        if (!cb) return;
+        if (cb.checked) selectedSirens.add(cb.dataset.siren);
+        else selectedSirens.delete(cb.dataset.siren);
+        const row = cb.closest('tr');
+        if (row) row.style.background = cb.checked ? 'rgba(99,102,241,0.08)' : '';
+        _updateContactsBulkBar();
+    });
+
     // ── Bulk bar helpers ──────────────────────────────────────────
     function _updateContactsBulkBar() {
         let bar = document.getElementById('bulk-action-bar');
@@ -110,10 +123,9 @@ export async function renderContacts(container) {
         }
         const n = selectedSirens.size;
         bar.innerHTML = `
-            <span class="bulk-count">☑ ${n} sélectionnée${n > 1 ? 's' : ''}</span>
-            <button class="btn btn-secondary" id="contacts-bulk-select-all">Tout sélectionner</button>
-            <button class="btn btn-primary" id="contacts-bulk-enrich">🚀 Enrichir via site web</button>
-            <button class="btn btn-danger" id="contacts-bulk-delete">🗑️ Supprimer</button>
+            <span class="bulk-count">${t('contacts.bulkCount', { count: n, plural: n > 1 ? 's' : '' })}</span>
+            <button class="btn btn-secondary" id="contacts-bulk-select-all">${t('contacts.bulkSelectAll')}</button>
+            <button class="btn btn-danger" id="contacts-bulk-delete">${t('contacts.bulkDelete')}</button>
         `;
 
         document.getElementById('contacts-bulk-select-all').onclick = () => {
@@ -123,39 +135,21 @@ export async function renderContacts(container) {
                 b.checked = !allChecked;
                 if (!allChecked) selectedSirens.add(b.dataset.siren);
                 else selectedSirens.delete(b.dataset.siren);
+                const row = b.closest('tr');
+                if (row) row.style.background = !allChecked ? 'rgba(99,102,241,0.08)' : '';
             });
-            renderTable();
-        };
-
-        document.getElementById('contacts-bulk-enrich').onclick = async () => {
-            const sirens = [...selectedSirens];
-            if (!sirens.length) return;
-            if (sirens.length > 20) {
-                showToast('Maximum 20 entreprises par enrichissement', 'error');
-                return;
-            }
-            showToast(`Enrichissement de ${sirens.length} entreprise(s)…`, 'info');
-            const result = await startDeepEnrich(sirens);
-            if (result && result._ok !== false) {
-                showToast(`Enrichissement lancé pour ${sirens.length} entreprise(s)`, 'success');
-                selectionMode = false;
-                selectedSirens.clear();
-                _removeContactsBulkBar();
-                renderTable();
-            } else {
-                showToast("Erreur lors de l'enrichissement", 'error');
-            }
+            _updateContactsBulkBar();
         };
 
         document.getElementById('contacts-bulk-delete').onclick = () => {
             const sirens = [...selectedSirens];
             if (!sirens.length) return;
             showConfirmModal({
-                title: `Supprimer ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} ?`,
-                body: `<p>Supprimer définitivement ${sirens.length} entreprise${sirens.length > 1 ? 's' : ''} de la base de données</p>`,
-                confirmLabel: 'Supprimer',
+                title: t('contacts.bulkDeleteTitle', { count: sirens.length, plural: sirens.length > 1 ? 's' : '' }),
+                body: `<p>${t('contacts.bulkDeleteBody', { count: sirens.length, plural: sirens.length > 1 ? 's' : '' })}</p>`,
+                confirmLabel: t('contacts.deleteConfirm'),
                 danger: true,
-                checkboxLabel: 'Également ajouter à la liste noire',
+                checkboxLabel: t('contacts.alsoBlacklist'),
                 onConfirm: async (blacklist) => {
                     let ok = 0;
                     for (const siren of sirens) {
@@ -173,7 +167,7 @@ export async function renderContacts(container) {
                             });
                         }
                     }
-                    showToast(`${ok}/${sirens.length} supprimée(s)`, 'success');
+                    showToast(t('contacts.bulkDeleteSuccess', { ok, total: sirens.length }), 'success');
                     selectionMode = false;
                     selectedSirens.clear();
                     _removeContactsBulkBar();
@@ -195,20 +189,20 @@ export async function renderContacts(container) {
             let emptyText;
             let emptySubtext;
             if (currentQuery) {
-                emptyText = `Aucun contact trouvé pour "${escapeHtml(currentQuery)}"`;
-                emptySubtext = 'Essayez un autre terme de recherche.';
+                emptyText = t('contacts.noContactsQuery', { query: escapeHtml(currentQuery) });
+                emptySubtext = t('contacts.noContactsTryOther');
             } else if (currentDepartment && currentNafCode) {
-                emptyText = `Aucun contact dans ce département pour ce code NAF`;
-                emptySubtext = 'Essayez de modifier les filtres.';
+                emptyText = t('contacts.noContactsDeptNaf');
+                emptySubtext = t('contacts.modifyFilters');
             } else if (currentDepartment) {
-                emptyText = `Aucun contact dans ce département`;
-                emptySubtext = 'Essayez un autre département ou supprimez le filtre.';
+                emptyText = t('contacts.noContactsDept');
+                emptySubtext = t('contacts.noContactsDeptHint');
             } else if (currentNafCode) {
-                emptyText = `Aucun contact pour ce code NAF`;
-                emptySubtext = 'Essayez un autre code NAF ou supprimez le filtre.';
+                emptyText = t('contacts.noContactsNaf');
+                emptySubtext = t('contacts.noContactsNafHint');
             } else {
-                emptyText = 'Aucun contact enrichi';
-                emptySubtext = 'Les contacts apparaissent ici après une recherche Maps ou un import CSV';
+                emptyText = t('contacts.noContactsEnriched');
+                emptySubtext = t('contacts.noContactsHint');
             }
             resultsEl.innerHTML = `
                 <div class="empty-state">
@@ -225,8 +219,7 @@ export async function renderContacts(container) {
         resultsEl.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
                 <span style="font-size:var(--font-sm); color:var(--text-secondary)">
-                    ${totalDisplay} contact${allResults.length > 1 ? 's' : ''}
-                    — ${allResults.length} affiché${allResults.length > 1 ? 's' : ''}
+                    ${t('contacts.countDisplay', { total: totalDisplay, shown: allResults.length, plural: allResults.length > 1 ? 's' : '' })}
                 </span>
             </div>
 
@@ -235,14 +228,14 @@ export async function renderContacts(container) {
                     <thead>
                         <tr>
                             ${selectionMode ? '<th class="contacts-th" style="width:40px"></th>' : ''}
-                            <th class="contacts-th">Entreprise</th>
-                            <th class="contacts-th" style="white-space:nowrap">SIREN</th>
-                            <th class="contacts-th">📞 Tél</th>
-                            <th class="contacts-th">✉️ Email</th>
-                            <th class="contacts-th">🌐 Site</th>
-                            <th class="contacts-th">👤 Dirigeant</th>
-                            <th class="contacts-th">📞 Ligne directe</th>
-                            <th class="contacts-th" style="white-space:nowrap">Dépt</th>
+                            <th class="contacts-th">${t('contacts.company')}</th>
+                            <th class="contacts-th" style="white-space:nowrap">${t('contacts.siren')}</th>
+                            <th class="contacts-th">${t('contacts.colPhone')}</th>
+                            <th class="contacts-th">${t('contacts.colEmail')}</th>
+                            <th class="contacts-th">${t('contacts.colSite')}</th>
+                            <th class="contacts-th">${t('contacts.colDirector')}</th>
+                            <th class="contacts-th">${t('contacts.colDirectLine')}</th>
+                            <th class="contacts-th" style="white-space:nowrap">${t('contacts.dept')}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -250,7 +243,7 @@ export async function renderContacts(container) {
                             <tr class="contacts-row" onclick="window.location.hash='#/company/${r.siren}'"
                                 ${selectionMode && selectedSirens.has(r.siren) ? 'style="background:rgba(99,102,241,0.08)"' : ''}>
                                 ${selectionMode ? `
-                                <td style="width:40px; text-align:center" onclick="event.stopPropagation()">
+                                <td style="width:40px; text-align:center; cursor:pointer" onclick="event.stopPropagation(); var cb=this.querySelector('input'); if(event.target!==cb){cb.checked=!cb.checked; cb.dispatchEvent(new Event('change',{bubbles:true}));}">
                                     <input type="checkbox" class="contact-checkbox" data-siren="${escapeHtml(r.siren)}"
                                            ${selectedSirens.has(r.siren) ? 'checked' : ''}>
                                 </td>` : ''}
@@ -298,12 +291,12 @@ export async function renderContacts(container) {
                 <div style="display:flex; justify-content:center; margin-top:var(--space-xl)">
                     <button class="btn btn-secondary" id="contacts-load-more"
                         style="padding:var(--space-md) var(--space-2xl); font-size:var(--font-base); border-radius:var(--radius-lg)">
-                        ⬇️ Charger plus
+                        ${t('contacts.loadMore')}
                     </button>
                 </div>
             ` : `
                 <div style="text-align:center; margin-top:var(--space-xl); color:var(--text-muted); font-size:var(--font-sm)">
-                    ✅ Tous les contacts affichés
+                    ${t('contacts.allDisplayed')}
                 </div>
             `}
         `;
@@ -314,15 +307,8 @@ export async function renderContacts(container) {
             loadMoreBtn.addEventListener('click', () => loadMore());
         }
 
-        // Wire checkboxes when in selection mode
+        // Update bulk bar state (checkbox events handled by delegated listener on resultsEl)
         if (selectionMode) {
-            document.querySelectorAll('.contact-checkbox').forEach(cb => {
-                cb.addEventListener('change', () => {
-                    if (cb.checked) selectedSirens.add(cb.dataset.siren);
-                    else selectedSirens.delete(cb.dataset.siren);
-                    _updateContactsBulkBar();
-                });
-            });
             _updateContactsBulkBar();
         }
     }
@@ -346,13 +332,13 @@ export async function renderContacts(container) {
                 <div class="error-state text-center" style="padding:var(--space-2xl)">
                     <div style="font-size:3rem; margin-bottom:var(--space-lg)">🔌</div>
                     <div style="color:var(--text-secondary); margin-bottom:var(--space-lg)">${escapeHtml(errorMsg)}</div>
-                    <button id="contacts-retry" class="btn btn-primary">🔄 Réessayer</button>
+                    <button id="contacts-retry" class="btn btn-primary">${t('contacts.retry')}</button>
                 </div>
             `;
             document.getElementById('contacts-retry')?.addEventListener('click', async () => {
                 const health = await checkHealth();
                 if (health.ok) doSearch();
-                else showToast('Serveur inaccessible', 'error');
+                else showToast(t('contacts.serverUnavailable'), 'error');
             });
             return;
         }
@@ -370,7 +356,7 @@ export async function renderContacts(container) {
         const loadMoreBtn = document.getElementById('contacts-load-more');
         if (loadMoreBtn) {
             loadMoreBtn.disabled = true;
-            loadMoreBtn.textContent = '⏳ Chargement...';
+            loadMoreBtn.textContent = t('contacts.loadingMore');
         }
 
         const params = { limit: PAGE_SIZE * INITIAL_PAGES, offset: allResults.length };
@@ -384,7 +370,7 @@ export async function renderContacts(container) {
             showToast(extractApiError(data), 'error');
             if (loadMoreBtn) {
                 loadMoreBtn.disabled = false;
-                loadMoreBtn.textContent = '⬇️ Charger plus';
+                loadMoreBtn.textContent = t('contacts.loadMore');
             }
             return;
         }
@@ -430,7 +416,7 @@ export async function renderContacts(container) {
     document.getElementById('contacts-select-toggle')?.addEventListener('click', () => {
         selectionMode = !selectionMode;
         const btn = document.getElementById('contacts-select-toggle');
-        if (btn) btn.textContent = selectionMode ? '✖ Annuler' : '☑ Sélectionner';
+        if (btn) btn.textContent = selectionMode ? t('contacts.cancelSelect') : t('contacts.selectToggle');
         if (!selectionMode) {
             selectedSirens.clear();
             _removeContactsBulkBar();
@@ -447,7 +433,7 @@ export async function renderContacts(container) {
     document.getElementById('contacts-export-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('contacts-export-btn');
         btn.disabled = true;
-        btn.textContent = '⏳ Export...';
+        btn.textContent = t('contacts.exportLoading');
         try {
             const sirens = allResults.map(r => r.siren);
             const resp = await fetch('/api/export/bulk/csv', {
@@ -463,12 +449,12 @@ export async function renderContacts(container) {
             a.download = 'contacts_export.csv';
             a.click();
             URL.revokeObjectURL(url);
-            showToast('Export CSV téléchargé', 'success');
+            showToast(t('contacts.exportSuccess'), 'success');
         } catch (err) {
-            showToast('Erreur d\'export: ' + err.message, 'error');
+            showToast(t('contacts.exportError', { error: err.message }), 'error');
         } finally {
             btn.disabled = false;
-            btn.textContent = '📥 Exporter CSV';
+            btn.textContent = t('contacts.exportCSV');
         }
     });
 

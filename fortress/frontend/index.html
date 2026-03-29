@@ -85,8 +85,11 @@
 
             <div class="sidebar-footer">
                 <div id="user-display" class="sidebar-user-display hidden"></div>
-                <span class="sidebar-footer-version">Fortress v1.0 · Zéro coût</span>
-                <a href="#" id="btn-logout" class="sidebar-footer-logout hidden">Déconnexion</a>
+                <div style="display:flex; align-items:center; gap:8px; justify-content:space-between; width:100%">
+                    <span class="sidebar-footer-version" data-i18n="sidebar.version">Fortress v1.0 · Zéro coût</span>
+                    <button id="lang-toggle" style="background:var(--bg-secondary); border:1px solid var(--border-default); color:var(--text-secondary); padding:2px 8px; border-radius:var(--radius-sm); font-size:var(--font-xs); font-weight:700; cursor:pointer;">EN</button>
+                </div>
+                <a href="#" id="btn-logout" class="sidebar-footer-logout hidden" data-i18n="sidebar.logout">Déconnexion</a>
             </div>
         </aside>
 
@@ -113,7 +116,7 @@
     <!-- SheetJS for XLSX support (client-side parsing + export) -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <!-- JS Modules -->
-    <script type="module" src="/js/app.js?v=21"></script>
+    <script type="module" src="/js/app.js?v=22"></script>
 </body>
 
 </html>

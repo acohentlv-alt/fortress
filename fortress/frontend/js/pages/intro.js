@@ -14,6 +14,7 @@
  */
 
 import { registerCleanup } from '../app.js';
+import { t } from '../i18n.js';
 
 export function renderIntro(container) {
     // Remove page-container constraints for full-bleed landing
@@ -37,10 +38,10 @@ export function renderIntro(container) {
                     <span>Fortress</span>
                 </a>
                 <div class="land-nav-links">
-                    <a href="#section-how" class="land-nav-link" data-scroll="how">Fonctionnement</a>
-                    <a href="#section-features" class="land-nav-link" data-scroll="features">Fonctionnalités</a>
-                    <a href="#section-contact" class="land-nav-link" data-scroll="contact">Contact</a>
-                    <a href="#/login" class="land-nav-cta">Se connecter</a>
+                    <a href="#section-how" class="land-nav-link" data-scroll="how">${t('intro.navHow')}</a>
+                    <a href="#section-features" class="land-nav-link" data-scroll="features">${t('intro.navFeatures')}</a>
+                    <a href="#section-contact" class="land-nav-link" data-scroll="contact">${t('intro.navContact')}</a>
+                    <a href="#/login" class="land-nav-cta">${t('intro.navLogin')}</a>
                 </div>
             </nav>
 
@@ -52,26 +53,24 @@ export function renderIntro(container) {
                 <div class="land-hero-content">
                     <div class="land-badge">
                         <span class="land-badge-dot"></span>
-                        Plateforme d'intelligence commerciale B2B
+                        ${t('intro.badge')}
                     </div>
 
                     <h1 class="land-h1">
-                        Trouvez vos prochains<br>
-                        <span class="land-h1-gradient">clients en France</span>
+                        ${t('intro.h1Line1')}<br>
+                        <span class="land-h1-gradient">${t('intro.h1Line2')}</span>
                     </h1>
 
                     <p class="land-hero-sub">
-                        Accédez à <strong>14.7 millions d'entreprises françaises</strong>,
-                        enrichies avec téléphones, emails et contacts dirigeants.
-                        Exportez vos fichiers de prospection en quelques clics.
+                        ${t('intro.heroParagraph')}
                     </p>
 
                     <div class="land-hero-ctas">
                         <a href="#section-contact" class="land-btn-primary" data-scroll="contact">
-                            Demander un accès →
+                            ${t('intro.ctaRequest')}
                         </a>
                         <a href="#section-how" class="land-btn-secondary" data-scroll="how">
-                            Découvrir la plateforme
+                            ${t('intro.ctaDiscover')}
                         </a>
                     </div>
                 </div>
@@ -82,81 +81,70 @@ export function renderIntro(container) {
                 <div class="land-stats-bar land-reveal">
                     <div class="land-stat">
                         <div class="land-stat-value" data-count="14700000" data-suffix="M+" data-display="14.7">14.7M+</div>
-                        <div class="land-stat-label">Entreprises françaises</div>
+                        <div class="land-stat-label">${t('intro.statCompanies')}</div>
                     </div>
                     <div class="land-stat">
                         <div class="land-stat-value" data-count="86" data-suffix="%">86%</div>
-                        <div class="land-stat-label">Taux de découverte téléphone</div>
+                        <div class="land-stat-label">${t('intro.statPhoneRate')}</div>
                     </div>
                     <div class="land-stat">
                         <div class="land-stat-value" data-count="101" data-suffix="" data-display="101">101</div>
-                        <div class="land-stat-label">Départements couverts</div>
+                        <div class="land-stat-label">${t('intro.statDepts')}</div>
                     </div>
                     <div class="land-stat">
-                        <div class="land-stat-value">Temps réel</div>
-                        <div class="land-stat-label">Données actualisées</div>
+                        <div class="land-stat-value">${t('intro.statRealtime')}</div>
+                        <div class="land-stat-label">${t('intro.statUpdated')}</div>
                     </div>
                 </div>
             </section>
 
             <!-- ═══════ How It Works ═══════ -->
             <section class="land-section" id="section-how">
-                <div class="land-section-label land-reveal">COMMENT ÇA MARCHE</div>
+                <div class="land-section-label land-reveal">${t('intro.howLabel')}</div>
                 <h2 class="land-section-title land-reveal land-reveal-delay-1">
-                    De la recherche à la prospection<br>en <span class="land-h1-gradient">3 étapes</span>
+                    ${t('intro.howTitle1')}<br>${t('intro.howTitle2')} <span class="land-h1-gradient">${t('intro.howTitle3')}</span>
                 </h2>
                 <p class="land-section-sub land-reveal land-reveal-delay-2">
-                    Fortress automatise l'ensemble du processus de constitution de fichiers B2B.
-                    Plus besoin de scraper manuellement ou d'acheter des bases obsolètes.
+                    ${t('intro.howSub')}
                 </p>
 
                 <div class="land-steps">
                     <div class="land-step land-reveal land-reveal-delay-1">
                         <div class="land-step-num">1</div>
-                        <div class="land-step-title">Ciblez votre marché</div>
+                        <div class="land-step-title">${t('intro.step1Title')}</div>
                         <div class="land-step-desc">
-                            Décrivez simplement ce que vous cherchez :
-                            <strong>« restaurant Lyon »</strong>,
-                            <strong>« transport Perpignan »</strong>,
-                            <strong>« agence immobilière Paris »</strong>.
-                            Le moteur traduit votre recherche en requête sur la base SIRENE officielle.
+                            ${t('intro.step1Desc')}
                         </div>
                         <div class="land-step-tags">
-                            <span class="land-step-tag">Secteur d'activité</span>
-                            <span class="land-step-tag">Localisation</span>
-                            <span class="land-step-tag">Code NAF</span>
+                            <span class="land-step-tag">${t('intro.step1Tag1')}</span>
+                            <span class="land-step-tag">${t('intro.step1Tag2')}</span>
+                            <span class="land-step-tag">${t('intro.step1Tag3')}</span>
                         </div>
                     </div>
 
                     <div class="land-step land-reveal land-reveal-delay-2">
                         <div class="land-step-num">2</div>
-                        <div class="land-step-title">Enrichissement automatique</div>
+                        <div class="land-step-title">${t('intro.step2Title')}</div>
                         <div class="land-step-desc">
-                            Fortress parcourt Google Maps et les sites web de chaque entreprise
-                            pour extraire les données de contact :
-                            <strong>téléphone</strong>, <strong>email</strong>, <strong>site web</strong>,
-                            <strong>réseaux sociaux</strong>, <strong>dirigeants</strong>.
+                            ${t('intro.step2Desc')}
                         </div>
                         <div class="land-step-tags">
-                            <span class="land-step-tag">Google Maps</span>
-                            <span class="land-step-tag">Crawl Web</span>
-                            <span class="land-step-tag">SIRENE</span>
+                            <span class="land-step-tag">${t('intro.step2Tag1')}</span>
+                            <span class="land-step-tag">${t('intro.step2Tag2')}</span>
+                            <span class="land-step-tag">${t('intro.step2Tag3')}</span>
                         </div>
                     </div>
 
                     <div class="land-step land-reveal land-reveal-delay-3">
                         <div class="land-step-num">3</div>
-                        <div class="land-step-title">Exportez et prospectez</div>
+                        <div class="land-step-title">${t('intro.step3Title')}</div>
                         <div class="land-step-desc">
-                            Téléchargez vos leads qualifiés en
-                            <strong>CSV</strong> ou <strong>Excel</strong>.
-                            Données structurées, prêtes pour votre CRM,
-                            vos campagnes email ou vos appels commerciaux.
+                            ${t('intro.step3Desc')}
                         </div>
                         <div class="land-step-tags">
-                            <span class="land-step-tag">CSV / Excel</span>
-                            <span class="land-step-tag">CRM-ready</span>
-                            <span class="land-step-tag">RGPD</span>
+                            <span class="land-step-tag">${t('intro.step3Tag1')}</span>
+                            <span class="land-step-tag">${t('intro.step3Tag2')}</span>
+                            <span class="land-step-tag">${t('intro.step3Tag3')}</span>
                         </div>
                     </div>
                 </div>
@@ -164,9 +152,9 @@ export function renderIntro(container) {
 
             <!-- ═══════ Feature Bento Grid ═══════ -->
             <section class="land-section" id="section-features">
-                <div class="land-section-label land-reveal">FONCTIONNALITÉS</div>
+                <div class="land-section-label land-reveal">${t('intro.featuresLabel')}</div>
                 <h2 class="land-section-title land-reveal land-reveal-delay-1">
-                    Tout ce dont vous avez besoin<br>pour <span class="land-h1-gradient">prospecter efficacement</span>
+                    ${t('intro.featuresTitle1')}<br>${t('intro.featuresTitle2')} <span class="land-h1-gradient">${t('intro.featuresTitle3')}</span>
                 </h2>
 
                 <div class="land-bento">
@@ -180,21 +168,18 @@ export function renderIntro(container) {
                             <div class="land-data-bar"></div>
                             <div class="land-data-bar"></div>
                         </div>
-                        <div class="land-bento-title">Données vérifiées en temps réel</div>
+                        <div class="land-bento-title">${t('intro.bentoDataTitle')}</div>
                         <div class="land-bento-desc">
-                            Chaque contact est extrait et vérifié au moment de votre recherche.
-                            Pas de base de données périmée — les données datent du jour même.
+                            ${t('intro.bentoDataDesc')}
                         </div>
                     </div>
 
                     <!-- Tall card: Contact data -->
                     <div class="land-bento-card land-bento-tall land-reveal land-reveal-delay-2">
                         <div class="land-bento-icon">📞</div>
-                        <div class="land-bento-title">Coordonnées directes</div>
+                        <div class="land-bento-title">${t('intro.bentoContactTitle')}</div>
                         <div class="land-bento-desc">
-                            Téléphone fixe et mobile, email professionnel,
-                            site web, adresse postale — pour chaque entreprise trouvée.
-                            86% de taux de découverte sur les téléphones.
+                            ${t('intro.bentoContactDesc')}
                         </div>
                     </div>
 
@@ -208,63 +193,54 @@ export function renderIntro(container) {
                             <div class="land-connection-dot"></div>
                             <div class="land-connection-dot"></div>
                         </div>
-                        <div class="land-bento-title">Réseaux sociaux</div>
+                        <div class="land-bento-title">${t('intro.bentoSocialTitle')}</div>
                         <div class="land-bento-desc">
-                            LinkedIn, Facebook, Instagram, Twitter et 30+ réseaux détectés
-                            automatiquement depuis les sites web.
+                            ${t('intro.bentoSocialDesc')}
                         </div>
                     </div>
 
                     <!-- Standard card: Directors -->
                     <div class="land-bento-card land-reveal land-reveal-delay-2">
                         <div class="land-bento-icon">👥</div>
-                        <div class="land-bento-title">Dirigeants & décideurs</div>
+                        <div class="land-bento-title">${t('intro.bentoDirectorsTitle')}</div>
                         <div class="land-bento-desc">
-                            Noms, fonctions, lignes directes et emails personnels
-                            des dirigeants — extraits des registres officiels.
+                            ${t('intro.bentoDirectorsDesc')}
                         </div>
                     </div>
 
                     <!-- Wide card: SIRENE -->
                     <div class="land-bento-card land-bento-wide land-reveal land-reveal-delay-3">
                         <div class="land-bento-icon">🏛️</div>
-                        <div class="land-bento-title">Base SIRENE officielle</div>
+                        <div class="land-bento-title">${t('intro.bentoSireneTitle')}</div>
                         <div class="land-bento-desc">
-                            Croisement systématique avec les données officielles de l'INSEE :
-                            SIREN, SIRET, code NAF, adresse du siège, statut juridique, date de création.
-                            14.7 millions d'établissements indexés et consultables en moins d'une seconde.
+                            ${t('intro.bentoSireneDesc')}
                         </div>
                     </div>
 
                     <!-- Standard card: Maps -->
                     <div class="land-bento-card land-reveal land-reveal-delay-1">
                         <div class="land-bento-icon">📍</div>
-                        <div class="land-bento-title">Google Maps intégré</div>
+                        <div class="land-bento-title">${t('intro.bentoMapsTitle')}</div>
                         <div class="land-bento-desc">
-                            Notes Google, nombre d'avis, horaires d'ouverture,
-                            catégorie Maps — des indicateurs de vitalité commerciale.
+                            ${t('intro.bentoMapsDesc')}
                         </div>
                     </div>
 
                     <!-- Standard card: Export -->
                     <div class="land-bento-card land-reveal land-reveal-delay-2">
                         <div class="land-bento-icon">📊</div>
-                        <div class="land-bento-title">Export sur mesure</div>
+                        <div class="land-bento-title">${t('intro.bentoExportTitle')}</div>
                         <div class="land-bento-desc">
-                            CSV, Excel avec les colonnes de votre choix.
-                            Compatible Salesforce, HubSpot, Pipedrive
-                            et tout CRM standard.
+                            ${t('intro.bentoExportDesc')}
                         </div>
                     </div>
 
                     <!-- Standard card: Multi-user -->
                     <div class="land-bento-card land-reveal land-reveal-delay-3">
                         <div class="land-bento-icon">🔐</div>
-                        <div class="land-bento-title">Multi-utilisateurs</div>
+                        <div class="land-bento-title">${t('intro.bentoMultiTitle')}</div>
                         <div class="land-bento-desc">
-                            Chaque membre de votre équipe a son espace.
-                            L'administrateur voit l'ensemble des données enrichies
-                            et l'activité de chaque utilisateur.
+                            ${t('intro.bentoMultiDesc')}
                         </div>
                     </div>
                 </div>
@@ -274,23 +250,23 @@ export function renderIntro(container) {
             <div class="land-trust land-reveal">
                 <div class="land-trust-item">
                     <span class="land-trust-icon">🇫🇷</span>
-                    <span class="land-trust-label">Données françaises</span>
+                    <span class="land-trust-label">${t('intro.trustFrench')}</span>
                 </div>
                 <div class="land-trust-item">
                     <span class="land-trust-icon">🔒</span>
-                    <span class="land-trust-label">Hébergement sécurisé</span>
+                    <span class="land-trust-label">${t('intro.trustSecure')}</span>
                 </div>
                 <div class="land-trust-item">
                     <span class="land-trust-icon">⚡</span>
-                    <span class="land-trust-label">Résultats en minutes</span>
+                    <span class="land-trust-label">${t('intro.trustFast')}</span>
                 </div>
                 <div class="land-trust-item">
                     <span class="land-trust-icon">🏛️</span>
-                    <span class="land-trust-label">Source officielle INSEE</span>
+                    <span class="land-trust-label">${t('intro.trustInsee')}</span>
                 </div>
                 <div class="land-trust-item">
                     <span class="land-trust-icon">📋</span>
-                    <span class="land-trust-label">Conforme RGPD</span>
+                    <span class="land-trust-label">${t('intro.trustRgpd')}</span>
                 </div>
             </div>
 
@@ -298,42 +274,41 @@ export function renderIntro(container) {
             <section class="land-cta-section" id="section-contact">
                 <div class="land-cta-content land-reveal">
                     <h2 class="land-cta-title">
-                        Prêt à développer<br>
-                        <span class="land-h1-gradient">votre portefeuille clients ?</span>
+                        ${t('intro.ctaTitle1')}<br>
+                        <span class="land-h1-gradient">${t('intro.ctaTitle2')}</span>
                     </h2>
                     <p class="land-cta-sub">
-                        Remplissez le formulaire ci-dessous pour demander un accès
-                        ou recevoir une démonstration personnalisée.
+                        ${t('intro.ctaSub')}
                     </p>
 
                     <!-- Contact Form -->
                     <form id="land-contact-form" class="land-form" autocomplete="on">
                         <div class="land-form-row">
                             <div class="land-form-field">
-                                <label class="land-form-label" for="land-name">Nom complet *</label>
+                                <label class="land-form-label" for="land-name">${t('intro.formNameLabel')}</label>
                                 <input type="text" id="land-name" class="land-form-input"
-                                    placeholder="Jean Dupont" required maxlength="200" autocomplete="name">
+                                    placeholder="${t('intro.formNamePlaceholder')}" required maxlength="200" autocomplete="name">
                             </div>
                             <div class="land-form-field">
-                                <label class="land-form-label" for="land-email">Email professionnel *</label>
+                                <label class="land-form-label" for="land-email">${t('intro.formEmailLabel')}</label>
                                 <input type="email" id="land-email" class="land-form-input"
-                                    placeholder="jean@entreprise.fr" required maxlength="200" autocomplete="email">
+                                    placeholder="${t('intro.formEmailPlaceholder')}" required maxlength="200" autocomplete="email">
                             </div>
                         </div>
                         <div class="land-form-field">
-                            <label class="land-form-label" for="land-company">Entreprise</label>
+                            <label class="land-form-label" for="land-company">${t('intro.formCompanyLabel')}</label>
                             <input type="text" id="land-company" class="land-form-input"
-                                placeholder="Nom de votre entreprise (optionnel)" maxlength="200" autocomplete="organization">
+                                placeholder="${t('intro.formCompanyPlaceholder')}" maxlength="200" autocomplete="organization">
                         </div>
                         <div class="land-form-field">
-                            <label class="land-form-label" for="land-message">Message *</label>
+                            <label class="land-form-label" for="land-message">${t('intro.formMessageLabel')}</label>
                             <textarea id="land-message" class="land-form-input land-form-textarea"
-                                placeholder="Décrivez votre besoin : secteur ciblé, volume estimé, questions..."
+                                placeholder="${t('intro.formMessagePlaceholder')}"
                                 required maxlength="2000" rows="4"></textarea>
                         </div>
                         <div class="land-form-actions">
                             <button type="submit" id="land-submit" class="land-btn-primary" style="width:100%">
-                                ✉️ Envoyer ma demande
+                                ${t('intro.formSubmit')}
                             </button>
                         </div>
                         <div id="land-form-status" class="land-form-status" style="display:none"></div>
@@ -341,7 +316,7 @@ export function renderIntro(container) {
 
                     <div style="margin-top:var(--space-xl, 24px)">
                         <a href="#/login" class="land-btn-secondary">
-                            Déjà un compte ? Se connecter →
+                            ${t('intro.alreadyAccount')}
                         </a>
                     </div>
                 </div>
@@ -350,10 +325,10 @@ export function renderIntro(container) {
             <!-- ═══════ Footer ═══════ -->
             <footer class="land-footer">
                 <p>
-                    🏰 Fortress — Intelligence commerciale B2B · France
+                    ${t('intro.footerText')}
                     <br>
                     <span style="font-size:0.8rem">
-                        Données publiques SIRENE (INSEE) · Enrichissement Google Maps
+                        ${t('intro.footerSub')}
                     </span>
                 </p>
             </footer>
@@ -446,7 +421,7 @@ export function renderIntro(container) {
             if (!name || !email || !message) return;
 
             btn.disabled = true;
-            btn.textContent = '⏳ Envoi en cours...';
+            btn.textContent = t('intro.formSending');
             statusEl.style.display = 'none';
 
             try {
@@ -459,29 +434,29 @@ export function renderIntro(container) {
 
                 if (res.ok && data.ok) {
                     statusEl.className = 'land-form-status land-form-success';
-                    statusEl.innerHTML = '✅ ' + (data.message || 'Demande envoyée !');
+                    statusEl.innerHTML = '✅ ' + (data.message || t('intro.formSent'));
                     statusEl.style.display = 'block';
                     contactForm.reset();
-                    btn.textContent = '✅ Envoyé !';
+                    btn.textContent = t('intro.formSent');
                     // Re-enable after 5s
                     setTimeout(() => {
                         btn.disabled = false;
-                        btn.textContent = '✉️ Envoyer ma demande';
+                        btn.textContent = t('intro.formSubmit');
                     }, 5000);
                 } else {
-                    const errMsg = data.detail || data.message || 'Erreur lors de l\'envoi';
+                    const errMsg = data.detail || data.message || t('intro.formError');
                     statusEl.className = 'land-form-status land-form-error';
                     statusEl.innerHTML = '❌ ' + errMsg;
                     statusEl.style.display = 'block';
                     btn.disabled = false;
-                    btn.textContent = '✉️ Envoyer ma demande';
+                    btn.textContent = t('intro.formSubmit');
                 }
             } catch (err) {
                 statusEl.className = 'land-form-status land-form-error';
-                statusEl.innerHTML = '❌ Erreur de connexion. Veuillez réessayer.';
+                statusEl.innerHTML = '❌ ' + t('intro.formNetworkError');
                 statusEl.style.display = 'block';
                 btn.disabled = false;
-                btn.textContent = '✉️ Envoyer ma demande';
+                btn.textContent = t('intro.formSubmit');
             }
         });
     }

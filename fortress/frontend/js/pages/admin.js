@@ -1,7 +1,8 @@
 /**
  * Admin User Management Page
  *
- * Allows the admin to list, create, edit and deactivate user accounts.
+ * Allows the admin to list, create, edit and deactivate user accounts,
+ * and manage workspaces.
  */
 
 import {
@@ -10,6 +11,10 @@ import {
     updateAdminUser,
     deactivateAdminUser,
     getWorkspaces,
+    createWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
+    getActivityLog,
     extractApiError,
     getCachedUser,
 } from '../api.js';
@@ -68,8 +73,24 @@ function _focusStyle(el) {
 
 export async function renderAdmin(container, gen) {
     container.innerHTML = `
-        <h1 class="page-title">Gestion des utilisateurs</h1>
-        <p class="page-subtitle">Gérer les comptes, rôles et accès des utilisateurs.</p>
+        <h1 class="page-title">Administration</h1>
+        <p class="page-subtitle">Gestion des utilisateurs et des espaces de travail.</p>
+
+        <div id="ws-form-area"></div>
+
+        <div class="card" style="margin-bottom:var(--space-xl)">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
+                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                    Espaces de travail
+                </h3>
+                <button id="btn-add-ws" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-xs)">
+                    <span>+</span> <span>Ajouter un espace</span>
+                </button>
+            </div>
+            <div id="ws-table-container">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
 
         <div id="admin-form-area"></div>
 
@@ -86,37 +107,260 @@ export async function renderAdmin(container, gen) {
                 <div class="loading"><div class="spinner"></div></div>
             </div>
         </div>
+
+        <!-- Activity Log section -->
+        <div class="card">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                    📋 Journal d'activité
+                </h3>
+                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                    <button class="view-toggle-btn log-period active" data-period="day">Aujourd'hui</button>
+                    <button class="view-toggle-btn log-period" data-period="week">Cette semaine</button>
+                    <button class="view-toggle-btn log-period" data-period="month">Ce mois</button>
+                    <button class="view-toggle-btn log-period" data-period="all">Tout</button>
+                </div>
+            </div>
+            <div id="log-container">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+            <div id="log-pagination" style="margin-top:var(--space-lg)"></div>
+        </div>
     `;
+
+    const wsFormArea = container.querySelector('#ws-form-area');
+    const wsTableContainer = container.querySelector('#ws-table-container');
+    const addWsBtn = container.querySelector('#btn-add-ws');
 
     const formArea = container.querySelector('#admin-form-area');
     const tableContainer = container.querySelector('#admin-table-container');
     const addBtn = container.querySelector('#btn-add-user');
 
+    const logContainer = container.querySelector('#log-container');
+    const logPagination = container.querySelector('#log-pagination');
+
     let _workspaces = [];
     let _editingUserId = null;
+    let _logPeriod = 'day';
+    let _logOffset = 0;
+    const LOG_PAGE_SIZE = 30;
 
-    // Load workspaces once
-    try {
-        const wsData = await getWorkspaces();
-        if (isStale(gen)) return;
-        _workspaces = (wsData && wsData.workspaces) ? wsData.workspaces : [];
-    } catch {
-        _workspaces = [];
+    // ── Workspace Management ────────────────────────────────────────
+
+    async function loadWorkspaces() {
+        wsTableContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        try {
+            const data = await getWorkspaces();
+            if (!data || !data._ok) {
+                wsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
+                return;
+            }
+            _workspaces = data.workspaces || [];
+            renderWsTable(_workspaces);
+        } catch (err) {
+            wsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger les espaces de travail.</div></div>`;
+        }
     }
+
+    function renderWsTable(workspaces) {
+        if (!workspaces.length) {
+            wsTableContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🏢</div>
+                    <div class="empty-state-text">Aucun espace de travail.</div>
+                </div>
+            `;
+            return;
+        }
+
+        wsTableContainer.innerHTML = `
+            <div style="overflow-x:auto">
+                <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                    <thead>
+                        <tr>
+                            <th class="contacts-th">Nom</th>
+                            <th class="contacts-th">Responsable</th>
+                            <th class="contacts-th">Utilisateurs</th>
+                            <th class="contacts-th">Créé le</th>
+                            <th class="contacts-th"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${workspaces.map(ws => `
+                            <tr class="contacts-row" data-ws-id="${ws.id}">
+                                <td class="contacts-td" style="font-weight:600; color:var(--text-primary)">
+                                    ${escapeHtml(ws.name)}
+                                </td>
+                                <td class="contacts-td" style="color:var(--text-secondary)">
+                                    ${ws.head_username ? escapeHtml(ws.head_username) : '<span style="color:var(--text-muted)">—</span>'}
+                                </td>
+                                <td class="contacts-td" style="color:var(--text-secondary)">
+                                    ${ws.user_count}
+                                </td>
+                                <td class="contacts-td" style="color:var(--text-muted); white-space:nowrap">
+                                    ${ws.created_at ? formatDateTime(ws.created_at) : '—'}
+                                </td>
+                                <td class="contacts-td">
+                                    <div style="display:flex; gap:var(--space-sm); align-items:center">
+                                        <button class="action-btn btn-edit-ws"
+                                                data-ws-id="${ws.id}"
+                                                title="Renommer cet espace"
+                                                style="font-size:14px">
+                                            ✏️
+                                        </button>
+                                        <button class="action-btn action-btn-reject btn-delete-ws"
+                                                data-ws-id="${ws.id}"
+                                                data-ws-name="${escapeHtml(ws.name)}"
+                                                data-user-count="${ws.user_count}"
+                                                title="Supprimer cet espace"
+                                                style="font-size:14px">
+                                            🗑️
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        const wsMap = {};
+        workspaces.forEach(ws => { wsMap[ws.id] = ws; });
+
+        wsTableContainer.querySelectorAll('.btn-edit-ws').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const wsId = parseInt(btn.dataset.wsId, 10);
+                showWsForm(wsMap[wsId]);
+            });
+        });
+
+        wsTableContainer.querySelectorAll('.btn-delete-ws').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const wsId = parseInt(btn.dataset.wsId, 10);
+                const wsName = btn.dataset.wsName;
+                const userCount = parseInt(btn.dataset.userCount, 10);
+                handleDeleteWs(wsId, wsName, userCount);
+            });
+        });
+    }
+
+    function showWsForm(ws = null) {
+        const isEdit = !!ws;
+        const title = isEdit ? `Renommer l'espace — ${escapeHtml(ws.name)}` : 'Nouvel espace de travail';
+
+        wsFormArea.innerHTML = `
+            <div class="card" style="margin-bottom:var(--space-xl); border:1px solid var(--accent); border-opacity:0.4">
+                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                    ${escapeHtml(title)}
+                </h3>
+                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:var(--space-lg); margin-bottom:var(--space-lg)">
+                    <div>
+                        <label style="${LABEL_STYLE}">Nom *</label>
+                        <input type="text" id="f-ws-name" placeholder="Nom de l'espace"
+                               value="${isEdit ? escapeHtml(ws.name) : ''}"
+                               style="${INPUT_STYLE}">
+                    </div>
+                </div>
+                <div style="display:flex; gap:var(--space-md)">
+                    <button id="btn-save-ws" class="btn btn-primary">${isEdit ? 'Enregistrer' : 'Créer l\'espace'}</button>
+                    <button id="btn-cancel-ws-form" class="btn">Annuler</button>
+                </div>
+            </div>
+        `;
+
+        const nameInput = wsFormArea.querySelector('#f-ws-name');
+        if (nameInput) {
+            _focusStyle(nameInput);
+            nameInput.focus();
+        }
+
+        wsFormArea.querySelector('#btn-cancel-ws-form').addEventListener('click', () => {
+            wsFormArea.innerHTML = '';
+        });
+
+        wsFormArea.querySelector('#btn-save-ws').addEventListener('click', () => handleSaveWs(isEdit, ws ? ws.id : null));
+    }
+
+    async function handleSaveWs(isEdit, wsId) {
+        const saveBtn = wsFormArea.querySelector('#btn-save-ws');
+        if (saveBtn) saveBtn.disabled = true;
+
+        const name = (wsFormArea.querySelector('#f-ws-name')?.value || '').trim();
+        if (!name) {
+            showToast('Le nom de l\'espace de travail est requis.', 'error');
+            if (saveBtn) saveBtn.disabled = false;
+            return;
+        }
+
+        try {
+            let result;
+            if (isEdit) {
+                result = await updateWorkspace(wsId, { name });
+            } else {
+                result = await createWorkspace({ name });
+            }
+
+            if (!result || !result._ok) {
+                showToast(extractApiError(result), 'error');
+                if (saveBtn) saveBtn.disabled = false;
+                return;
+            }
+
+            showToast(isEdit ? 'Espace renommé avec succès.' : 'Espace de travail créé avec succès.', 'success');
+            wsFormArea.innerHTML = '';
+            await loadWorkspaces();
+            // Refresh user form dropdown if open
+            const wsSelect = formArea.querySelector('#f-workspace');
+            if (wsSelect) {
+                const currentVal = wsSelect.value;
+                wsSelect.innerHTML = _wsOptions(currentVal ? parseInt(currentVal, 10) : null);
+            }
+        } catch (err) {
+            showToast(err.message || 'Erreur inconnue.', 'error');
+            if (saveBtn) saveBtn.disabled = false;
+        }
+    }
+
+    async function handleDeleteWs(wsId, wsName, userCount) {
+        if (userCount > 0) {
+            showToast(`Impossible de supprimer : ${userCount} utilisateur(s) encore assigné(s).`, 'error');
+            return;
+        }
+
+        showConfirmModal({
+            title: 'Supprimer l\'espace de travail',
+            body: `<p>Voulez-vous vraiment supprimer l'espace <strong>${escapeHtml(wsName)}</strong> ?</p>
+                   <p style="color:var(--text-muted); font-size:var(--font-xs)">Cette action est irréversible. L'espace doit être vide (aucun utilisateur, aucune donnée).</p>`,
+            confirmLabel: 'Supprimer',
+            danger: true,
+            onConfirm: async () => {
+                const result = await deleteWorkspace(wsId);
+                if (!result || !result._ok) {
+                    showToast(extractApiError(result), 'error');
+                    return;
+                }
+                showToast(`Espace "${escapeHtml(wsName)}" supprimé.`, 'success');
+                await loadWorkspaces();
+            },
+        });
+    }
+
+    addWsBtn.addEventListener('click', () => showWsForm(null));
+
+    // ── User Management ─────────────────────────────────────────────
 
     async function loadUsers() {
         tableContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
         try {
             const data = await getAdminUsers();
-            if (isStale(gen)) return;
             if (!data || !data._ok) {
                 tableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
                 return;
             }
             renderTable(data.users || []);
         } catch (err) {
-            if (isStale(gen)) return;
-            tableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Erreur de chargement</div></div>`;
+            tableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger les utilisateurs.</div></div>`;
         }
     }
 
@@ -126,7 +370,7 @@ export async function renderAdmin(container, gen) {
             tableContainer.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">👤</div>
-                    <div class="empty-state-text">Aucun utilisateur</div>
+                    <div class="empty-state-text">Aucun utilisateur.</div>
                 </div>
             `;
             return;
@@ -137,7 +381,7 @@ export async function renderAdmin(container, gen) {
                 <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
                     <thead>
                         <tr>
-                            <th class="contacts-th">Utilisateur</th>
+                            <th class="contacts-th">Identifiant</th>
                             <th class="contacts-th">Nom affiché</th>
                             <th class="contacts-th">Rôle</th>
                             <th class="contacts-th">Espace de travail</th>
@@ -231,7 +475,7 @@ export async function renderAdmin(container, gen) {
                 <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:var(--space-lg); margin-bottom:var(--space-lg)">
                     <div>
                         <label style="${LABEL_STYLE}">Identifiant ${!isEdit ? '*' : ''}</label>
-                        <input type="text" id="f-username" placeholder="identifiant"
+                        <input type="text" id="f-username" placeholder="Identifiant"
                                value="${isEdit ? escapeHtml(user.username) : ''}"
                                style="${INPUT_STYLE}">
                     </div>
@@ -244,7 +488,7 @@ export async function renderAdmin(container, gen) {
                     <div>
                         <label style="${LABEL_STYLE}">Mot de passe ${!isEdit ? '*' : ''}</label>
                         <input type="password" id="f-password"
-                               placeholder="${isEdit ? 'Laisser vide pour ne pas modifier' : 'Mot de passe'}"
+                               placeholder="${isEdit ? 'Laisser vide pour conserver' : 'Mot de passe'}"
                                style="${INPUT_STYLE}">
                     </div>
                     <div>
@@ -308,12 +552,12 @@ export async function renderAdmin(container, gen) {
                 result = await updateAdminUser(_editingUserId, payload);
             } else {
                 if (!username) {
-                    showToast("L'identifiant est obligatoire.", 'error');
+                    showToast('L\'identifiant est requis.', 'error');
                     if (saveBtn) saveBtn.disabled = false;
                     return;
                 }
                 if (!password) {
-                    showToast('Le mot de passe est obligatoire.', 'error');
+                    showToast('Le mot de passe est requis.', 'error');
                     if (saveBtn) saveBtn.disabled = false;
                     return;
                 }
@@ -326,21 +570,18 @@ export async function renderAdmin(container, gen) {
                 });
             }
 
-            if (isStale(gen)) return;
-
             if (!result || !result._ok) {
                 showToast(extractApiError(result), 'error');
                 if (saveBtn) saveBtn.disabled = false;
                 return;
             }
 
-            showToast(isEdit ? 'Utilisateur mis à jour.' : 'Utilisateur créé.', 'success');
+            showToast(isEdit ? 'Utilisateur mis à jour.' : 'Utilisateur créé avec succès.', 'success');
             formArea.innerHTML = '';
             _editingUserId = null;
             await loadUsers();
         } catch (err) {
-            if (isStale(gen)) return;
-            showToast(err.message || 'Erreur inattendue.', 'error');
+            showToast(err.message || 'Erreur inconnue.', 'error');
             if (saveBtn) saveBtn.disabled = false;
         }
     }
@@ -348,18 +589,17 @@ export async function renderAdmin(container, gen) {
     async function handleDeactivate(userId, username) {
         showConfirmModal({
             title: 'Désactiver le compte',
-            body: `<p>Désactiver le compte de <strong>${escapeHtml(username)}</strong> ?</p>
-                   <p style="color:var(--text-muted); font-size:var(--font-xs)">L'utilisateur ne pourra plus se connecter. Cette action est réversible depuis la base de données.</p>`,
+            body: `<p>Voulez-vous vraiment désactiver le compte <strong>${escapeHtml(username)}</strong> ?</p>
+                   <p style="color:var(--text-muted); font-size:var(--font-xs)">L'utilisateur ne pourra plus se connecter. Cette action est réversible.</p>`,
             confirmLabel: 'Désactiver',
             danger: true,
             onConfirm: async () => {
                 const result = await deactivateAdminUser(userId);
-                if (isStale(gen)) return;
                 if (!result || !result._ok) {
                     showToast(extractApiError(result), 'error');
                     return;
                 }
-                showToast(`Compte de ${username} désactivé.`, 'success');
+                showToast(`Compte "${username}" désactivé.`, 'success');
                 await loadUsers();
             },
         });
@@ -367,5 +607,8 @@ export async function renderAdmin(container, gen) {
 
     addBtn.addEventListener('click', () => showForm(null));
 
+    // Load workspaces first (so _workspaces is populated for the user form dropdown)
+    await loadWorkspaces();
+    if (isStale(gen)) return;
     await loadUsers();
 }

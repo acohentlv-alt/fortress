@@ -8,6 +8,7 @@
 import { getActivityLog, extractApiError, getCachedUser } from '../api.js';
 import { escapeHtml, showToast } from '../components.js';
 import { registerCleanup } from '../app.js';
+import { t, getLang } from '../i18n.js';
 
 const ACTION_ICONS = {
     batch_launched: '🚀',
@@ -30,26 +31,28 @@ const ACTION_ICONS = {
     manual_edit: '✏️',
 };
 
-const ACTION_LABELS = {
-    batch_launched: 'Recherche lancée',
-    batch_completed: 'Batch terminé',
-    batch_failed: 'Erreur Batch',
-    upload: 'Fichier importé',
-    delete_job: 'Batch supprimé',
-    cancel_job: 'Batch annulé',
-    delete_tags: 'Tags supprimés',
-    export: 'Export effectué',
-    note_added: 'Note ajoutée',
-    note_deleted: 'Note supprimée',
-    contact_request: 'Demande de contact',
-    conflict_resolved: 'Conflit résolu',
-    conflict_dismissed: 'Conflit ignoré',
-    merge: 'Fusion manuelle',
-    link: 'Lien confirmé',
-    reject_link: 'Lien refusé',
-    unlink: 'Lien dissocié',
-    manual_edit: 'Modification manuelle',
-};
+function getActionLabels() {
+    return {
+        batch_launched: t('activity.batch_launched'),
+        batch_completed: t('activity.batch_completed'),
+        batch_failed: t('activity.batch_failed'),
+        upload: t('activity.upload'),
+        delete_job: t('activity.delete_job'),
+        cancel_job: t('activity.cancel_job'),
+        delete_tags: t('activity.delete_tags'),
+        export: t('activity.export'),
+        note_added: t('activity.note_added'),
+        note_deleted: t('activity.note_deleted'),
+        contact_request: t('activity.contact_request'),
+        conflict_resolved: t('activity.conflict_resolved'),
+        conflict_dismissed: t('activity.conflict_dismissed'),
+        merge: t('activity.merge'),
+        link: t('activity.link'),
+        reject_link: t('activity.reject_link'),
+        unlink: t('activity.unlink'),
+        manual_edit: t('activity.manual_edit'),
+    };
+}
 
 function _timeAgo(dateStr) {
     if (!dateStr) return '';
@@ -57,13 +60,13 @@ function _timeAgo(dateStr) {
     const now = new Date();
     const diffMs = now - d;
     const mins = Math.floor(diffMs / 60000);
-    if (mins < 1) return "à l'instant";
-    if (mins < 60) return `il y a ${mins} min`;
+    if (mins < 1) return t('activity.justNow');
+    if (mins < 60) return t('activity.minutesAgo', { minutes: mins });
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `il y a ${hours}h`;
+    if (hours < 24) return t('activity.hoursAgo', { hours });
     const days = Math.floor(hours / 24);
-    if (days === 1) return 'hier';
-    return `il y a ${days} jours`;
+    if (days === 1) return t('activity.yesterday');
+    return t('activity.daysAgo', { days });
 }
 
 export async function renderActivity(container) {
@@ -73,7 +76,7 @@ export async function renderActivity(container) {
         container.innerHTML = `
             <div class="empty-state" style="margin-top:var(--space-2xl)">
                 <div class="empty-state-icon">🔒</div>
-                <div class="empty-state-text">Accès réservé aux administrateurs et responsables</div>
+                <div class="empty-state-text">${t('activity.accessDenied')}</div>
             </div>
         `;
         return;
@@ -85,20 +88,20 @@ export async function renderActivity(container) {
     const PAGE_SIZE = 50;
 
     container.innerHTML = `
-        <h1 class="page-title">📋 Journal de l'Équipe</h1>
-        <p class="page-subtitle">Suivi des opérations, batches et notes par utilisateur</p>
+        <h1 class="page-title">📋 ${t('activity.title')}</h1>
+        <p class="page-subtitle">${t('activity.subtitle')}</p>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-xl); flex-wrap:wrap; gap:var(--space-md)">
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
-                <button class="view-toggle-btn type-toggle active" data-type="all">Toutes les actions</button>
-                <button class="view-toggle-btn type-toggle" data-type="batches">Batches & Opérations</button>
-                <button class="view-toggle-btn type-toggle" data-type="notes">Commentaires (Notes)</button>
+                <button class="view-toggle-btn type-toggle active" data-type="all">${t('activity.allActions')}</button>
+                <button class="view-toggle-btn type-toggle" data-type="batches">${t('activity.batchesOps')}</button>
+                <button class="view-toggle-btn type-toggle" data-type="notes">${t('activity.notesComments')}</button>
             </div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
-                <button class="view-toggle-btn period-toggle" data-period="day">Aujourd'hui</button>
-                <button class="view-toggle-btn period-toggle active" data-period="week">Cette semaine</button>
-                <button class="view-toggle-btn period-toggle" data-period="month">Ce mois</button>
-                <button class="view-toggle-btn period-toggle" data-period="all">Tout</button>
+                <button class="view-toggle-btn period-toggle" data-period="day">${t('activity.today')}</button>
+                <button class="view-toggle-btn period-toggle active" data-period="week">${t('activity.thisWeek')}</button>
+                <button class="view-toggle-btn period-toggle" data-period="month">${t('activity.thisMonth')}</button>
+                <button class="view-toggle-btn period-toggle" data-period="all">${t('activity.allTime')}</button>
             </div>
         </div>
 
@@ -132,7 +135,7 @@ export async function renderActivity(container) {
             feedEl.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-state-icon">📋</div>
-                    <div class="empty-state-text">Aucune activité pour cette période</div>
+                    <div class="empty-state-text">${t('activity.noActivity')}</div>
                 </div>
             `;
             return;
@@ -154,14 +157,14 @@ export async function renderActivity(container) {
                         <div style="flex:1; min-width:0">
                             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-xs)">
                                 <span style="font-weight:600; color:var(--text-primary)">
-                                    👤 ${escapeHtml(e.username || 'système')}
+                                    👤 ${escapeHtml(e.username || t('activity.systemUser'))}
                                 </span>
                                 <span style="font-size:var(--font-xs); color:var(--text-muted); white-space:nowrap">
                                     ${_timeAgo(e.created_at)}
                                 </span>
                             </div>
                             <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:4px">
-                                <strong>${ACTION_LABELS[e.action] || e.action}</strong>
+                                <strong>${getActionLabels()[e.action] || e.action}</strong>
                                 ${e.details ? `<div style="margin-top:4px; padding:var(--space-xs) var(--space-sm); background:var(--bg-secondary); border-radius:4px; ${e.action === 'batch_failed' ? 'color:var(--text-error); background:rgba(239, 68, 68, 0.1);' : ''}">${escapeHtml(e.details)}</div>` : ''}
                             </div>
                             ${e.target_id ? `
@@ -177,10 +180,10 @@ export async function renderActivity(container) {
             ${totalPages > 1 ? `
                 <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg); margin-top:var(--space-xl)">
                     <button class="btn btn-secondary" id="activity-prev" ${hasPrev ? '' : 'disabled'}
-                        style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">← Précédent</button>
+                        style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">← ${t('common.previous')}</button>
                     <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">${currentPage} / ${totalPages}</span>
                     <button class="btn btn-secondary" id="activity-next" ${hasNext ? '' : 'disabled'}
-                        style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">Suivant →</button>
+                        style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">${t('common.next')} →</button>
                 </div>
             ` : ''}
         `;

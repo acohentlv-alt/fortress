@@ -11,6 +11,7 @@
 import { searchSirene, createEntity } from '../api.js';
 import { showToast, escapeHtml } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
+import { t } from '../i18n.js';
 
 const MODAL_ID = 'add-entity-modal-overlay';
 
@@ -45,13 +46,13 @@ export function showAddEntityModal({ onSuccess } = {}) {
             <!-- Header -->
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-xl)">
                 <h2 style="margin:0; font-size:var(--font-xl); font-weight:700; color:var(--text-primary)">
-                    ➕ Ajouter une entreprise
+                    ${t('addEntityModal.title')}
                 </h2>
                 <button id="add-entity-close" style="
                     background:none; border:none; cursor:pointer;
                     color:var(--text-muted); font-size:1.5rem; line-height:1;
                     padding: 4px 8px; border-radius:var(--radius-sm);
-                " title="Fermer">✕</button>
+                " title="${t('addEntityModal.closeTitle')}">✕</button>
             </div>
 
             <!-- SIREN Lookup -->
@@ -63,7 +64,7 @@ export function showAddEntityModal({ onSuccess } = {}) {
                 margin-bottom: var(--space-xl);
             ">
                 <label style="display:block; font-size:var(--font-sm); font-weight:600; color:var(--text-secondary); margin-bottom:var(--space-sm)">
-                    SIREN (optionnel — 9 chiffres)
+                    ${t('addEntityModal.sirenLabel')}
                 </label>
                 <div style="display:flex; gap:var(--space-sm); align-items:center; flex-wrap:wrap">
                     <input type="text" id="ae-siren-input"
@@ -78,7 +79,7 @@ export function showAddEntityModal({ onSuccess } = {}) {
                         "
                     >
                     <button id="ae-siren-lookup" class="btn btn-secondary" style="white-space:nowrap">
-                        Chercher
+                        ${t('addEntityModal.sirenLookupBtn')}
                     </button>
                 </div>
                 <div id="ae-siren-banner" style="margin-top:var(--space-sm); display:none; font-size:var(--font-sm); padding:var(--space-sm) var(--space-md); border-radius:var(--radius-sm)"></div>
@@ -92,41 +93,41 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
                     <!-- Left column -->
                     <div>
-                        <label class="ae-label">Nom commercial <span style="color:var(--danger)">*</span></label>
-                        <input type="text" id="ae-denomination" class="ae-input" placeholder="Nom de l'entreprise">
+                        <label class="ae-label">${t('addEntityModal.fieldDenomination')} <span style="color:var(--danger)">*</span></label>
+                        <input type="text" id="ae-denomination" class="ae-input" placeholder="${t('addEntityModal.fieldDenomination')}">
                     </div>
                     <div>
-                        <label class="ae-label">Enseigne</label>
-                        <input type="text" id="ae-enseigne" class="ae-input" placeholder="Nom commercial">
+                        <label class="ae-label">${t('addEntityModal.fieldEnseigne')}</label>
+                        <input type="text" id="ae-enseigne" class="ae-input" placeholder="${t('addEntityModal.fieldEnseigne')}">
                     </div>
                     <div>
-                        <label class="ae-label">Téléphone</label>
+                        <label class="ae-label">${t('addEntityModal.fieldPhone')}</label>
                         <input type="tel" id="ae-phone" class="ae-input" placeholder="+33 4 68 12 34 56">
                     </div>
                     <div>
-                        <label class="ae-label">Email</label>
+                        <label class="ae-label">${t('addEntityModal.fieldEmail')}</label>
                         <input type="email" id="ae-email" class="ae-input" placeholder="contact@exemple.fr">
                     </div>
                     <div>
-                        <label class="ae-label">Site web</label>
+                        <label class="ae-label">${t('addEntityModal.fieldWebsite')}</label>
                         <input type="text" id="ae-website" class="ae-input" placeholder="exemple.fr">
                     </div>
                     <div>
-                        <label class="ae-label">Adresse</label>
+                        <label class="ae-label">${t('addEntityModal.fieldAddress')}</label>
                         <input type="text" id="ae-adresse" class="ae-input" placeholder="12 Rue de la Paix">
                     </div>
                     <div>
-                        <label class="ae-label">Code postal</label>
+                        <label class="ae-label">${t('addEntityModal.fieldPostal')}</label>
                         <input type="text" id="ae-code-postal" class="ae-input" placeholder="66000">
                     </div>
                     <div>
-                        <label class="ae-label">Ville</label>
+                        <label class="ae-label">${t('addEntityModal.fieldCity')}</label>
                         <input type="text" id="ae-ville" class="ae-input" placeholder="PERPIGNAN">
                     </div>
                     <div style="grid-column:1 / -1">
-                        <label class="ae-label">Département</label>
+                        <label class="ae-label">${t('addEntityModal.fieldDept')}</label>
                         <select id="ae-departement" class="ae-input">
-                            <option value="">— Sélectionner —</option>
+                            <option value="">${t('addEntityModal.fieldDeptSelect')}</option>
                             ${deptOptions}
                         </select>
                     </div>
@@ -135,7 +136,7 @@ export function showAddEntityModal({ onSuccess } = {}) {
                 <!-- Social Links -->
                 <div style="margin-bottom:var(--space-xl)">
                     <div style="font-size:var(--font-sm); font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:var(--space-md)">
-                        Réseaux sociaux
+                        ${t('addEntityModal.sectionSocial')}
                     </div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-md) var(--space-xl)">
                         <div>
@@ -173,10 +174,10 @@ export function showAddEntityModal({ onSuccess } = {}) {
                 <div style="margin-bottom:var(--space-xl)">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-md)">
                         <div style="font-size:var(--font-sm); font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em">
-                            Dirigeant(s)
+                            ${t('addEntityModal.sectionOfficers')}
                         </div>
                         <button type="button" id="ae-add-officer" class="btn btn-secondary" style="font-size:var(--font-xs); padding:4px 10px">
-                            ➕ Ajouter un dirigeant
+                            ${t('addEntityModal.addOfficerBtn')}
                         </button>
                     </div>
                     <div id="ae-officers-list">
@@ -186,9 +187,9 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
                 <!-- Notes -->
                 <div style="margin-bottom:var(--space-xl)">
-                    <label class="ae-label">Notes</label>
+                    <label class="ae-label">${t('addEntityModal.fieldNotes')}</label>
                     <textarea id="ae-notes" class="ae-input" rows="3"
-                        placeholder="Rencontré au salon, prospect chaud..."
+                        placeholder="${t('addEntityModal.notesPlaceholder')}"
                         style="resize:vertical; min-height:70px"
                     ></textarea>
                 </div>
@@ -198,8 +199,8 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
                 <!-- Submit -->
                 <div style="display:flex; justify-content:flex-end; gap:var(--space-md)">
-                    <button type="button" id="ae-cancel" class="btn btn-secondary">Annuler</button>
-                    <button type="submit" id="ae-submit" class="btn btn-primary">Créer l'entreprise</button>
+                    <button type="button" id="ae-cancel" class="btn btn-secondary">${t('addEntityModal.cancelBtn')}</button>
+                    <button type="submit" id="ae-submit" class="btn btn-primary">${t('addEntityModal.submitBtn')}</button>
                 </div>
             </form>
         </div>
@@ -288,12 +289,12 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
         // Reject MAPS IDs
         if (raw.toUpperCase().startsWith('MAPS')) {
-            showBanner('⚠️ Utilisez un SIREN à 9 chiffres ou laissez vide', 'yellow');
+            showBanner(t('addEntityModal.sirenMapsError'), 'yellow');
             return;
         }
 
         if (raw.length !== 9 || !/^\d{9}$/.test(raw)) {
-            showBanner('⚠️ Le SIREN doit contenir exactement 9 chiffres', 'yellow');
+            showBanner(t('addEntityModal.sirenLengthError'), 'yellow');
             return;
         }
 
@@ -311,17 +312,17 @@ export function showAddEntityModal({ onSuccess } = {}) {
                 linkedSirenData = match;
                 clearPrefill();
                 prefillFromSirene(match);
-                showBanner(`✅ SIRENE trouvé : ${escapeHtml(match.denomination || raw)}`, 'green');
+                showBanner(t('addEntityModal.sirenFound', { name: escapeHtml(match.denomination || raw) }), 'green');
             } else {
                 linkedSirenData = null;
                 clearPrefill();
-                showBanner('⚠️ SIREN non trouvé dans la base — un identifiant MAPS sera attribué', 'yellow');
+                showBanner(t('addEntityModal.sirenNotFound'), 'yellow');
             }
         } catch {
-            showBanner('⚠️ Erreur lors de la recherche SIRENE', 'yellow');
+            showBanner(t('addEntityModal.sirenSearchError'), 'yellow');
         } finally {
             lookupBtn.disabled = false;
-            lookupBtn.textContent = 'Chercher';
+            lookupBtn.textContent = t('addEntityModal.sirenLookupBtn');
         }
     }
 
@@ -336,9 +337,9 @@ export function showAddEntityModal({ onSuccess } = {}) {
         row.className = 'ae-officer-row';
         row.dataset.officerIdx = idx;
         row.innerHTML = `
-            <input type="text" class="ae-input ae-officer-nom" placeholder="Nom" data-idx="${idx}">
-            <input type="text" class="ae-input ae-officer-prenom" placeholder="Prénom" data-idx="${idx}">
-            <input type="text" class="ae-input ae-officer-role" placeholder="Rôle (ex: Gérant)" data-idx="${idx}">
+            <input type="text" class="ae-input ae-officer-nom" placeholder="${t('addEntityModal.officerNomPlaceholder')}" data-idx="${idx}">
+            <input type="text" class="ae-input ae-officer-prenom" placeholder="${t('addEntityModal.officerPrenomPlaceholder')}" data-idx="${idx}">
+            <input type="text" class="ae-input ae-officer-role" placeholder="${t('addEntityModal.officerRolePlaceholder')}" data-idx="${idx}">
             <button type="button" class="btn btn-secondary ae-officer-remove" data-idx="${idx}" style="padding:4px 10px; font-size:var(--font-xs); white-space:nowrap">✕</button>
         `;
         document.getElementById('ae-officers-list').appendChild(row);
@@ -359,12 +360,12 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
         // Validation
         if (!denomination && !sirenVal) {
-            errorEl.textContent = "Nom d'entreprise requis si aucun SIREN n'est fourni";
+            errorEl.textContent = t('addEntityModal.validationNoName');
             errorEl.style.display = 'block';
             return;
         }
         if (sirenVal && sirenVal.toUpperCase().startsWith('MAPS')) {
-            errorEl.textContent = "Utilisez un SIREN à 9 chiffres ou laissez vide";
+            errorEl.textContent = t('addEntityModal.validationMapsId');
             errorEl.style.display = 'block';
             return;
         }
@@ -410,28 +411,28 @@ export function showAddEntityModal({ onSuccess } = {}) {
 
         const submitBtn = document.getElementById('ae-submit');
         submitBtn.disabled = true;
-        submitBtn.textContent = '⏳ Création...';
+        submitBtn.textContent = t('addEntityModal.submitting');
 
         try {
             const result = await createEntity(payload);
 
             if (!result || result._ok === false) {
-                const msg = result?.detail || result?.error || 'Erreur lors de la création';
+                const msg = result?.detail || result?.error || t('addEntityModal.createError');
                 errorEl.textContent = msg;
                 errorEl.style.display = 'block';
                 return;
             }
 
-            showToast(`Entreprise ajoutée : ${result.denomination || result.siren}`, 'success');
+            showToast(t('addEntityModal.successToast', { name: result.denomination || result.siren }), 'success');
             close();
             if (onSuccess) onSuccess();
 
         } catch (err) {
-            errorEl.textContent = 'Erreur de connexion au serveur';
+            errorEl.textContent = t('addEntityModal.networkError');
             errorEl.style.display = 'block';
         } finally {
             submitBtn.disabled = false;
-            submitBtn.textContent = "Créer l'entreprise";
+            submitBtn.textContent = t('addEntityModal.submitBtn');
         }
     });
 }

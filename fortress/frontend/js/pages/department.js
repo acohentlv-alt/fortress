@@ -3,6 +3,7 @@
  */
 
 import { getDepartmentJobs, getJobCompanies } from '../api.js';
+import { t } from '../i18n.js';
 import { breadcrumb, statusBadge, companyCard, formatDateTime, escapeHtml, renderPagination } from '../components.js';
 import { deptName } from '../constants.js';
 
@@ -16,7 +17,7 @@ export async function renderDepartment(container, dept) {
         { label: `${dept} — ${deptNameStr}` },
     ])}
         <h1 class="page-title">${dept} — ${escapeHtml(deptNameStr)}</h1>
-        <p class="page-subtitle">Jobs ayant trouvé des entreprises dans ce département</p>
+        <p class="page-subtitle">${t('department.subtitle')}</p>
 
         <div id="dept-jobs-container"></div>
     `;
@@ -27,7 +28,7 @@ export async function renderDepartment(container, dept) {
         jobsContainer.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">📂</div>
-                <div class="empty-state-text">Aucun job pour ce département</div>
+                <div class="empty-state-text">${t('department.noBatches')}</div>
             </div>
         `;
         return;
@@ -43,7 +44,7 @@ export async function renderDepartment(container, dept) {
                         ${escapeHtml(j.batch_name)}
                     </div>
                     <div style="font-size: var(--font-sm); color: var(--text-secondary)">
-                        ${formatDateTime(j.created_at)} · ${j.companies_in_dept || 0} entreprises dans le ${dept}
+                        ${formatDateTime(j.created_at)} · ${j.companies_in_dept || 0} ${t('department.companies')} ${t('department.inDept')} ${dept}
                     </div>
                 </div>
                 <div style="display:flex; gap:var(--space-sm); align-items:center">
@@ -90,7 +91,7 @@ async function loadJobCompanies(batchId, section, page = 1) {
         section.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon">📭</div>
-                <div class="empty-state-text">Aucune entreprise trouvée</div>
+                <div class="empty-state-text">${t('department.noCompanies')}</div>
             </div>
         `;
         return;

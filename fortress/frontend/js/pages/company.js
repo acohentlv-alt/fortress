@@ -19,6 +19,7 @@ import {
     breadcrumb, formatSiren, formatSiret, formatDate,
     statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
 } from '../components.js';
+import { t, getLang } from '../i18n.js';
 
 // Effectif labels (INSEE codes)
 const EFFECTIF_LABELS = {
@@ -51,7 +52,7 @@ function _formeLabel(code) {
 
 function formatCurrency(val) {
     if (val === null || val === undefined) return null;
-    return Number(val).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+    return Number(val).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-US', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 }
 
 // ── Unenriched field helper ──────────────────────────────────────
@@ -64,14 +65,14 @@ function enrichmentPanelHTML() {
     return `
         <button class="btn-liquid enrich-submit" id="enrich-submit-btn">
             <span class="liquid-spinner"></span>
-            <span class="liquid-text enrich-submit-text">🚀 Enrichir via site web</span>
+            <span class="liquid-text enrich-submit-text">🚀 ${t('company.enrichBtn')} ${t('components.website').toLowerCase()}</span>
         </button>
     `;
 }
 
 function renderNotesDirect(notes, limit = 2) {
     if (!notes || notes.length === 0) {
-        return `<div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">Aucune note.</div>`;
+        return `<div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">${t('company.noNotesFull')}</div>`;
     }
     const currentUser = getCachedUser();
     
@@ -82,8 +83,9 @@ function renderNotesDirect(notes, limit = 2) {
     let html = displayNotes.map(n => {
         const canDelete = currentUser && (currentUser.id === n.user_id || currentUser.role === 'admin');
         const d = new Date(n.created_at);
-        const dateStr = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' }).replace(/\//g, '.');
-        const timeStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        const locale = getLang() === 'fr' ? 'fr-FR' : 'en-US';
+        const dateStr = d.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' }).replace(/\//g, '.');
+        const timeStr = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
         
         const username = n.username || 'Utilisateur';
         const initials = username.substring(0, 2).toUpperCase();
@@ -102,7 +104,7 @@ function renderNotesDirect(notes, limit = 2) {
                         <span>${timeStr}</span>
                     </div>
                 </div>
-                ${canDelete ? `<button class="btn-delete-note" data-note-id="${n.id}" style="background:none; border:none; color:var(--text-disabled); cursor:pointer; padding:4px" title="Supprimer">🗑️</button>` : ''}
+                ${canDelete ? `<button class="btn-delete-note" data-note-id="${n.id}" style="background:none; border:none; color:var(--text-disabled); cursor:pointer; padding:4px" title="${t('company.deleteNote')}">🗑️</button>` : ''}
             </div>
             <div style="font-size:var(--font-sm); white-space:pre-wrap; color:var(--text-primary); line-height:1.5">${escapeHtml(n.text)}</div>
         </div>
@@ -112,7 +114,7 @@ function renderNotesDirect(notes, limit = 2) {
     if (hasMore) {
         html += `
             <button class="btn-show-all-notes" style="width:100%; padding:var(--space-sm); margin-top:var(--space-xs); background:transparent; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); color:var(--text-muted); font-size:var(--font-xs); font-weight:600; cursor:pointer; transition:all 0.2s">
-                Voir tout l'historique (${notes.length} notes)
+                ${t('company.showAllNotes', { count: notes.length })}
             </button>
         `;
     }
@@ -137,8 +139,8 @@ function _buildSocialSection(mc, siren) {
         // Collapsed single line when no socials
         return `
             <div class="detail-row social-collapsed" style="border-top:1px solid var(--border-subtle); padding-top:var(--space-sm); margin-top:var(--space-xs)">
-                <span class="detail-label" style="color:var(--text-disabled)">Réseaux sociaux</span>
-                <span class="detail-value" style="color:var(--text-disabled); font-style:italic">Aucun</span>
+                <span class="detail-label" style="color:var(--text-disabled)">${t('company.socialNetworks')}</span>
+                <span class="detail-value" style="color:var(--text-disabled); font-style:italic">${t('company.noSocials')}</span>
             </div>`;
     }
 
@@ -154,13 +156,13 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
     if (!co.siren || !co.siren.startsWith('MAPS')) return '';
 
     const _linkReasonLabel = (method) => {
-        if (method === 'enseigne') return 'Même nom commercial (enseigne)';
-        if (method === 'phone') return 'Même numéro de téléphone';
-        if (method === 'address') return 'Même adresse détectée';
-        if (method === 'siren_website') return 'SIREN trouvé sur le site web';
-        if (method === 'fuzzy_name') return 'Nom similaire détecté';
-        if (method === 'manual') return 'Lien établi manuellement';
-        return 'Correspondance automatique';
+        if (method === 'enseigne') return t('company.linkReasonEnseigne');
+        if (method === 'phone') return t('company.linkReasonPhone');
+        if (method === 'address') return t('company.linkReasonAddress');
+        if (method === 'siren_website') return t('company.linkReasonSirenWebsite');
+        if (method === 'fuzzy_name') return t('company.linkReasonFuzzy');
+        if (method === 'manual') return t('company.linkReasonManual');
+        return t('company.linkReasonAuto');
     };
 
     if (linkedCo) {
@@ -171,13 +173,13 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
                 <span style="font-size:1.3rem">🔗</span>
-                <span style="font-weight:700; color:var(--success); font-size:var(--font-base)">Lié à ${escapeHtml(linkedCo.denomination || '')}</span>
+                <span style="font-weight:700; color:var(--success); font-size:var(--font-base)">${t('company.linkedTo', { name: escapeHtml(linkedCo.denomination || '') })}</span>
                 <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${reasonText}</span>
             </div>
             <div class="entity-banner-grid">
                 <!-- Left: Maps data -->
                 <div style="padding:var(--space-md); background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2); border-radius:var(--radius-md)">
-                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">🗺️ Données Maps</div>
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">${t('company.mapsDataLabel')}</div>
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(co.denomination)}</strong></div>
                         ${co.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(co.adresse)}</div>` : ''}
@@ -187,7 +189,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
                 <!-- Right: SIRENE data -->
                 <div style="padding:var(--space-md); background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2); border-radius:var(--radius-md)">
-                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--success); margin-bottom:var(--space-sm)">🏢 Données SIRENE</div>
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--success); margin-bottom:var(--space-sm)">${t('company.sireneDataLabel')}</div>
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(linkedCo.denomination || '')}</strong></div>
                         ${linkedCo.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(linkedCo.adresse)}</div>` : ''}
@@ -198,32 +200,32 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">🔀 Fusionner</button>
-                <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">Dissocier</button>
+                <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>
+                <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">${t('company.btnUnlink')}</button>
             </div>
         </div>`;
     }
 
     if (suggestedMatches.length > 0) {
         const m = suggestedMatches[0]; // Show the best match
-        const methodLabel = m.method === 'address' ? 'Même adresse'
-            : m.method === 'fuzzy_name' ? 'Nom similaire'
-            : m.method === 'phone' ? 'Même téléphone'
-            : m.method === 'enseigne' ? 'Même enseigne'
-            : m.method === 'siren_website' ? 'SIREN sur le site'
+        const methodLabel = m.method === 'address' ? t('company.methodLabelAddress')
+            : m.method === 'fuzzy_name' ? t('company.methodLabelFuzzy')
+            : m.method === 'phone' ? t('company.methodLabelPhone')
+            : m.method === 'enseigne' ? t('company.methodLabelEnseigne')
+            : m.method === 'siren_website' ? t('company.methodLabelSirenWebsite')
             : m.method;
 
         // Build additional context hints
         const hints = [];
         if (m.ville && co.adresse && co.adresse.toLowerCase().includes(m.ville.toLowerCase())) {
-            hints.push('même ville');
+            hints.push(t('company.contextSameCity'));
         }
         if (m.address && co.adresse) {
             const mapsWords = co.adresse.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
             const sireneWords = m.address.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
             const commonWords = mapsWords.filter(w => sireneWords.includes(w));
             if (commonWords.length > 0) {
-                hints.push('adresse similaire');
+                hints.push(t('company.contextSimilarAddress'));
             }
         }
         const contextStr = hints.length > 0 ? ` · ${hints.join(' · ')}` : '';
@@ -233,13 +235,13 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
                 <span style="font-size:1.3rem">💡</span>
-                <span style="font-weight:700; color:var(--warning); font-size:var(--font-base)">Correspondance possible</span>
+                <span style="font-weight:700; color:var(--warning); font-size:var(--font-base)">${t('company.possibleMatch')}</span>
                 <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${escapeHtml(m.reason || methodLabel)}${contextStr}</span>
             </div>
             <div class="entity-banner-grid">
                 <!-- Left: Maps data -->
                 <div style="padding:var(--space-md); background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2); border-radius:var(--radius-md)">
-                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">🗺️ Données Maps</div>
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--accent); margin-bottom:var(--space-sm)">${t('company.mapsDataLabel')}</div>
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(co.denomination)}</strong></div>
                         ${co.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(co.adresse)}</div>` : ''}
@@ -249,7 +251,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
                 <!-- Right: SIRENE candidate -->
                 <div style="padding:var(--space-md); background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.2); border-radius:var(--radius-md)">
-                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--success); margin-bottom:var(--space-sm)">🏢 Candidat SIRENE</div>
+                    <div style="font-weight:700; font-size:var(--font-sm); color:var(--success); margin-bottom:var(--space-sm)">${t('company.sireneCandidateLabel')}</div>
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(m.denomination || '')}</strong></div>
                         ${m.address ? `<div style="color:var(--text-secondary)">${escapeHtml(m.address)}</div>` : ''}
@@ -260,8 +262,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                <button class="btn btn-primary btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm)">Oui, c'est la même</button>
-                <button class="btn btn-secondary btn-sm" id="btn-reject-match" data-maps="${co.siren}" style="font-size:var(--font-sm); color:var(--error)">Non, garder séparé</button>
+                <button class="btn btn-primary btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm)">${t('company.btnLinkYes')}</button>
+                <button class="btn btn-secondary btn-sm" id="btn-reject-match" data-maps="${co.siren}" style="font-size:var(--font-sm); color:var(--error)">${t('company.btnLinkNo')}</button>
             </div>
         </div>`;
     }
@@ -276,9 +278,9 @@ function _initEntityLinkHandlers(container, siren) {
         mergeBtn.addEventListener('click', async () => {
             const mapsSiren = mergeBtn.dataset.maps;
             const targetSiren = mergeBtn.dataset.target;
-            if (!confirm(`Fusionner ${mapsSiren} dans ${targetSiren} ? Cette action est irréversible.`)) return;
+            if (!confirm(t('company.mergeConfirm', { maps: mapsSiren, target: targetSiren }))) return;
             mergeBtn.disabled = true;
-            mergeBtn.textContent = '⏳ Fusion...';
+            mergeBtn.textContent = t('company.merging');
             try {
                 const res = await fetch(`${window.__API_BASE || ''}/api/companies/${mapsSiren}/merge`, {
                     method: 'POST',
@@ -287,17 +289,17 @@ function _initEntityLinkHandlers(container, siren) {
                 });
                 const data = await res.json();
                 if (res.ok && data.redirect_to) {
-                    showToast(`✅ Fusionné avec ${data.target_name}`, 'success');
+                    showToast(t('company.mergeSuccess', { name: data.target_name }), 'success');
                     window.location.hash = `#/company/${data.redirect_to}`;
                 } else {
-                    showToast(data.error || 'Erreur lors de la fusion', 'error');
+                    showToast(data.error || t('company.mergeError'), 'error');
                     mergeBtn.disabled = false;
-                    mergeBtn.textContent = '🔀 Fusionner';
+                    mergeBtn.textContent = t('company.btnMerge');
                 }
             } catch (err) {
                 showToast(`Erreur: ${err.message}`, 'error');
                 mergeBtn.disabled = false;
-                mergeBtn.textContent = '🔀 Fusionner';
+                mergeBtn.textContent = t('company.btnMerge');
             }
         });
     }
@@ -317,18 +319,18 @@ function _initEntityLinkHandlers(container, siren) {
                     body: JSON.stringify({ target_siren: targetSiren }),
                 });
                 if (res.ok) {
-                    showToast('Entités liées — enrichissement INPI en cours...', 'success');
+                    showToast(t('company.linkSuccess'), 'success');
                     await renderCompany(container, siren);
                 } else {
                     const data = await res.json();
                     showToast(data.error || 'Erreur', 'error');
                     linkBtn.disabled = false;
-                    linkBtn.textContent = "Oui, c'est la même";
+                    linkBtn.textContent = t('company.btnLinkYes');
                 }
             } catch (err) {
                 showToast(`Erreur: ${err.message}`, 'error');
                 linkBtn.disabled = false;
-                linkBtn.textContent = "Oui, c'est la même";
+                linkBtn.textContent = t('company.btnLinkYes');
             }
         });
     }
@@ -346,19 +348,19 @@ function _initEntityLinkHandlers(container, siren) {
                     headers: { 'Content-Type': 'application/json' },
                 });
                 if (res.ok) {
-                    showToast('Correspondance rejetée', 'success');
+                    showToast(t('company.rejectSuccess'), 'success');
                     const banner = container.querySelector('#entity-link-banner');
                     if (banner) banner.remove();
                 } else {
                     const data = await res.json();
                     showToast(data.error || 'Erreur', 'error');
                     rejectBtn.disabled = false;
-                    rejectBtn.textContent = 'Non, garder séparé';
+                    rejectBtn.textContent = t('company.btnLinkNo');
                 }
             } catch (err) {
                 showToast(`Erreur: ${err.message}`, 'error');
                 rejectBtn.disabled = false;
-                rejectBtn.textContent = 'Non, garder séparé';
+                rejectBtn.textContent = t('company.btnLinkNo');
             }
         });
     }
@@ -383,7 +385,7 @@ function _initEntityLinkHandlers(container, siren) {
                     headers: { 'Content-Type': 'application/json' },
                 });
                 if (res.ok) {
-                    showToast('Lien supprimé', 'success');
+                    showToast(t('company.unlinkSuccess'), 'success');
                     await renderCompany(container, siren);
                 } else {
                     const data = await res.json();
@@ -443,7 +445,7 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
 
         if (matches.length === 0) {
             placeholder.innerHTML = `
-                <span style="font-size:var(--font-sm); color:var(--text-muted)">Aucune correspondance trouvée dans la base SIRENE.</span>
+                <span style="font-size:var(--font-sm); color:var(--text-muted)">${t('company.noSireneMatch')}</span>
             `;
             return;
         }
@@ -458,7 +460,7 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
         );
 
         placeholder.outerHTML = bannerHtml || `<div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
-            <div style="font-size:var(--font-sm); color:var(--text-muted)">Correspondances chargées.</div>
+            <div style="font-size:var(--font-sm); color:var(--text-muted)">${t('company.matchesLoaded')}</div>
         </div>`;
 
         // Re-wire the buttons that were just inserted
@@ -485,7 +487,7 @@ export async function renderCompany(container, siren) {
     if (thisCtrl.signal.aborted) return;
 
     if (!data || data.error || data.detail === 'Not found') {
-        showToast('Entreprise introuvable — elle a peut-être été supprimée ou fusionnée', 'error');
+        showToast(t('company.notFound'), 'error');
         window.location.hash = '#/';
         return;
     }
@@ -506,7 +508,7 @@ export async function renderCompany(container, siren) {
         ${data.matching_available && suggestedMatches.length === 0 ? `
         <div id="entity-match-placeholder" class="card" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.15); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; align-items:center; gap:var(--space-sm)">
             <span style="display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,0.15); border-top-color:var(--accent); border-radius:50%; animation:spin 1s linear infinite; flex-shrink:0"></span>
-            <span style="font-size:var(--font-sm); color:var(--text-secondary)">Recherche de correspondances SIRENE...</span>
+            <span style="font-size:var(--font-sm); color:var(--text-secondary)">${t('company.sireneLookup')}</span>
         </div>` : ''}
 
         <!-- Top Header Panel -->
@@ -519,9 +521,9 @@ export async function renderCompany(container, siren) {
                 <!-- Badge row 1: Identity -->
                 <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
                     ${co.siren && co.siren.startsWith('MAPS') && linkedCo
-                        ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span></span>
+                        ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>
                           <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS\u00a0${escapeHtml(co.siren)}</span>`
-                        : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>Identifiant unique à 9 chiffres attribué par l'INSEE à chaque entreprise en France.<span class="info-tip-source">Source : Registre SIRENE</span></span></span></span>`
+                        : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>`
                     }
                     ${statutBadge(co.statut)}
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
@@ -529,14 +531,14 @@ export async function renderCompany(container, siren) {
                 <!-- Badge row 2: Activity -->
                 <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
-                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>Code d'activité principale (NAF/APE) classifiant le secteur économique de l'entreprise.<span class="info-tip-source">Source : INSEE</span></span></span>
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
                     </span>` : ''}
                     ${effectifLabel(co.tranche_effectif) ? `<span class="glass-badge glass-badge--green">👥 ${effectifLabel(co.tranche_effectif)}
-                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>Tranche d'effectif</strong><br>Nombre de salariés déclarés par l'entreprise selon la nomenclature INSEE.<span class="info-tip-source">Source : INSEE</span></span></span>
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.trancheEffectif')}</strong><br>${t('company.effectifTooltip')}<span class="info-tip-source">${t('company.effectifTooltipSource')}</span></span></span>
                     </span>` : ''}
                     ${co.departement ? `<span class="glass-badge glass-badge--cyan">📍 ${escapeHtml(co.departement)}</span>` : ''}
                     ${co.chiffre_affaires ? `<span class="glass-badge glass-badge--gold">💰 ${formatCurrency(co.chiffre_affaires)}
-                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>Chiffre d'affaires</strong><br>Revenu annuel déclaré de l'entreprise.<span class="info-tip-source">Source : Comptes annuels</span></span></span>
+                        <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.caTooltip')}</strong><br>${t('company.caTooltipDesc')}<span class="info-tip-source">${t('company.caTooltipSource')}</span></span></span>
                     </span>` : ''}
                     ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}</span>` : ''}
                     ${mc.maps_url ? `<a href="${mc.maps_url}" target="_blank" rel="noopener" class="glass-badge glass-badge--lg glass-badge--cyan" style="text-decoration:none">🗺️ Google Maps ↗</a>` : ''}
@@ -557,17 +559,17 @@ export async function renderCompany(container, siren) {
             <div class="bento-col-left" style="display:flex; flex-direction:column; gap:var(--space-xl)">
                 <!-- Contact Card -->
                 <div class="detail-section" style="margin-bottom:0">
-                    <h3 class="detail-section-title">📞 Contact</h3>
-                    ${detailRow('Téléphone', mc.phone
+                    <h3 class="detail-section-title">${t('company.sectionContact')}</h3>
+                    ${detailRow(t('company.labelPhone'), mc.phone
                         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
                         : unenrichedField(), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}
-                    ${detailRow('Email', mc.email
+                    ${detailRow(t('company.labelEmail'), mc.email
                         ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}</a>`
                         : unenrichedField(), sourceLabel(mc.email_source), 'email', mc.email || '')}
-                    ${detailRow('Site web', mc.website
+                    ${detailRow(t('company.labelWebsite'), mc.website
                         ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank" rel="noopener" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; min-width:0">${escapeHtml(mc.website)}</a>`
                         : unenrichedField(), sourceLabel(mc.website_source), 'website', mc.website || '')}
-                    ${mc.address ? detailRow('Adresse Maps', `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
+                    ${mc.address ? detailRow(t('company.labelMapsAddress'), `<span style="color:var(--text-primary)">${escapeHtml(mc.address)}</span>`, '🗺️ Google Maps') : ''}
                     ${_buildSocialSection(mc, co.siren)}
                 </div>
             </div>
@@ -576,7 +578,7 @@ export async function renderCompany(container, siren) {
             <div class="bento-col-right" style="display:flex; flex-direction:column; gap:var(--space-xl)">
                 <!-- Dirigeants Card -->
                 <div class="detail-section" style="margin-bottom:0">
-                    <h3 class="detail-section-title">👤 Dirigeants</h3>
+                    <h3 class="detail-section-title">${t('company.sectionOfficers')}</h3>
                     ${officers.length > 0 ? officers.map(o => `
                         <div class="detail-row" style="flex-direction:column; gap:var(--space-xs); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
                             <div style="display:flex; justify-content:space-between; align-items:center">
@@ -594,26 +596,26 @@ export async function renderCompany(container, siren) {
                         </div>
                     `).join('') : `
                         <div style="color:var(--text-disabled); font-style:italic; padding:var(--space-sm) 0">
-                            Aucun dirigeant référencé
+                            ${t('company.noDirectors')}
                         </div>
                     `}
                 </div>
 
                 <!-- Notes Card -->
                 <div class="detail-section" style="display:flex; flex-direction:column; margin-bottom:0">
-                    <h3 class="detail-section-title">📝 Notes CRM</h3>
+                    <h3 class="detail-section-title">${t('company.sectionNotesCRM')}</h3>
                     <div id="notes-list" style="margin-bottom:var(--space-md)">
                         ${renderNotesDirect(data.notes || [], 3)}
                     </div>
                     <div style="display:flex; gap:var(--space-sm)">
-                        <textarea id="note-input" placeholder="Ajouter une note…"
+                        <textarea id="note-input" placeholder="${t('company.notePlaceholder')}"
                             style="flex:1; min-height:44px; padding:var(--space-sm) var(--space-md);
                             background:var(--bg-input); border:1px solid var(--border-default);
                             border-radius:var(--radius-sm); color:var(--text-primary);
                             font-family:var(--font-family); font-size:var(--font-sm);
                             resize:none; outline:none"></textarea>
                         <button id="note-submit-btn" class="btn btn-primary" style="align-self:flex-end; white-space:nowrap; padding:var(--space-sm) var(--space-md)">
-                            Ajouter
+                            ${t('company.noteSubmit')}
                         </button>
                     </div>
                 </div>
@@ -625,37 +627,37 @@ export async function renderCompany(container, siren) {
 
             <!-- Left: Identité juridique + Localisation (merged) -->
             <div class="detail-section" style="margin-bottom:0">
-                <h3 class="detail-section-title">🏛️ Identité</h3>
+                <h3 class="detail-section-title">${t('company.sectionIdentity')}</h3>
                 ${(() => {
                     let identitySource;
                     if (!co.siren.startsWith('MAPS')) {
-                        identitySource = 'Registre SIRENE';
+                        identitySource = t('company.sourceRegistre');
                     } else if (!linkedCo) {
-                        identitySource = 'Google Maps';
+                        identitySource = t('company.sourceMaps');
                     } else if (data.link_method === 'manual') {
-                        identitySource = 'SIRENE (confirmé manuellement)';
+                        identitySource = t('company.sourceSireneManual');
                     } else {
                         const methodLabels = {
-                            'enseigne': 'même enseigne',
-                            'phone': 'même téléphone',
-                            'address': 'même adresse',
-                            'siren_website': 'SIREN trouvé sur le site'
+                            'enseigne': t('company.methodEnseigne'),
+                            'phone': t('company.methodPhone'),
+                            'address': t('company.methodAddress'),
+                            'siren_website': t('company.methodSirenWebsite')
                         };
-                        const reason = methodLabels[data.link_method] || 'correspondance automatique';
-                        identitySource = `SIRENE (auto : ${reason})`;
+                        const reason = methodLabels[data.link_method] || t('company.methodAuto');
+                        identitySource = t('company.sourceSireneAuto', { reason });
                     }
                     return `
-                ${detailRow('Dénomination', `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, identitySource, 'denomination', co.denomination || '')}
-                ${detailRow('SIREN', formatSiren(co.siren), 'Registre SIRENE')}
-                ${detailRow('SIRET siège', formatSiret(co.siret_siege), 'Registre SIRENE')}
-                ${detailRow('Forme juridique', co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                ${detailRow('Statut', statutBadge(co.statut), 'Registre SIRENE')}
-                ${detailRow('Date création', formatDate(co.date_creation), 'Registre SIRENE')}
+                ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, identitySource, 'denomination', co.denomination || '')}
+                ${detailRow(t('company.labelSiren'), formatSiren(co.siren), t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelSiret'), formatSiret(co.siret_siege), t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelStatut'), statutBadge(co.statut), t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelCreated'), formatDate(co.date_creation), t('company.sourceRegistre'))}
                 <div style="border-top:1px solid var(--border-subtle); margin:var(--space-sm) 0"></div>
-                ${detailRow('Adresse', co.adresse || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'adresse', co.adresse || '')}
-                ${detailRow('Code postal', co.code_postal || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'code_postal', co.code_postal || '')}
-                ${detailRow('Ville', co.ville || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'ville', co.ville || '')}
-                ${detailRow('Département', co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                ${detailRow(t('company.labelAddress'), co.adresse || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'adresse', co.adresse || '')}
+                ${detailRow(t('company.labelPostal'), co.code_postal || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'code_postal', co.code_postal || '')}
+                ${detailRow(t('company.labelCity'), co.ville || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'ville', co.ville || '')}
+                ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
                     `;
                 })()}
             </div>
@@ -663,23 +665,23 @@ export async function renderCompany(container, siren) {
             <!-- Right: Financial + Activité (merged "Chiffres Clés") -->
             <div style="display:flex; flex-direction:column; gap:var(--space-xl)">
                 <div class="detail-section" style="margin-bottom:0">
-                    <h3 class="detail-section-title">💰 Chiffres clés</h3>
-                    ${detailRow("Chiffre d'affaires",
+                    <h3 class="detail-section-title">${t('company.sectionFinancials')}</h3>
+                    ${detailRow(t('company.labelRevenue'),
                         co.chiffre_affaires
                             ? `<span style="font-weight:700; color:var(--success)">${formatCurrency(co.chiffre_affaires)}</span>`
-                            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible</span>')}
-                    ${detailRow('Résultat net',
+                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`)}
+                    ${detailRow(t('company.labelNetResult'),
                         co.resultat_net
                             ? `<span style="font-weight:700">${formatCurrency(co.resultat_net)}</span>`
-                            : '<span style="color:var(--text-disabled); font-style:italic">Non disponible</span>')}
-                    ${detailRow('Code NAF', co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>${co.naf_libelle ? ` <span style="color:var(--text-secondary); font-size:var(--font-sm)">— ${escapeHtml(co.naf_libelle)}</span>` : ''}` : '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
-                    ${detailRow('Effectif', effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', 'Registre SIRENE')}
+                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`)}
+                    ${detailRow(t('company.labelNaf'), co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>${co.naf_libelle ? ` <span style="color:var(--text-secondary); font-size:var(--font-sm)">— ${escapeHtml(co.naf_libelle)}</span>` : ''}` : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
+                    ${detailRow(t('company.labelEffectif'), effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
                 </div>
 
                 <!-- Données supplémentaires (extra_data JSONB) -->
                 ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
                 <div class="detail-section" style="margin-bottom:0">
-                    <h3 class="detail-section-title">📋 Données supplémentaires</h3>
+                    <h3 class="detail-section-title">${t('company.sectionExtraData')}</h3>
                     ${Object.entries(co.extra_data).map(([k, v]) => `
                         <div class="detail-row">
                             <span class="detail-label" style="color:var(--text-muted); flex-shrink:0; min-width:140px">${escapeHtml(k)}</span>
@@ -693,7 +695,7 @@ export async function renderCompany(container, siren) {
 
         <!-- Enrichment History (full-width) -->
         <div class="detail-section">
-            <h3 class="detail-section-title">📜 Historique d'enrichissement</h3>
+            <h3 class="detail-section-title">${t('company.sectionHistory')}</h3>
             <div id="enrich-history-container">
                 <div class="loading" style="padding:var(--space-lg) 0"><div class="spinner"></div></div>
             </div>
@@ -728,18 +730,18 @@ export async function renderCompany(container, siren) {
                     }),
                 });
                 if (res.ok) {
-                    showToast(`✅ ${field} mis à jour`, 'success');
+                    showToast(t('company.fieldUpdated', { field }), 'success');
                     localStorage.setItem(`dismissed_conflict_${s}_${field}`, '1');
                     await renderCompany(container, siren);
                 } else {
-                    showToast('Erreur lors de la mise à jour', 'error');
+                    showToast(t('company.fieldUpdateError'), 'error');
                     btn.disabled = false;
-                    btn.textContent = '✅ Utiliser';
+                    btn.textContent = t('company.btnUseAlternativeShort');
                 }
             } catch (err) {
                 showToast(`Erreur: ${err.message}`, 'error');
                 btn.disabled = false;
-                btn.textContent = '✅ Utiliser';
+                btn.textContent = t('company.btnUseAlternativeShort');
             }
         });
     });
@@ -789,19 +791,19 @@ export async function renderCompany(container, siren) {
                     }),
                 });
                 if (res.ok) {
-                    showToast(`✅ ${field} mis à jour`, 'success');
+                    showToast(t('company.fieldUpdated', { field }), 'success');
                     localStorage.setItem(`dismissed_alert_${s}_${alertType}_${field}`, '1');
                     localStorage.setItem(`dismissed_conflict_${s}_${field}`, '1');
                     await renderCompany(container, siren);
                 } else {
-                    showToast('Erreur lors de la mise à jour', 'error');
+                    showToast(t('company.fieldUpdateError'), 'error');
                     btn.disabled = false;
-                    btn.textContent = '✅ Utiliser l\'alternative';
+                    btn.textContent = t('company.btnUseAlternative');
                 }
             } catch (err) {
                 showToast(`Erreur: ${err.message}`, 'error');
                 btn.disabled = false;
-                btn.textContent = '✅ Utiliser l\'alternative';
+                btn.textContent = t('company.btnUseAlternative');
             }
         });
     });
@@ -876,16 +878,16 @@ function _initSpiderCrawl(siren, container) {
             const data = await res.json();
             
             if (res.ok) {
-                showToast(data.message || 'Crawl terminé', 'success');
+                showToast(data.message || t('company.crawlDone'), 'success');
                 // Reload company to see new contacts
                 await renderCompany(container, siren);
             } else {
-                showToast(data.error || 'Erreur lors du crawl', 'error');
+                showToast(data.error || t('company.crawlError'), 'error');
                 spiderBtn.innerHTML = originalHtml;
                 spiderBtn.disabled = false;
             }
         } catch (err) {
-            showToast(`Erreur crawl: ${err.message || 'réseau indisponible'}`, 'error');
+            showToast(t('company.crawlNetworkError'), 'error');
             spiderBtn.innerHTML = originalHtml;
             spiderBtn.disabled = false;
         }
@@ -912,14 +914,14 @@ function _initNotes(siren) {
                 try {
                     const res = await deleteCompanyNote(noteId);
                     if (res._ok !== false) {
-                        showToast('Note supprimée', 'success');
+                        showToast(t('company.noteDeleted'), 'success');
                         _loadNotes(siren);
                     } else {
                         showToast(extractApiError(res), 'error');
                         delBtn.disabled = false;
                     }
                 } catch {
-                    showToast('Erreur de suppression', 'error');
+                    showToast(t('company.noteDeleteError'), 'error');
                     delBtn.disabled = false;
                 }
                 return;
@@ -946,13 +948,13 @@ function _initNotes(siren) {
                 const res = await addCompanyNote(siren, text);
                 if (res._ok !== false) {
                     input.value = '';
-                    showToast('Note ajoutée ✅', 'success');
+                    showToast(t('company.noteAdded'), 'success');
                     _loadNotes(siren);
                 } else {
                     showToast(extractApiError(res), 'error');
                 }
             } catch {
-                showToast('Erreur lors de l\'ajout', 'error');
+                showToast(t('company.noteAddError'), 'error');
             } finally {
                 submitBtn.disabled = false;
             }
@@ -976,7 +978,7 @@ function _showAllNotesModal(siren, allNotes) {
         <div class="modal-overlay" style="z-index:1000; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); display:flex; justify-content:center; align-items:center">
             <div class="modal-content" style="background:var(--bg-primary); border-radius:var(--radius-md); width:90%; max-width:600px; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,0.4)">
                 <div style="padding:var(--space-md) var(--space-lg); border-bottom:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center">
-                    <h2 style="font-size:var(--font-lg); font-weight:700; margin:0">Historique complet (${allNotes.length} notes)</h2>
+                    <h2 style="font-size:var(--font-lg); font-weight:700; margin:0">${t('company.modalNotesTitle', { count: allNotes.length })}</h2>
                     <button id="btn-close-notes-modal" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-muted); padding:0">&times;</button>
                 </div>
                 <div style="padding:var(--space-lg); overflow-y:auto; flex:1" id="modal-notes-container">
@@ -1009,7 +1011,7 @@ function _showAllNotesModal(siren, allNotes) {
         try {
             const res = await deleteCompanyNote(delBtn.dataset.noteId);
             if (res._ok !== false) {
-                showToast('Note supprimée', 'success');
+                showToast(t('company.noteDeleted'), 'success');
                 // Refresh both the modal and the underlying page safely
                 _loadNotes(siren); // update page
                 closeHandler(); // close modal so it forces them to reopen if they want to see it again (cleanest state management)
@@ -1018,7 +1020,7 @@ function _showAllNotesModal(siren, allNotes) {
                 delBtn.disabled = false;
             }
         } catch {
-            showToast('Erreur de suppression', 'error');
+            showToast(t('company.noteDeleteError'), 'error');
             delBtn.disabled = false;
         }
     });
@@ -1051,7 +1053,7 @@ function _initInlineEditing(container, siren) {
                     style="flex:1; padding:var(--space-sm) var(--space-md); background:var(--bg-input);
                     border:1px solid var(--accent); border-radius:var(--radius-sm); color:var(--text-primary);
                     font-family:var(--font-family); font-size:var(--font-base); outline:none"
-                    placeholder="Saisir une valeur…">
+                    placeholder="${t('company.editPlaceholder')}">
                 <button class="inline-edit-save" style="background:var(--success); color:white; border:none;
                     border-radius:var(--radius-sm); padding:var(--space-xs) var(--space-sm); cursor:pointer;
                     font-size:var(--font-sm); font-weight:600">✓</button>
@@ -1110,13 +1112,13 @@ function _initInlineEditing(container, siren) {
                     row.style.background = 'rgba(34, 197, 94, 0.15)';
                     setTimeout(() => { row.style.background = ''; }, 1200);
                     
-                    showToast(`${field} mis à jour ✅`, 'success');
+                    showToast(t('company.fieldUpdated', { field }), 'success');
                 } else {
                     showToast(extractApiError(res), 'error');
                     valueCell.innerHTML = originalHTML;
                 }
             } catch {
-                showToast('Erreur de sauvegarde', 'error');
+                showToast(t('company.saveError'), 'error');
                 valueCell.innerHTML = originalHTML;
             }
         };
@@ -1144,7 +1146,7 @@ function _initEnrichmentPanel(siren, container) {
         submitBtn.disabled = true;
         const textEl = submitBtn.querySelector('.enrich-submit-text');
         const originalText = textEl ? textEl.textContent : '';
-        if (textEl) textEl.textContent = '⏳ Scan du site en cours...';
+        if (textEl) textEl.textContent = t('company.crawlScanning');
 
         try {
             const res = await fetch(`/api/companies/${siren}/crawl-website`, {
@@ -1159,12 +1161,12 @@ function _initEnrichmentPanel(siren, container) {
                 await renderCompany(container, siren);
                 return;
             } else if (res.ok) {
-                showToast(data.message || 'Aucun contact trouvé sur le site', 'info');
+                showToast(data.message || t('company.crawlNoContact'), 'info');
             } else {
-                showToast(data.error || 'Erreur lors du crawl', 'error');
+                showToast(data.error || t('company.crawlError'), 'error');
             }
         } catch (err) {
-            showToast('Erreur réseau lors du crawl', 'error');
+            showToast(t('company.crawlNetworkError'), 'error');
         } finally {
             submitBtn.classList.remove('loading');
             submitBtn.disabled = false;
@@ -1204,12 +1206,12 @@ function _renderAlertBanner(alerts, siren) {
     });
     if (visible.length === 0) return '';
 
-    const _SRC_LABELS = {
-        google_maps: 'Google Maps', website_crawl: 'Site web', mentions_legales: 'Mentions légales',
-        upload: 'Import CSV', manual_edit: 'Modification manuelle', recherche_entreprises: 'API gouvernement',
-        sirene: 'Registre SIRENE', inpi: 'INPI',
-    };
-    const srcLabel = (s) => _SRC_LABELS[s] || s || '?';
+    const getSrcLabels = () => ({
+        google_maps: 'Google Maps', website_crawl: t('company.srcWebsiteCrawl'), mentions_legales: t('company.srcMentionsLegales'),
+        upload: t('company.srcUpload'), manual_edit: t('company.srcManualEdit'), recherche_entreprises: t('company.srcRechercheEntreprises'),
+        sirene: t('company.sourceRegistre'), inpi: 'INPI',
+    });
+    const srcLabel = (s) => getSrcLabels()[s] || s || '?';
 
     const rows = visible.map(alert => {
         const isCritical = alert.severity === 'critical';
@@ -1223,11 +1225,11 @@ function _renderAlertBanner(alerts, siren) {
         const valuesHTML = hasValues ? `
             <div style="display:flex; gap:var(--space-md); margin-top:var(--space-sm); flex-wrap:wrap">
                 <div style="flex:1; min-width:140px; padding:var(--space-xs) var(--space-sm); background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); border:1px solid rgba(16,185,129,0.2)">
-                    <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">✅ Actuel — ${escapeHtml(srcLabel(alert.current_source))}</div>
+                    <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelCurrent')} — ${escapeHtml(srcLabel(alert.current_source))}</div>
                     <div style="color:var(--text-primary); font-weight:500; font-size:var(--font-sm); word-break:break-all">${escapeHtml(alert.current_value)}</div>
                 </div>
                 <div style="flex:1; min-width:140px; padding:var(--space-xs) var(--space-sm); background:${isCritical ? 'rgba(239,68,68,0.08)' : 'rgba(255,193,7,0.08)'}; border-radius:var(--radius-sm); border:1px solid ${isCritical ? 'rgba(239,68,68,0.2)' : 'rgba(255,193,7,0.2)'}">
-                    <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">📦 Alternative — ${escapeHtml(srcLabel(alert.alt_source))}</div>
+                    <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelAlternative')} — ${escapeHtml(srcLabel(alert.alt_source))}</div>
                     <div style="color:var(--text-primary); font-weight:500; font-size:var(--font-sm); word-break:break-all">${escapeHtml(alert.alt_value)}</div>
                 </div>
             </div>
@@ -1239,12 +1241,12 @@ function _renderAlertBanner(alerts, siren) {
                     data-value="${escapeHtml(alert.alt_value)}" data-rejected-value="${escapeHtml(alert.current_value)}"
                     data-rejected-source="${alert.current_source || ''}" data-chosen-source="${alert.alt_source || ''}"
                     style="background:var(--success); color:#fff; border:none; padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs); font-weight:600;">
-                    ✅ Utiliser l'alternative
+                    ${t('company.btnUseAlternative')}
                 </button>
                 <button class="btn-alert-dismiss" data-type="${alert.type}" data-field="${alert.field}" data-siren="${siren}"
                     data-rejected-value="${escapeHtml(alert.alt_value || '')}" data-rejected-source="${alert.alt_source || ''}"
                     style="background:var(--surface-elevated); color:var(--text-secondary); border:1px solid var(--border); padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs);">
-                    ❌ Ignorer
+                    ${t('company.btnDismiss')}
                 </button>
             </div>
         ` : `
@@ -1252,7 +1254,7 @@ function _renderAlertBanner(alerts, siren) {
                 <button class="btn-alert-dismiss" data-type="${alert.type}" data-field="${alert.field}" data-siren="${siren}"
                     data-rejected-value="" data-rejected-source=""
                     style="background:var(--surface-elevated); color:var(--text-secondary); border:1px solid var(--border); padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs);">
-                    ❌ Ignorer
+                    ${t('company.btnDismiss')}
                 </button>
             </div>
         `;
@@ -1278,7 +1280,7 @@ function _renderAlertBanner(alerts, siren) {
     return `
         <div id="alert-banner" style="display:flex; flex-direction:column; gap:var(--space-sm); margin-bottom:var(--space-lg)">
             <div style="font-size:var(--font-xs); color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:var(--space-xs)">
-                🔔 ${visible.length} alerte${visible.length > 1 ? 's' : ''} de données
+                ${t('company.alertsTitle', { count: visible.length, plural: visible.length > 1 ? 's' : '' })}
             </div>
             ${rows}
         </div>
@@ -1292,18 +1294,18 @@ function _renderAlertBanner(alerts, siren) {
 function sourceLabel(src) {
     if (!src) return null;
     const map = {
-        google_maps:           '🗺️ Google Maps',
-        website_crawl:         '🌐 Site web',
-        mentions_legales:      '📜 Mentions légales',
-        recherche_entreprises: '🏛️ Registre National',
-        google_cse:            '🔍 Google Search',
-        synthesized:           '🔗 Synthèse',
-        inpi:                  '📋 INPI',
-        sirene:                '🏛️ Registre SIRENE',
-        manual_edit:           '✏️ Saisi manuellement',
-        upload:                '📤 Import fichier',
-        directory_search:      '📖 Annuaire',
-        pages_jaunes:          '📒 Pages Jaunes',
+        google_maps:           `🗺️ Google Maps`,
+        website_crawl:         `🌐 ${t('company.srcWebsiteCrawl')}`,
+        mentions_legales:      `📜 ${t('company.srcMentionsLegales')}`,
+        recherche_entreprises: `🏛️ ${t('company.srcRechercheEntreprises')}`,
+        google_cse:            `🔍 Google Search`,
+        synthesized:           `🔗 ${t('company.srcSynthesized')}`,
+        inpi:                  `📋 INPI`,
+        sirene:                `🏛️ ${t('company.sourceRegistre')}`,
+        manual_edit:           `✏️ ${t('company.srcManualEdit')}`,
+        upload:                `📤 ${t('company.srcUpload')}`,
+        directory_search:      `📖 ${t('company.srcDirectory')}`,
+        pages_jaunes:          `📒 ${t('company.srcPagesJaunes')}`,
     };
     return map[src] || src;
 }
@@ -1313,7 +1315,7 @@ function altValueRow(alt) {
     if (!alt || !alt.value) return '';
     const src = sourceLabel(alt.source) || alt.source;
     return `<div class="detail-row" style="padding-left:var(--space-lg); opacity:0.6; font-size:var(--font-sm)">
-        <span class="detail-label">↳ aussi</span>
+        <span class="detail-label">${t('company.alsoLabel')}</span>
         <span class="detail-value">${escapeHtml(alt.value)} <span class="provenance-badge" title="Source : ${src}">ℹ️</span></span>
     </div>`;
 }
@@ -1324,7 +1326,7 @@ function conflictRow(alt, field, siren, currentValue, currentSource) {
     const curSrc = sourceLabel(currentSource) || currentSource || '?';
     const dismissedKey = `dismissed_conflict_${siren}_${field}`;
     if (localStorage.getItem(dismissedKey)) return '';
-    const reason = `${curSrc} et ${altSrc} ont trouvé des valeurs différentes`;
+    const reason = t('company.conflictReason', { src1: curSrc, src2: altSrc });
     return `<div class="detail-row conflict-row" id="conflict-${field}" style="
         font-size:var(--font-sm);
         background: rgba(255,193,7,0.06); border-left: 3px solid var(--warning);
@@ -1332,16 +1334,16 @@ function conflictRow(alt, field, siren, currentValue, currentSource) {
         margin: var(--space-xs) 0;
     ">
         <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-xs)">
-            <span style="color:var(--warning); font-weight:600">⚡ Conflit détecté</span>
+            <span style="color:var(--warning); font-weight:600">${t('company.conflictDetected')}</span>
             <span style="color:var(--text-muted); font-size:var(--font-xs)">— ${reason}</span>
         </div>
         <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-sm); flex-wrap:wrap">
             <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); border:1px solid rgba(16,185,129,0.2)">
-                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">✅ Actuel — ${curSrc}</div>
+                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelCurrent')} — ${curSrc}</div>
                 <div style="color:var(--text-primary); font-weight:500">${escapeHtml(currentValue || '—')}</div>
             </div>
             <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(255,193,7,0.08); border-radius:var(--radius-sm); border:1px solid rgba(255,193,7,0.2)">
-                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">📦 Alternative — ${altSrc}</div>
+                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelAlternative')} — ${altSrc}</div>
                 <div style="color:var(--text-primary); font-weight:500">${escapeHtml(alt.value)}</div>
             </div>
         </div>
@@ -1349,12 +1351,12 @@ function conflictRow(alt, field, siren, currentValue, currentSource) {
             <button class="btn-merge-use" data-field="${field}" data-value="${alt.value.replace(/"/g, '&quot;')}" data-siren="${siren}"
                 data-rejected-value="${escapeHtml(currentValue || '')}" data-rejected-source="${currentSource || ''}" data-chosen-source="${alt.source || ''}"
                 style="background:var(--success); color:#fff; border:none; padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs); font-weight:600;">
-                ✅ Utiliser l'alternative
+                ${t('company.btnUseAlternative')}
             </button>
             <button class="btn-merge-dismiss" data-field="${field}" data-siren="${siren}"
                 data-rejected-value="${alt.value.replace(/"/g, '&quot;')}" data-rejected-source="${alt.source || ''}"
                 style="background:var(--surface-elevated); color:var(--text-secondary); border:1px solid var(--border); padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs);">
-                ❌ Ignorer
+                ${t('company.btnDismiss')}
             </button>
         </div>
     </div>`;
@@ -1393,7 +1395,7 @@ function _loadEnrichHistory(siren, history) {
     if (!history || history.length === 0) {
         container.innerHTML = `
             <div style="color:var(--text-muted); font-style:italic; padding:var(--space-sm) 0; font-size:var(--font-sm)">
-                Aucune activité enregistrée — lancez un enrichissement ou ajoutez une note.
+                ${t('company.noHistoryFull')}
             </div>
         `;
         return;
@@ -1408,7 +1410,7 @@ function _loadEnrichHistory(siren, history) {
                             <div style="font-size:1.2rem; flex-shrink:0">📝</div>
                             <div style="flex:1; min-width:0">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
-                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">Note par ${escapeHtml(h.username)}</span>
+                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">${t('company.historyNoteBy', { username: escapeHtml(h.username) })}</span>
                                     <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
                                 <div style="font-size:var(--font-sm); color:var(--text-primary); white-space:pre-wrap; word-break:break-word">${escapeHtml(h.text)}</div>
@@ -1423,7 +1425,7 @@ function _loadEnrichHistory(siren, history) {
                             <div style="font-size:1.2rem; flex-shrink:0">${icon}</div>
                             <div style="flex:1; min-width:0">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px">
-                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">${escapeHtml(h.action)} par ${escapeHtml(h.username)}</span>
+                                    <span style="font-weight:700; color:var(--text-primary); font-size:var(--font-xs)">${t('company.historyActionBy', { action: escapeHtml(h.action), username: escapeHtml(h.username) })}</span>
                                     <span style="font-size:10px; color:var(--text-disabled)">${_formatTimelineDate(h.timestamp)}</span>
                                 </div>
                                 ${h.detail ? `<div style="font-size:var(--font-sm); color:var(--text-secondary)">${escapeHtml(h.detail)}</div>` : ''}
@@ -1432,23 +1434,23 @@ function _loadEnrichHistory(siren, history) {
                     `;
                 } else {
                     const ACTION_MAP = {
-                        'maps_lookup': { icon: '🗺️', label: 'Recherche Google Maps' },
-                        'website_crawl': { icon: '🕸️', label: 'Analyse de site web' },
-                        'officers_found': { icon: '👥', label: 'Dirigeants identifiés' },
-                        'financial_data': { icon: '💶', label: 'Données financières' },
-                        'siren_verified': { icon: '✅', label: 'Correspondance SIREN' },
-                        'siren_mismatch': { icon: '⚠️', label: 'Alerte SIREN' },
-                        'manual_edit': { icon: '✏️', label: 'Édition manuelle' },
-                        'conflict_resolved': { icon: '✅', label: 'Conflit résolu' },
-                        'conflict_dismissed': { icon: '❌', label: 'Conflit ignoré' },
-                        'link': { icon: '🔗', label: 'Liaison automatique' },
-                        'merge': { icon: '🔀', label: 'Fusion de données' },
+                        'maps_lookup': { icon: '🗺️', label: t('company.actionMapsLookup') },
+                        'website_crawl': { icon: '🕸️', label: t('company.actionWebsiteCrawl') },
+                        'officers_found': { icon: '👥', label: t('company.actionOfficersFound') },
+                        'financial_data': { icon: '💶', label: t('company.actionFinancialData') },
+                        'siren_verified': { icon: '✅', label: t('company.actionSirenVerified') },
+                        'siren_mismatch': { icon: '⚠️', label: t('company.actionSirenMismatch') },
+                        'manual_edit': { icon: '✏️', label: t('company.actionManualEdit') },
+                        'conflict_resolved': { icon: '✅', label: t('company.actionConflictResolved') },
+                        'conflict_dismissed': { icon: '❌', label: t('company.actionConflictDismissed') },
+                        'link': { icon: '🔗', label: t('company.actionLink') },
+                        'merge': { icon: '🔀', label: t('company.actionMerge') },
                     };
                     const act = ACTION_MAP[h.action] || { icon: '⚙️', label: h.action };
                     const isSuccess = h.result === 'success';
                     const isAlert = h.action === 'siren_mismatch' || h.result === 'fail' || h.result === 'error';
                     const color = isSuccess ? 'var(--success)' : (isAlert ? 'var(--error)' : 'var(--text-secondary)');
-                    const resultLabel = isSuccess ? 'Succès' : (h.result === 'fail' || h.result === 'error' ? 'Échec' : h.result);
+                    const resultLabel = isSuccess ? t('company.historySuccess') : (h.result === 'fail' || h.result === 'error' ? t('company.historyFailure') : h.result);
                     
                     return `
                         <div style="display:flex; gap:var(--space-md); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
@@ -1467,7 +1469,7 @@ function _loadEnrichHistory(siren, history) {
                                     <div style="color:var(--text-secondary); font-size:calc(var(--font-sm) - 1px); display:flex; gap:var(--space-xs); align-items:center; flex-wrap:wrap">
                                         <span style="color:${color}; font-weight:700">${escapeHtml(resultLabel)}</span>
                                         ${h.search_query ? `<span style="opacity:0.6">•</span><span style="font-style:italic">🔍 "${escapeHtml(h.search_query)}"</span>` : ''}
-                                        ${h.source_url ? `<span style="opacity:0.6">•</span><a href="${h.source_url.startsWith('http') ? h.source_url : 'https://'+h.source_url}" target="_blank" rel="noopener" style="color:var(--accent); text-decoration:none">🔗 Voir la source</a>` : ''}
+                                        ${h.source_url ? `<span style="opacity:0.6">•</span><a href="${h.source_url.startsWith('http') ? h.source_url : 'https://'+h.source_url}" target="_blank" rel="noopener" style="color:var(--accent); text-decoration:none">${t('company.historyViewSource')}</a>` : ''}
                                         ${h.duration ? `<span style="opacity:0.6">•</span><span>${h.duration}ms</span>` : ''}
                                     </div>
                                 </div>
@@ -1484,10 +1486,11 @@ function _loadEnrichHistory(siren, history) {
 function _formatTimelineDate(dateStr) {
     if (!dateStr) return '—';
     try {
+        const locale = getLang() === 'fr' ? 'fr-FR' : 'en-US';
         const d = new Date(dateStr);
-        return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-            + ' à '
-            + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric' })
+            + t('company.historyTimeAt')
+            + d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
     } catch {
         return dateStr;
     }

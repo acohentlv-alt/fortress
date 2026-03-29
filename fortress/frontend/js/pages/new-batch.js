@@ -11,6 +11,7 @@
 
 import { escapeHtml, showToast } from '../components.js';
 import { runBatch, extractApiError } from '../api.js';
+import { t, getLang } from '../i18n.js';
 
 // French department names → codes (lowercase, accent-insensitive keys)
 const DEPT_NAMES = {
@@ -45,25 +46,24 @@ const DEPT_NAMES = {
 
 export async function renderNewBatch(container) {
     container.innerHTML = `
-        <h1 class="page-title">🚀 Nouvelle Recherche</h1>
-        <p class="page-subtitle">Lancez une collecte de données B2B via Google Maps</p>
+        <h1 class="page-title">🚀 ${t('newBatch.title')}</h1>
+        <p class="page-subtitle">${t('newBatch.subtitle')}</p>
 
         <div class="batch-form">
             <!-- Search Queries -->
             <div class="form-group">
-                <label class="form-label">🔍 Que cherchez-vous ?</label>
+                <label class="form-label">${t('newBatch.queries')}</label>
                 <div class="form-hint" style="margin-bottom:var(--space-md)">
-                    Décrivez votre recherche en incluant le <strong>secteur</strong> et la <strong>localisation</strong>.
-                    Chaque terme sera recherché séparément sur Google Maps.
+                    ${t('newBatch.queriesHint')}
                 </div>
                 <div id="search-queries-container">
                     <div class="search-query-row" style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center">
                         <input type="text" class="form-input search-query-input"
-                            placeholder="ex: camping Perpignan"
+                            placeholder="${t('newBatch.queryPlaceholder')}"
                             autocomplete="off" style="flex:1">
                         <button type="button" class="btn-remove-query"
                             style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px; opacity:0.3"
-                            disabled title="Minimum 1 recherche">✕</button>
+                            disabled title="${t('newBatch.queryMinRequired')}">✕</button>
                     </div>
                 </div>
                 <button type="button" id="btn-add-query"
@@ -71,20 +71,20 @@ export async function renderNewBatch(container) {
                     onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--bg-hover)'"
                     onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-secondary)'"
                 >
-                    ＋ Ajouter un terme de recherche
+                    ${t('newBatch.addQuery')}
                 </button>
                 <div class="form-hint" style="margin-top:var(--space-sm); color:var(--info)">
-                    💡 Ajoutez des variations (camping + ville, camping + code postal) pour maximiser la couverture
+                    ${t('newBatch.addQueryTip')}
                 </div>
             </div>
 
             <!-- Batch Size -->
             <div class="form-group">
-                <label class="form-label" for="batch-size">📊 Nombre d'entreprises souhaité</label>
+                <label class="form-label" for="batch-size">${t('newBatch.sizeLabel')}</label>
                 <input type="number" id="batch-size" class="form-input"
                     value="20" min="5" max="50" step="5"
                     style="max-width:140px">
-                <div class="form-hint">Recommandé : 20 par batch. Maximum : 50</div>
+                <div class="form-hint">${t('newBatch.sizeHint')}</div>
             </div>
 
             <!-- Safeguard Warning Area -->
@@ -97,27 +97,26 @@ export async function renderNewBatch(container) {
             <!-- Summary Preview -->
             <div id="batch-summary" style="background:var(--bg-secondary); border:1px solid var(--accent-subtle); border-left:3px solid var(--accent); border-radius:var(--radius); padding:var(--space-xl); margin-top:var(--space-xl)">
                 <div style="font-size:var(--font-xs); font-weight:700; color:var(--accent-hover); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
-                    📋 Aperçu de la recherche
+                    ${t('newBatch.summaryTitle')}
                 </div>
                 <div id="batch-summary-content" style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.6">
-                    Ajoutez au moins un terme de recherche pour voir l'aperçu
+                    ${t('newBatch.summaryEmpty')}
                 </div>
             </div>
 
             <!-- Actions -->
             <div class="form-actions">
                 <button class="btn btn-primary" id="btn-launch-batch" style="padding:var(--space-md) var(--space-2xl)">
-                    🚀 Lancer la Recherche
+                    ${t('newBatch.launch')}
                 </button>
                 <button class="btn btn-secondary" onclick="window.location.hash='#/'">
-                    Annuler
+                    ${t('common.cancel')}
                 </button>
             </div>
 
             <!-- Info note -->
             <div style="margin-top:var(--space-xl); padding:var(--space-lg); background:var(--info-subtle); border-radius:var(--radius-sm); font-size:var(--font-sm); color:var(--info)">
-                ⓘ Le moteur va rechercher chaque terme sur Google Maps, puis croiser les résultats avec la base SIRENE
-                pour les données légales. Les sites web trouvés seront scannés pour les emails et réseaux sociaux.
+                ${t('newBatch.infoNote')}
             </div>
         </div>
     `;
@@ -132,11 +131,11 @@ export async function renderNewBatch(container) {
         row.style.cssText = 'display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center';
         row.innerHTML = `
             <input type="text" class="form-input search-query-input"
-                placeholder="ex: transport Lyon"
+                placeholder="${t('newBatch.queryPlaceholder2')}"
                 autocomplete="off" style="flex:1" value="${escapeHtml(value)}">
             <button type="button" class="btn-remove-query"
                 style="background:none; border:1px solid var(--danger); border-radius:var(--radius-sm); color:var(--danger); cursor:pointer; font-size:14px; padding:6px 10px; transition:all var(--transition-fast)"
-                title="Supprimer cette recherche"
+                title="${t('newBatch.removeQueryTitle')}"
                 onmouseover="this.style.background='var(--danger)';this.style.color='white'"
                 onmouseout="this.style.background='none';this.style.color='var(--danger)'"
             >✕</button>
@@ -184,7 +183,7 @@ export async function renderNewBatch(container) {
             const words = q.trim().split(/\s+/);
             // Single word without location = too broad
             if (words.length === 1 && !/^\d{2,5}$/.test(words[0])) {
-                warnings.push(`"${q}" — Ajoutez une localisation (ville ou département) pour éviter trop de résultats`);
+                warnings.push(`"${q}" — ${t('newBatch.warningBroad')}`);
             }
         }
         return warnings;
@@ -210,18 +209,17 @@ export async function renderNewBatch(container) {
         }
 
         if (queries.length === 0) {
-            document.getElementById('batch-summary-content').innerHTML =
-                'Ajoutez au moins un terme de recherche pour voir l\'aperçu';
+            document.getElementById('batch-summary-content').innerHTML = t('newBatch.summaryEmpty');
             return;
         }
 
         document.getElementById('batch-summary-content').innerHTML = `
-            <strong>🗺️ Votre recherche</strong> — ${queries.length} terme${queries.length > 1 ? 's' : ''}<br>
+            <strong>${t('newBatch.summaryHeader')}</strong> — ${queries.length} ${queries.length > 1 ? t('newBatch.summaryTerms') : t('newBatch.summaryTerm')}<br>
             <ul style="margin:var(--space-xs) 0 0 var(--space-lg); padding:0">
                 ${queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('')}
             </ul>
             <span style="color:var(--text-muted)">
-                ${batchSize} entreprises souhaitées · Les résultats seront enrichis automatiquement
+                ${t('newBatch.summaryFooter', { size: batchSize })}
             </span>
         `;
     };
@@ -238,14 +236,14 @@ export async function renderNewBatch(container) {
             .filter(q => q.length > 0);
 
         if (queries.length === 0) {
-            showToast('Ajoutez au moins un terme de recherche', 'error');
+            showToast(t('newBatch.errorNoQuery'), 'error');
             return;
         }
 
         // Safeguard: block if ALL queries are too broad (single word, no location)
         const warnings = validateQueries(queries);
         if (warnings.length === queries.length) {
-            showToast('Toutes vos recherches sont trop larges. Ajoutez une ville ou un département à chaque terme.', 'error');
+            showToast(t('newBatch.errorAllBroad'), 'error');
             return;
         }
 
@@ -288,10 +286,10 @@ export async function renderNewBatch(container) {
         };
 
         btn.disabled = true;
-        btn.innerHTML = '⏳ Lancement en cours...';
+        btn.innerHTML = t('newBatch.launching');
 
         document.getElementById('batch-summary-content').innerHTML = `
-            <div style="color:var(--warning); font-weight:700">⏳ Envoi de la configuration au serveur...</div>
+            <div style="color:var(--warning); font-weight:700">${t('newBatch.sendingConfig')}</div>
         `;
 
         try {
@@ -300,14 +298,14 @@ export async function renderNewBatch(container) {
             if (result && result._ok && result.status === 'launched') {
                 document.getElementById('batch-summary-content').innerHTML = `
                     <div style="color:var(--success); font-weight:700; margin-bottom:var(--space-sm)">
-                        ✅ Recherche lancée avec succès !
+                        ${t('newBatch.launched')}
                     </div>
                     <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.8">
-                        <strong>ID :</strong> ${escapeHtml(result.batch_id || '—')}<br>
-                        <strong>Statut :</strong> En cours d'exécution
+                        ${t('newBatch.successId', { id: escapeHtml(result.batch_id || '—') })}<br>
+                        ${t('newBatch.successStatus')}
                     </div>
                     <div style="margin-top:var(--space-md); font-size:var(--font-xs); color:var(--text-muted)">
-                        Redirection vers Pipeline Live dans 3 secondes...
+                        ${t('newBatch.redirecting')}
                     </div>
                 `;
 
@@ -317,17 +315,17 @@ export async function renderNewBatch(container) {
             } else {
                 const errorMsg = extractApiError(result);
                 document.getElementById('batch-summary-content').innerHTML = `
-                    <div style="color:var(--danger); font-weight:700">❌ Erreur : ${escapeHtml(errorMsg)}</div>
+                    <div style="color:var(--danger); font-weight:700">${t('newBatch.errorLaunch', { message: escapeHtml(errorMsg) })}</div>
                 `;
                 btn.disabled = false;
-                btn.innerHTML = '🚀 Lancer la Recherche';
+                btn.innerHTML = t('newBatch.launch');
             }
         } catch (err) {
             document.getElementById('batch-summary-content').innerHTML = `
-                <div style="color:var(--danger); font-weight:700">❌ Erreur de connexion : ${escapeHtml(err.message)}</div>
+                <div style="color:var(--danger); font-weight:700">${t('newBatch.errorNetwork', { message: escapeHtml(err.message) })}</div>
             `;
             btn.disabled = false;
-            btn.innerHTML = '🚀 Lancer la Recherche';
+            btn.innerHTML = t('newBatch.launch');
         }
     });
 }

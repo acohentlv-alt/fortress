@@ -236,33 +236,42 @@ async def lifespan(app: FastAPI):
                     WHERE bt.batch_name = bd.batch_name AND bt.batch_id IS NULL
                 """)
 
-                # Seed default workspace and assign existing data (idempotent)
-                await conn.execute("INSERT INTO workspaces (name) VALUES ('Default') ON CONFLICT (name) DO NOTHING")
+                # Seed first workspace if none exists, and assign orphaned data (idempotent)
                 await conn.execute("""
-                    UPDATE users SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE workspace_id IS NULL AND role != 'admin'
+                    INSERT INTO workspaces (name) VALUES ('Cindy')
+                    ON CONFLICT DO NOTHING
                 """)
-                await conn.execute("UPDATE users SET role = 'head' WHERE username = 'olivierhaddad' AND role != 'admin'")
-                await conn.execute("""
-                    UPDATE companies SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE siren LIKE 'MAPS%' AND workspace_id IS NULL
-                """)
-                await conn.execute("""
-                    UPDATE batch_data SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE workspace_id IS NULL
-                """)
-                await conn.execute("""
-                    UPDATE batch_log SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE workspace_id IS NULL
-                """)
-                await conn.execute("""
-                    UPDATE batch_tags SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE workspace_id IS NULL
-                """)
-                await conn.execute("""
-                    UPDATE blacklisted_sirens SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
-                    WHERE workspace_id IS NULL
-                """)
+                # Use the first workspace (by id) for backfills — name-independent
+                first_ws = await (await conn.execute(
+                    "SELECT id FROM workspaces ORDER BY id LIMIT 1"
+                )).fetchone()
+                if first_ws:
+                    ws_id = first_ws[0]
+                    await conn.execute("""
+                        UPDATE users SET workspace_id = %s
+                        WHERE workspace_id IS NULL AND role != 'admin'
+                    """, (ws_id,))
+                    await conn.execute("UPDATE users SET role = 'head' WHERE username = 'olivierhaddad' AND role != 'admin'")
+                    await conn.execute("""
+                        UPDATE companies SET workspace_id = %s
+                        WHERE siren LIKE 'MAPS%%' AND workspace_id IS NULL
+                    """, (ws_id,))
+                    await conn.execute("""
+                        UPDATE batch_data SET workspace_id = %s
+                        WHERE workspace_id IS NULL
+                    """, (ws_id,))
+                    await conn.execute("""
+                        UPDATE batch_log SET workspace_id = %s
+                        WHERE workspace_id IS NULL
+                    """, (ws_id,))
+                    await conn.execute("""
+                        UPDATE batch_tags SET workspace_id = %s
+                        WHERE workspace_id IS NULL
+                    """, (ws_id,))
+                    await conn.execute("""
+                        UPDATE blacklisted_sirens SET workspace_id = %s
+                        WHERE workspace_id IS NULL
+                    """, (ws_id,))
                 logger.info("✅ Workspace isolation migrations complete")
 
                 await conn.commit()

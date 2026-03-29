@@ -9,6 +9,7 @@
 import { searchSirene, checkHealth, extractApiError } from '../api.js';
 import { escapeHtml, showToast } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
+import { t, getLang } from '../i18n.js';
 
 export async function renderSearch(container) {
     // Extract query from hash if present
