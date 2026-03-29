@@ -74,6 +74,18 @@ function _focusStyle(el) {
 }
 
 export async function renderAdmin(container, gen) {
+    const currentUser = getCachedUser();
+    if (!currentUser || currentUser.role !== 'admin') {
+        container.innerHTML = `
+            <div class="empty-state" style="margin-top:var(--space-2xl)">
+                <div class="empty-state-icon">🔒</div>
+                <div class="empty-state-text">Accès réservé aux administrateurs</div>
+                <a href="#/" class="btn btn-primary" style="margin-top:var(--space-lg)">Retour au Dashboard</a>
+            </div>
+        `;
+        return;
+    }
+
     container.innerHTML = `
         <h1 class="page-title">Administration</h1>
         <p class="page-subtitle">Gestion des utilisateurs et des espaces de travail.</p>
