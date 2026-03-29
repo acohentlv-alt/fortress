@@ -607,8 +607,121 @@ export async function renderAdmin(container, gen) {
 
     addBtn.addEventListener('click', () => showForm(null));
 
-    // Load workspaces first (so _workspaces is populated for the user form dropdown)
+    // ── Activity Log ────────────────────────────────────────────────
+
+    const ACTION_ICONS = {
+        batch_launched: '🚀', batch_completed: '✅', batch_failed: '❌',
+        upload: '📤', delete_job: '🗑️', cancel_job: '⏹️', delete_tags: '🏷️',
+        export: '📥', note_added: '📝', note_deleted: '🗑️',
+        contact_request: '✉️', conflict_resolved: '✅', conflict_dismissed: '❌',
+        merge: '🔀', link: '🔗', reject_link: '❌', unlink: '🔓', manual_edit: '✏️',
+    };
+
+    const ACTION_LABELS = {
+        batch_launched: 'Recherche lancée', batch_completed: 'Batch terminé',
+        batch_failed: 'Erreur Batch', upload: 'Fichier importé',
+        delete_job: 'Batch supprimé', cancel_job: 'Batch annulé',
+        delete_tags: 'Tags supprimés', export: 'Export effectué',
+        note_added: 'Note ajoutée', note_deleted: 'Note supprimée',
+        contact_request: 'Demande de contact', conflict_resolved: 'Conflit résolu',
+        conflict_dismissed: 'Conflit ignoré', merge: 'Fusion manuelle',
+        link: 'Lien confirmé', reject_link: 'Lien refusé',
+        unlink: 'Lien dissocié', manual_edit: 'Modification manuelle',
+    };
+
+    function _timeAgo(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        const now = new Date();
+        const mins = Math.floor((now - d) / 60000);
+        if (mins < 1) return "à l'instant";
+        if (mins < 60) return `il y a ${mins} min`;
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return `il y a ${hours}h`;
+        const days = Math.floor(hours / 24);
+        if (days === 1) return 'hier';
+        return `il y a ${days} jours`;
+    }
+
+    async function loadLog() {
+        logContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        logPagination.innerHTML = '';
+        try {
+            const data = await getActivityLog({ period: _logPeriod, limit: LOG_PAGE_SIZE, offset: _logOffset });
+            if (!data || !data._ok) {
+                logContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
+                return;
+            }
+            const entries = data.entries || [];
+            const total = data.total || 0;
+
+            if (entries.length === 0) {
+                logContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-text">Aucune activité pour cette période.</div></div>`;
+                return;
+            }
+
+            logContainer.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:var(--space-sm)">
+                    ${entries.map(e => `
+                        <div style="display:flex; gap:var(--space-md); align-items:flex-start; padding:var(--space-sm) var(--space-md); border-radius:var(--radius); ${e.action === 'batch_failed' ? 'border-left:3px solid var(--text-error)' : ''}">
+                            <span style="font-size:16px; flex-shrink:0">${ACTION_ICONS[e.action] || '📌'}</span>
+                            <div style="flex:1; min-width:0">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-md)">
+                                    <span style="font-weight:600; color:var(--text-primary); font-size:var(--font-sm)">
+                                        👤 ${escapeHtml(e.username || 'système')}
+                                    </span>
+                                    <span style="font-size:var(--font-xs); color:var(--text-muted); white-space:nowrap">
+                                        ${_timeAgo(e.created_at)}
+                                    </span>
+                                </div>
+                                <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-top:2px">
+                                    <strong>${ACTION_LABELS[e.action] || e.action}</strong>
+                                    ${e.details ? `<div style="margin-top:2px; padding:var(--space-xs) var(--space-sm); background:var(--bg-secondary); border-radius:4px; font-size:var(--font-xs); ${e.action === 'batch_failed' ? 'color:var(--text-error)' : ''}">${escapeHtml(e.details)}</div>` : ''}
+                                </div>
+                                ${e.target_id ? `<div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:2px; font-family:var(--font-mono)">${e.target_type === 'company' ? `<a href="#/company/${encodeURIComponent(e.target_id)}" style="color:var(--accent); text-decoration:none">${escapeHtml(e.target_id)} ↗</a>` : escapeHtml(e.target_id)}</div>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            // Pagination
+            const currentPage = Math.floor(_logOffset / LOG_PAGE_SIZE) + 1;
+            const totalPages = Math.ceil(total / LOG_PAGE_SIZE);
+            if (totalPages > 1) {
+                const hasPrev = _logOffset > 0;
+                const hasNext = _logOffset + LOG_PAGE_SIZE < total;
+                logPagination.innerHTML = `
+                    <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg)">
+                        <button class="btn btn-secondary" id="log-prev" ${hasPrev ? '' : 'disabled'} style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">← Précédent</button>
+                        <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">${currentPage} / ${totalPages}</span>
+                        <button class="btn btn-secondary" id="log-next" ${hasNext ? '' : 'disabled'} style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">Suivant →</button>
+                    </div>
+                `;
+                const prevBtn = logPagination.querySelector('#log-prev');
+                const nextBtn = logPagination.querySelector('#log-next');
+                if (prevBtn && hasPrev) prevBtn.addEventListener('click', () => { _logOffset -= LOG_PAGE_SIZE; loadLog(); });
+                if (nextBtn && hasNext) nextBtn.addEventListener('click', () => { _logOffset += LOG_PAGE_SIZE; loadLog(); });
+            }
+        } catch (err) {
+            logContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger le journal.</div></div>`;
+        }
+    }
+
+    // Wire period filter buttons
+    container.querySelectorAll('.log-period').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.log-period').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _logPeriod = btn.dataset.period;
+            _logOffset = 0;
+            loadLog();
+        });
+    });
+
+    // Load everything
     await loadWorkspaces();
     if (isStale(gen)) return;
     await loadUsers();
+    loadLog();
 }
