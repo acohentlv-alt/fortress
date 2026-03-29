@@ -25,27 +25,37 @@ async def list_blacklist(request: Request, search: str = ""):
     Returns: [{siren, reason, added_by, added_at, denomination}]
     Supports ?search= to filter by SIREN or company name.
     """
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND b.workspace_id = %s"
+        ws_params = [user.workspace_id]
+    else:
+        ws_filter = ""
+        ws_params = []
+
     if search:
         rows = await fetch_all(
-            """
+            f"""
             SELECT b.siren, b.reason, b.added_by, b.added_at,
                    COALESCE(c.denomination, '') AS denomination
             FROM blacklisted_sirens b
             LEFT JOIN companies c ON c.siren = b.siren
-            WHERE b.siren ILIKE %s OR c.denomination ILIKE %s
+            WHERE (b.siren ILIKE %s OR c.denomination ILIKE %s) {ws_filter}
             ORDER BY b.added_at DESC
             """,
-            (f"%{search}%", f"%{search}%"),
+            tuple([f"%{search}%", f"%{search}%"] + ws_params),
         )
     else:
         rows = await fetch_all(
-            """
+            f"""
             SELECT b.siren, b.reason, b.added_by, b.added_at,
                    COALESCE(c.denomination, '') AS denomination
             FROM blacklisted_sirens b
             LEFT JOIN companies c ON c.siren = b.siren
+            WHERE 1=1 {ws_filter}
             ORDER BY b.added_at DESC
-            """
+            """,
+            tuple(ws_params) if ws_params else None,
         )
 
     return [
@@ -84,15 +94,16 @@ async def add_to_blacklist(request: Request):
 
     user = request.state.user
     added_by = user.username if user else "unknown"
+    workspace_id = getattr(user, "workspace_id", None)
 
     async with get_conn() as conn:
         await conn.execute(
             """
-            INSERT INTO blacklisted_sirens (siren, reason, added_by)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (siren) DO UPDATE SET reason = EXCLUDED.reason, added_by = EXCLUDED.added_by
+            INSERT INTO blacklisted_sirens (siren, reason, added_by, workspace_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (siren) DO UPDATE SET reason = EXCLUDED.reason, added_by = EXCLUDED.added_by, workspace_id = EXCLUDED.workspace_id
             """,
-            (siren, reason, added_by),
+            (siren, reason, added_by, workspace_id),
         )
         await conn.commit()
 

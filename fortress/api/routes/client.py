@@ -21,7 +21,7 @@ import re
 import traceback
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from psycopg.types.json import Json
@@ -39,8 +39,11 @@ logger = logging.getLogger("fortress.api.client")
 # ---------------------------------------------------------------------------
 
 @router.post("/upload")
-async def upload_client_file(file: UploadFile = File(...)):
+async def upload_client_file(request: Request, file: UploadFile = File(...)):
     """Upload a CSV or XLSX file. Intelligently maps columns and ingests data."""
+    user = getattr(request.state, "user", None) if request else None
+    workspace_id = getattr(user, "workspace_id", None) if user else None
+
     content = await file.read()
     filename = file.filename or "upload"
     is_xlsx = filename.lower().endswith((".xlsx", ".xls"))
@@ -80,9 +83,9 @@ async def upload_client_file(file: UploadFile = File(...)):
             await conn.execute("""
                 INSERT INTO batch_data
                     (batch_id, batch_name, status, batch_size, total_companies,
-                     strategy, mode, created_at, updated_at)
-                VALUES (%s, %s, 'in_progress', %s, %s, 'upload', 'upload', %s, %s)
-            """, (batch_id, f"Import: {filename}", len(rows), len(rows), now, now))
+                     strategy, mode, created_at, updated_at, workspace_id)
+                VALUES (%s, %s, 'in_progress', %s, %s, 'upload', 'upload', %s, %s, %s)
+            """, (batch_id, f"Import: {filename}", len(rows), len(rows), now, now, workspace_id))
     except RuntimeError as exc:
         return JSONResponse(status_code=503, content={"error": str(exc)})
     except Exception as exc:
@@ -128,12 +131,12 @@ async def upload_client_file(file: UploadFile = File(...)):
             # Tag all ingested companies in batch_tags
             async with conn.transaction():
                 await conn.execute("""
-                    INSERT INTO batch_tags (siren, batch_name, tagged_at)
-                    SELECT DISTINCT sa.siren, %s, NOW()
+                    INSERT INTO batch_tags (siren, batch_name, tagged_at, workspace_id)
+                    SELECT DISTINCT sa.siren, %s, NOW(), %s
                     FROM batch_log sa
                     WHERE sa.batch_id = %s
                     ON CONFLICT (siren, batch_name) DO NOTHING
-                """, (f"Import: {filename}", batch_id))
+                """, (f"Import: {filename}", workspace_id, batch_id))
 
             # Mark job completed
             scraped = stats["companies_inserted"] + stats["companies_updated"]
@@ -175,8 +178,8 @@ async def upload_client_file(file: UploadFile = File(...)):
     # Log activity
     scraped_total = stats["companies_inserted"] + stats["companies_updated"]
     await log_activity(
-        user_id=None,
-        username='system',
+        user_id=getattr(user, "id", None) if user else None,
+        username=getattr(user, "username", "system") if user else "system",
         action='upload',
         target_type='upload',
         target_id=batch_id,
@@ -251,31 +254,45 @@ async def preview_upload(file: UploadFile = File(...)):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats")
-async def client_stats():
+async def client_stats(request: Request):
     """Return upload history and stats."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params_list: list = [user.workspace_id]
+    else:
+        ws_filter = ""
+        ws_params_list = []
+
     try:
-        uploads_raw = await fetch_all("""
+        uploads_raw = await fetch_all(
+            f"""
             SELECT sj.batch_id, sj.batch_name, sj.status, sj.batch_size,
                    sj.companies_scraped, sj.companies_qualified,
                    sj.created_at, sj.updated_at,
                    COUNT(DISTINCT sa.siren) AS siren_count
             FROM batch_data sj
             LEFT JOIN batch_log sa ON sa.batch_id = sj.batch_id
-            WHERE sj.mode = 'upload'
+            WHERE sj.mode = 'upload' {ws_filter}
             GROUP BY sj.batch_id, sj.batch_name, sj.status, sj.batch_size,
                      sj.companies_scraped, sj.companies_qualified,
                      sj.created_at, sj.updated_at
             ORDER BY sj.created_at DESC
             LIMIT 20
-        """)
+            """,
+            tuple(ws_params_list) if ws_params_list else None,
+        )
 
         # Count total unique SIRENs across all upload jobs
-        total_row = await fetch_one("""
+        total_row = await fetch_one(
+            f"""
             SELECT COUNT(DISTINCT sa.siren) AS total
             FROM batch_log sa
             JOIN batch_data sj ON sj.batch_id = sa.batch_id
-            WHERE sj.mode = 'upload'
-        """)
+            WHERE sj.mode = 'upload' {ws_filter}
+            """,
+            tuple(ws_params_list) if ws_params_list else None,
+        )
         total_sirens = (total_row or {}).get("total", 0)
 
     except RuntimeError as exc:
@@ -300,28 +317,50 @@ async def client_stats():
 
 
 @router.delete("/clear")
-async def clear_client_sirens():
+async def clear_client_sirens(request: Request):
     """Clear all client-uploaded data (upload-mode jobs and their batch_tags)."""
+    user = getattr(request.state, "user", None)
+    is_admin = getattr(user, "is_admin", False) if user else False
+    ws_id = getattr(user, "workspace_id", None) if user else None
+
     try:
         async with get_conn() as conn:
             # Get upload job batch_names to clear their tags
-            jobs = await conn.execute(
-                "SELECT batch_name FROM batch_data WHERE mode = 'upload'"
-            )
+            if is_admin or ws_id is None:
+                jobs = await conn.execute(
+                    "SELECT batch_name FROM batch_data WHERE mode = 'upload'"
+                )
+            else:
+                jobs = await conn.execute(
+                    "SELECT batch_name FROM batch_data WHERE mode = 'upload' AND workspace_id = %s",
+                    (ws_id,),
+                )
             job_rows = await jobs.fetchall()
             batch_names = [r[0] for r in job_rows] if job_rows else []
 
             deleted_tags = 0
             for qn in batch_names:
-                res = await conn.execute(
-                    "DELETE FROM batch_tags WHERE batch_name = %s", (qn,)
-                )
+                if is_admin or ws_id is None:
+                    res = await conn.execute(
+                        "DELETE FROM batch_tags WHERE batch_name = %s", (qn,)
+                    )
+                else:
+                    res = await conn.execute(
+                        "DELETE FROM batch_tags WHERE batch_name = %s AND workspace_id = %s",
+                        (qn, ws_id),
+                    )
                 deleted_tags += res.rowcount
 
             # Delete the upload jobs themselves
-            res = await conn.execute(
-                "DELETE FROM batch_data WHERE mode = 'upload'"
-            )
+            if is_admin or ws_id is None:
+                res = await conn.execute(
+                    "DELETE FROM batch_data WHERE mode = 'upload'"
+                )
+            else:
+                res = await conn.execute(
+                    "DELETE FROM batch_data WHERE mode = 'upload' AND workspace_id = %s",
+                    (ws_id,),
+                )
             deleted_jobs = res.rowcount
             await conn.commit()
 

@@ -215,6 +215,7 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE batch_tags  ADD COLUMN IF NOT EXISTS batch_id TEXT")
                 await conn.execute("ALTER TABLE companies   ADD COLUMN IF NOT EXISTS workspace_id INTEGER")
                 await conn.execute("ALTER TABLE company_notes ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE")
+                await conn.execute("ALTER TABLE blacklisted_sirens ADD COLUMN IF NOT EXISTS workspace_id INTEGER")
                 await conn.execute("ALTER TABLE contacts    ADD COLUMN IF NOT EXISTS approved_by_head BOOLEAN DEFAULT FALSE")
 
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_data_workspace ON batch_data(workspace_id)")
@@ -255,6 +256,10 @@ async def lifespan(app: FastAPI):
                 """)
                 await conn.execute("""
                     UPDATE batch_tags SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
+                    WHERE workspace_id IS NULL
+                """)
+                await conn.execute("""
+                    UPDATE blacklisted_sirens SET workspace_id = (SELECT id FROM workspaces WHERE name = 'Default')
                     WHERE workspace_id IS NULL
                 """)
                 logger.info("✅ Workspace isolation migrations complete")

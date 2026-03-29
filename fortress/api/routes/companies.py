@@ -24,6 +24,14 @@ router = APIRouter(prefix="/api/companies", tags=["companies"])
 _DEDUP_TTL_HOURS = 24
 
 
+def _get_workspace_filter(request):
+    """Return (is_admin, workspace_id) from the request user."""
+    user = getattr(request.state, "user", None)
+    if not user:
+        return False, None
+    return user.is_admin, getattr(user, "workspace_id", None)
+
+
 # ---------------------------------------------------------------------------
 # Enrich endpoint models & constants
 # ---------------------------------------------------------------------------
@@ -85,6 +93,16 @@ async def update_company_fields(siren: str, body: dict, request: Request):
         _conflict_rejected_source: the source of the rejected value
         _conflict_chosen_source: the source of the chosen value
     """
+    # MAPS workspace gate
+    if siren.startswith("MAPS"):
+        is_admin, ws_id = _get_workspace_filter(request)
+        if not is_admin:
+            owner = await fetch_one(
+                "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+            )
+            if owner and owner.get("workspace_id") != ws_id:
+                return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     # Validate company exists
     company = await fetch_one(
         "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
@@ -246,10 +264,26 @@ async def update_company_fields(siren: str, body: dict, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.post("/deep-enrich", status_code=202)
-async def start_deep_enrich(body: DeepEnrichRequest, background_tasks: BackgroundTasks):
+async def start_deep_enrich(body: DeepEnrichRequest, background_tasks: BackgroundTasks, request: Request):
     sirens = list(set(body.sirens))
     if len(sirens) > 20:
         return JSONResponse(status_code=400, content={"error": "Maximum 20 SIRENS autorisés."})
+
+    is_admin, ws_id = _get_workspace_filter(request)
+    if not is_admin and ws_id is not None:
+        maps_sirens = [s for s in sirens if s.startswith("MAPS")]
+        if maps_sirens:
+            placeholders = ",".join(["%s"] * len(maps_sirens))
+            foreign = await fetch_all(
+                f"SELECT siren FROM companies WHERE siren IN ({placeholders}) AND (workspace_id IS NULL OR workspace_id != %s)",
+                tuple(maps_sirens) + (ws_id,),
+            )
+            if foreign:
+                foreign_list = [r["siren"] for r in foreign]
+                return JSONResponse(status_code=403, content={
+                    "error": "Certaines entreprises n'appartiennent pas à votre espace.",
+                    "forbidden_sirens": foreign_list,
+                })
         
     batch_id = f"MANUAL_ENRICH_{uuid.uuid4().hex[:8].upper()}"
     
@@ -467,7 +501,7 @@ async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
 
 
 @router.post("/{siren}/enrich", status_code=202)
-async def enrich_company(siren: str, body: EnrichRequest):
+async def enrich_company(siren: str, body: EnrichRequest, request: Request):
     """Queue targeted enrichment modules for a single company.
 
     Modules:
@@ -478,6 +512,16 @@ async def enrich_company(siren: str, body: EnrichRequest):
     Deduplication: Checks existing data before queueing.
     Returns 202 Accepted with which modules were queued.
     """
+    # MAPS workspace gate
+    if siren.startswith("MAPS"):
+        is_admin, ws_id = _get_workspace_filter(request)
+        if not is_admin:
+            owner = await fetch_one(
+                "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+            )
+            if owner and owner.get("workspace_id") != ws_id:
+                return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     # Validate company exists (indexed lookup on companies.siren PK)
     company = await fetch_one(
         "SELECT siren, denomination FROM companies WHERE siren = %s", (siren,)
@@ -640,11 +684,21 @@ async def enrich_company(siren: str, body: EnrichRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/{siren}/crawl-website")
-async def crawl_website_sync(siren: str):
+async def crawl_website_sync(siren: str, request: Request):
     """Synchronously crawl a known website to extract email/phone/socials.
-    
+
     Bypasses the `fortress.runner` batch queue entirely.
     """
+    # MAPS workspace gate
+    if siren.startswith("MAPS"):
+        is_admin, ws_id = _get_workspace_filter(request)
+        if not is_admin:
+            owner = await fetch_one(
+                "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+            )
+            if owner and owner.get("workspace_id") != ws_id:
+                return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     company = await fetch_one(
         "SELECT siren, denomination, departement FROM companies WHERE siren = %s", (siren,)
     )
@@ -1105,12 +1159,22 @@ async def search_companies(
 # ---------------------------------------------------------------------------
 
 @router.get("/{siren}/enrich-history")
-async def get_enrich_history(siren: str):
+async def get_enrich_history(siren: str, request: Request):
     """Return enrichment audit trail for a single company.
 
     Queries batch_log table (indexed on siren).
     Used by the frontend's Smart Enrichment Panel timeline.
     """
+    # MAPS workspace gate
+    if siren.startswith("MAPS"):
+        is_admin, ws_id = _get_workspace_filter(request)
+        if not is_admin:
+            owner = await fetch_one(
+                "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+            )
+            if owner and owner.get("workspace_id") != ws_id:
+                return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     rows = await fetch_all("""
         SELECT
             action, result, source_url, detail, search_query, duration_ms, timestamp
@@ -1122,8 +1186,17 @@ async def get_enrich_history(siren: str):
 
 
 @router.delete("/{siren}/tags/{batch_name}")
-async def untag_company(siren: str, batch_name: str):
+async def untag_company(siren: str, batch_name: str, request: Request):
     """Remove a company from a batch's results (untag only — never deletes data)."""
+    is_admin, ws_id = _get_workspace_filter(request)
+    if not is_admin and ws_id is not None:
+        tag_owner = await fetch_one(
+            "SELECT workspace_id FROM batch_tags WHERE siren = %s AND batch_name = %s LIMIT 1",
+            (siren, batch_name),
+        )
+        if tag_owner and tag_owner.get("workspace_id") != ws_id:
+            return JSONResponse(status_code=403, content={"error": "Accès refusé."})
+
     async with get_conn() as conn:
         result = await conn.execute(
             "DELETE FROM batch_tags WHERE siren = %s AND batch_name = %s RETURNING siren",
@@ -1137,13 +1210,20 @@ async def untag_company(siren: str, batch_name: str):
 
 
 @router.delete("/{siren}/tags/")
-async def untag_company_all(siren: str):
+async def untag_company_all(siren: str, request: Request):
     """Remove a company from ALL query results (all tags). Never deletes data."""
+    is_admin, ws_id = _get_workspace_filter(request)
     async with get_conn() as conn:
-        result = await conn.execute(
-            "DELETE FROM batch_tags WHERE siren = %s RETURNING siren",
-            (siren,),
-        )
+        if is_admin or ws_id is None:
+            result = await conn.execute(
+                "DELETE FROM batch_tags WHERE siren = %s RETURNING siren",
+                (siren,),
+            )
+        else:
+            result = await conn.execute(
+                "DELETE FROM batch_tags WHERE siren = %s AND workspace_id = %s RETURNING siren",
+                (siren, ws_id),
+            )
         rows = await result.fetchall()
         count = len(rows)
         if count == 0:
@@ -1156,7 +1236,7 @@ async def untag_company_all(siren: str):
 async def get_company(siren: str, request: Request):
     """Full company detail with enriched data, contacts, and officers."""
     try:
-        return await _get_company_impl(siren)
+        return await _get_company_impl(siren, request)
     except Exception as e:
         import traceback, logging
         tb = traceback.format_exc()
@@ -1167,7 +1247,7 @@ async def get_company(siren: str, request: Request):
             return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
-async def _get_company_impl(siren: str):
+async def _get_company_impl(siren: str, request=None):
     company = await fetch_one("""
         SELECT
             co.siren, co.siret_siege, co.denomination, co.enseigne,
@@ -1181,13 +1261,22 @@ async def _get_company_impl(siren: str):
             co.date_fondation, co.type_etablissement,
             co.extra_data,
             co.created_at, co.updated_at,
-            co.linked_siren, co.link_confidence, co.link_method
+            co.linked_siren, co.link_confidence, co.link_method,
+            co.workspace_id
         FROM companies co
         WHERE co.siren = %s
     """, (siren,))
 
     if not company:
         return JSONResponse(status_code=404, content={"error": "Company not found", "siren": siren})
+
+    # MAPS workspace gate
+    if siren.startswith("MAPS") and request:
+        user = getattr(request.state, "user", None)
+        if user and not user.is_admin:
+            company_ws = company.get("workspace_id")
+            if company_ws is not None and company_ws != user.workspace_id:
+                return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
 
     # All contacts from different sources
     contacts = await fetch_all("""
@@ -1657,6 +1746,15 @@ async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTa
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be linked"})
 
+    # MAPS workspace gate
+    is_admin, ws_id = _get_workspace_filter(request)
+    if not is_admin:
+        owner = await fetch_one(
+            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+        )
+        if owner and owner.get("workspace_id") != ws_id:
+            return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     # Verify target exists
     target = await fetch_one(
         "SELECT siren, denomination FROM companies WHERE siren = %s", (body.target_siren,)
@@ -1761,6 +1859,15 @@ async def reject_link(siren: str, request: Request):
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can reject links"})
 
+    # MAPS workspace gate
+    is_admin_rl, ws_id_rl = _get_workspace_filter(request)
+    if not is_admin_rl:
+        owner_rl = await fetch_one(
+            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+        )
+        if owner_rl and owner_rl.get("workspace_id") != ws_id_rl:
+            return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     user = getattr(request.state, "user", None)
     username = getattr(user, "username", "?") if user else "?"
     user_id = getattr(user, "id", None) if user else None
@@ -1791,6 +1898,15 @@ async def unlink_entity(siren: str, request: Request):
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be unlinked"})
 
+    # MAPS workspace gate
+    is_admin_ul, ws_id_ul = _get_workspace_filter(request)
+    if not is_admin_ul:
+        owner_ul = await fetch_one(
+            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+        )
+        if owner_ul and owner_ul.get("workspace_id") != ws_id_ul:
+            return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
+
     user = getattr(request.state, "user", None)
     username = getattr(user, "username", "?") if user else "?"
     user_id = getattr(user, "id", None) if user else None
@@ -1820,6 +1936,15 @@ async def merge_entity(siren: str, body: LinkBody, request: Request):
     """Merge a MAPS entity into a real SIREN — moves all data, then deletes MAPS row."""
     if not siren.startswith("MAPS"):
         return JSONResponse(status_code=400, content={"error": "Only MAPS entities can be merged"})
+
+    # MAPS workspace gate
+    is_admin_mg, ws_id_mg = _get_workspace_filter(request)
+    if not is_admin_mg:
+        owner_mg = await fetch_one(
+            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+        )
+        if owner_mg and owner_mg.get("workspace_id") != ws_id_mg:
+            return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
 
     user = getattr(request.state, "user", None)
     username = getattr(user, "username", "?") if user else "?"
@@ -2123,7 +2248,7 @@ async def create_entity(body: CreateEntityRequest, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/{siren}/suggest-matches")
-async def suggest_matches(siren: str):
+async def suggest_matches(siren: str, request: Request):
     """Run live SIRENE matching for an unmatched MAPS entity.
 
     Called asynchronously by the frontend after the company page loads.
@@ -2131,6 +2256,15 @@ async def suggest_matches(siren: str):
     """
     if not siren.startswith("MAPS"):
         return {"matches": []}
+
+    # MAPS workspace gate — return empty matches (not 403) to avoid breaking frontend
+    is_admin, ws_id = _get_workspace_filter(request)
+    if not is_admin:
+        owner = await fetch_one(
+            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
+        )
+        if owner and owner.get("workspace_id") != ws_id:
+            return {"matches": []}
 
     company = await fetch_one(
         "SELECT denomination, adresse, departement, link_confidence FROM companies WHERE siren = %s",

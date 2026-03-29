@@ -4,7 +4,7 @@ Scoped to companies linked via batch_tags (actual scraped data),
 NOT the full 16M+ sirene import table.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from fortress.api.db import fetch_all
 
@@ -45,9 +45,17 @@ _DEPT_NAMES = {
 
 
 @router.get("")
-async def list_departments():
+async def list_departments(request: Request):
     """List departments with counts & quality — scoped to scraped companies only."""
-    rows = await fetch_all("""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND qt.workspace_id = %s"
+        ws_params = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    rows = await fetch_all(f"""
         SELECT
             co.departement,
             COUNT(DISTINCT co.siren) AS company_count,
@@ -57,10 +65,10 @@ async def list_departments():
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN contacts ct ON co.siren = ct.siren
-        WHERE co.departement IS NOT NULL
+        WHERE co.departement IS NOT NULL {ws_filter}
         GROUP BY co.departement
         ORDER BY co.departement
-    """)
+    """, ws_params if ws_params else None)
     result = []
     for r in rows:
         dept = r["departement"]
@@ -76,9 +84,17 @@ async def list_departments():
 
 
 @router.get("/{dept}")
-async def get_department_detail(dept: str):
+async def get_department_detail(dept: str, request: Request):
     """Get enriched companies in this department."""
-    rows = await fetch_all("""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND qt.workspace_id = %s"
+        ws_params = (dept, user.workspace_id)
+    else:
+        ws_filter = ""
+        ws_params = (dept,)
+
+    rows = await fetch_all(f"""
         SELECT DISTINCT ON (co.siren)
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.ville, co.code_postal,
@@ -86,9 +102,9 @@ async def get_department_detail(dept: str):
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN contacts ct ON ct.siren = qt.siren
-        WHERE co.departement = %s
+        WHERE co.departement = %s {ws_filter}
         ORDER BY co.siren
-    """, (dept,))
+    """, ws_params)
     return {
         "department": dept,
         "department_name": _DEPT_NAMES.get(dept, dept),
@@ -97,9 +113,17 @@ async def get_department_detail(dept: str):
 
 
 @router.get("/{dept}/jobs")
-async def get_department_jobs(dept: str):
+async def get_department_jobs(dept: str, request: Request):
     """All jobs that have companies in this department."""
-    rows = await fetch_all("""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params = (dept, user.workspace_id)
+    else:
+        ws_filter = ""
+        ws_params = (dept,)
+
+    rows = await fetch_all(f"""
         SELECT
             sj.batch_id, sj.batch_name, sj.status,
             sj.total_companies, sj.companies_scraped,
@@ -111,8 +135,8 @@ async def get_department_jobs(dept: str):
         JOIN batch_tags qt ON qt.batch_name = sj.batch_name
                            OR qt.batch_name = sj.batch_id
         JOIN companies co ON co.siren = qt.siren AND co.departement = %s
-        WHERE sj.status != 'deleted'
+        WHERE sj.status != 'deleted' {ws_filter}
         GROUP BY sj.id
         ORDER BY sj.created_at DESC
-    """, (dept,))
+    """, ws_params)
     return rows
