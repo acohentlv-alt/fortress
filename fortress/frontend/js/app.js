@@ -14,6 +14,7 @@ import { renderUpload } from './pages/upload.js';
 import { renderContacts } from './pages/contacts.js';
 import { renderActivity } from './pages/activity.js';
 import { renderBlacklist } from './pages/blacklist.js';
+import { renderAdmin } from './pages/admin.js';
 import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
@@ -64,6 +65,7 @@ const routes = [
     { pattern: /^#\/contacts$/, handler: renderContacts, nav: 'contacts' },
     { pattern: /^#\/activity$/, handler: renderActivity, nav: 'activity' },
     { pattern: /^#\/blacklist$/, handler: renderBlacklist, nav: 'blacklist' },
+    { pattern: /^#\/admin$/, handler: renderAdmin, nav: 'admin' },
     { pattern: /^#\/login$/, handler: renderLogin, nav: 'none' },
     { pattern: /^#\/intro$/, handler: renderIntro, nav: 'none' },
 ];
@@ -128,6 +130,13 @@ function _showLoginPage() {
         _updateUserDisplay(user);
         _setupLogout();
         _setupRunningJobs();
+        // Show admin section for admin users only
+        const adminSection = document.getElementById('nav-section-admin');
+        const adminNav = document.getElementById('nav-admin');
+        if (user.role === 'admin') {
+            if (adminSection) adminSection.style.display = '';
+            if (adminNav) adminNav.style.display = '';
+        }
         // Navigate to dashboard
         window.location.hash = '#/';
         navigate();
@@ -276,6 +285,13 @@ async function initApp() {
     // Hide "Requête Libre" for ALL users (placeholder, not launched)
     const queryNav = document.getElementById('nav-query');
     if (queryNav) queryNav.style.display = 'none';
+    // Show admin section for admin users only
+    const adminSection = document.getElementById('nav-section-admin');
+    const adminNav = document.getElementById('nav-admin');
+    if (user.role === 'admin') {
+        if (adminSection) adminSection.style.display = '';
+        if (adminNav) adminNav.style.display = '';
+    }
     navigate();
     _setupRunningJobs();
 }

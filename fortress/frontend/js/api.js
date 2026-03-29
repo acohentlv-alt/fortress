@@ -474,6 +474,27 @@ export async function logoutUser() {
     _currentUser = null;
 }
 
+// ── Admin: User Management ──────────────────────────────────────
+export async function getAdminUsers() {
+    return await request('/admin/users');
+}
+
+export async function createAdminUser(data) {
+    return await postJSON('/admin/users', data);
+}
+
+export async function updateAdminUser(userId, data) {
+    return await patchJSON(`/admin/users/${userId}`, data);
+}
+
+export async function deactivateAdminUser(userId) {
+    return await request(`/admin/users/${userId}`, { method: 'DELETE' });
+}
+
+export async function getWorkspaces() {
+    return await request('/admin/workspaces');
+}
+
 export async function getCurrentUser() {
     try {
         const resp = await fetch(`${API_BASE}/auth/me`, {

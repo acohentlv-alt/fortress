@@ -1,6 +1,6 @@
 """Admin API routes — user management.
 
-Admin-only endpoints for listing, creating, and updating users.
+Admin-only endpoints for listing, creating, updating, and deactivating users.
 All users share the same database (companies, contacts, etc.).
 """
 
@@ -12,13 +12,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.auth import decode_session_token, hash_password
-from fortress.api.db import fetch_all, get_conn
+from fortress.api.db import fetch_all, fetch_one, get_conn
 
 logger = logging.getLogger("fortress.api.admin")
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 _COOKIE_NAME = "fortress_session"
+_VALID_ROLES = ("admin", "head", "user")
 
 
 def _get_admin(request: Request):
@@ -34,22 +35,40 @@ def _get_admin(request: Request):
 
 @router.get("/users")
 async def list_users(request: Request):
-    """List all users. Admin only."""
+    """List all active users with workspace info. Admin only."""
     admin = _get_admin(request)
     if not admin:
         return JSONResponse(status_code=403, content={"error": "Admin requis."})
 
     rows = await fetch_all(
-        "SELECT id, username, role, display_name, created_at, last_login FROM users ORDER BY id"
+        """SELECT u.id, u.username, u.role, u.display_name, u.created_at, u.last_login,
+                  u.workspace_id, COALESCE(w.name, '') AS workspace_name, u.active
+           FROM users u
+           LEFT JOIN workspaces w ON w.id = u.workspace_id
+           WHERE u.active = TRUE OR u.active IS NULL
+           ORDER BY u.id"""
     )
-    return {"users": rows, "count": len(rows)}
+    users = []
+    for r in (rows or []):
+        users.append({
+            "id": r["id"],
+            "username": r["username"],
+            "role": r["role"],
+            "display_name": r["display_name"],
+            "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            "last_login": r["last_login"].isoformat() if r.get("last_login") else None,
+            "workspace_id": r["workspace_id"],
+            "workspace_name": r["workspace_name"],
+            "active": r["active"],
+        })
+    return {"users": users, "count": len(users)}
 
 
 @router.post("/users")
 async def create_user(request: Request):
     """Create a new user. Admin only.
 
-    Body: {"username": "...", "password": "...", "role": "user", "display_name": "..."}
+    Body: {"username": "...", "password": "...", "role": "user", "display_name": "...", "workspace_id": 1}
     """
     admin = _get_admin(request)
     if not admin:
@@ -64,25 +83,37 @@ async def create_user(request: Request):
     password = body.get("password") or ""
     role = (body.get("role") or "user").strip().lower()
     display_name = (body.get("display_name") or username).strip()
+    workspace_id = body.get("workspace_id") or None
+    if workspace_id is not None:
+        try:
+            workspace_id = int(workspace_id)
+        except (ValueError, TypeError):
+            workspace_id = None
 
     if not username or not password:
-        return JSONResponse(status_code=400, content={"error": "username et password requis."})
-    if role not in ("admin", "user"):
-        return JSONResponse(status_code=400, content={"error": "role doit etre 'admin' ou 'user'."})
+        return JSONResponse(status_code=400, content={"error": "Identifiant et mot de passe requis."})
+    if role not in _VALID_ROLES:
+        return JSONResponse(status_code=400, content={"error": "Rôle invalide. Les valeurs acceptées sont : admin, head, user."})
     if len(password) < 4:
-        return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (min 4)."})
+        return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 4 caractères)."})
+
+    # Workspace validation per role
+    if role == "head" and not workspace_id:
+        return JSONResponse(status_code=400, content={"error": "Un responsable doit être associé à un espace de travail."})
+    if role == "admin":
+        workspace_id = None
 
     pw_hash = hash_password(password)
 
     async with get_conn() as conn:
-        # Check if exists
+        # Check if username already exists
         cur = await conn.execute("SELECT id FROM users WHERE username = %s", (username,))
         if await cur.fetchone():
-            return JSONResponse(status_code=409, content={"error": f"'{username}' existe deja."})
+            return JSONResponse(status_code=409, content={"error": f"L'identifiant '{username}' existe déjà."})
 
         await conn.execute(
-            "INSERT INTO users (username, password_hash, role, display_name) VALUES (%s, %s, %s, %s)",
-            (username, pw_hash, role, display_name),
+            "INSERT INTO users (username, password_hash, role, display_name, workspace_id) VALUES (%s, %s, %s, %s, %s)",
+            (username, pw_hash, role, display_name, workspace_id),
         )
         await conn.commit()
 
@@ -92,9 +123,9 @@ async def create_user(request: Request):
 
 @router.patch("/users/{user_id}")
 async def update_user(user_id: int, request: Request):
-    """Update a user's display_name, role, or password. Admin only.
+    """Update a user's display_name, role, password, username, or workspace. Admin only.
 
-    Body: {"display_name": "...", "role": "...", "password": "..."}
+    Body: {"display_name": "...", "role": "...", "password": "...", "username": "...", "workspace_id": 1}
     Only provided fields are updated.
     """
     admin = _get_admin(request)
@@ -109,29 +140,88 @@ async def update_user(user_id: int, request: Request):
     updates = []
     params = []
 
+    # Fetch current user state for context-aware validation
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "SELECT id, username, role, workspace_id FROM users WHERE id = %s AND (active = TRUE OR active IS NULL)",
+            (user_id,)
+        )
+        current = await cur.fetchone()
+
+    if not current:
+        return JSONResponse(status_code=404, content={"error": "Utilisateur introuvable."})
+
+    current_role = current[2]
+    current_workspace_id = current[3]
+
+    # Determine final role (may be changing)
+    new_role = None
+    if "role" in body:
+        new_role = (body["role"] or "").strip().lower()
+        if new_role not in _VALID_ROLES:
+            return JSONResponse(status_code=400, content={"error": "Rôle invalide. Les valeurs acceptées sont : admin, head, user."})
+        updates.append("role = %s")
+        params.append(new_role)
+
+    final_role = new_role if new_role is not None else current_role
+
+    # Workspace update
+    if "workspace_id" in body:
+        new_workspace_id = body["workspace_id"]
+        if new_workspace_id is not None:
+            try:
+                new_workspace_id = int(new_workspace_id)
+            except (ValueError, TypeError):
+                new_workspace_id = None
+        updates.append("workspace_id = %s")
+        params.append(new_workspace_id)
+        resolved_workspace_id = new_workspace_id
+    else:
+        resolved_workspace_id = current_workspace_id
+
+    # Role-based workspace enforcement
+    if final_role == "head" and not resolved_workspace_id:
+        return JSONResponse(status_code=400, content={"error": "Un responsable doit être associé à un espace de travail."})
+    if final_role == "admin":
+        # Force workspace_id = NULL for admin users — remove any workspace update and replace with NULL
+        ws_indices = [i for i, u in enumerate(updates) if "workspace_id" in u]
+        if ws_indices:
+            # Update the existing param in-place (updates and params always appended together)
+            params[ws_indices[0]] = None
+        else:
+            updates.append("workspace_id = %s")
+            params.append(None)
+
     if "display_name" in body:
         updates.append("display_name = %s")
         params.append(body["display_name"])
 
-    if "role" in body and body["role"] in ("admin", "user"):
-        updates.append("role = %s")
-        params.append(body["role"])
-
-    if "password" in body and len(body["password"]) >= 4:
+    if "password" in body and body["password"]:
+        if len(body["password"]) < 4:
+            return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 4 caractères)."})
         updates.append("password_hash = %s")
         params.append(hash_password(body["password"]))
 
     if "username" in body and body["username"].strip():
+        new_username = body["username"].strip()
+        # Check uniqueness for the new username (ignore current user's own row)
+        async with get_conn() as conn:
+            cur = await conn.execute(
+                "SELECT id FROM users WHERE username = %s AND id != %s",
+                (new_username, user_id)
+            )
+            if await cur.fetchone():
+                return JSONResponse(status_code=409, content={"error": f"L'identifiant '{new_username}' est déjà utilisé."})
         updates.append("username = %s")
-        params.append(body["username"].strip())
+        params.append(new_username)
 
     if not updates:
-        return JSONResponse(status_code=400, content={"error": "Rien a modifier."})
+        return JSONResponse(status_code=400, content={"error": "Aucune modification à effectuer."})
 
     params.append(user_id)
     async with get_conn() as conn:
         cur = await conn.execute(
-            f"UPDATE users SET {', '.join(updates)} WHERE id = %s RETURNING id, username, role, display_name",
+            f"UPDATE users SET {', '.join(updates)} WHERE id = %s AND (active = TRUE OR active IS NULL) RETURNING id, username, role, display_name",
             tuple(params),
         )
         row = await cur.fetchone()
@@ -140,6 +230,47 @@ async def update_user(user_id: int, request: Request):
         await conn.commit()
 
     return {"updated": True, "user": {"id": row[0], "username": row[1], "role": row[2], "display_name": row[3]}}
+
+
+@router.delete("/users/{user_id}")
+async def deactivate_user(user_id: int, request: Request):
+    """Deactivate a user (soft delete). Admin only. Cannot deactivate yourself."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    if user_id == admin.id:
+        return JSONResponse(status_code=400, content={"error": "Impossible de désactiver votre propre compte."})
+
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "UPDATE users SET active = FALSE WHERE id = %s AND (active = TRUE OR active IS NULL) RETURNING username",
+            (user_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Utilisateur introuvable ou déjà désactivé."})
+        await conn.commit()
+
+    return {"deactivated": True, "username": row[0]}
+
+
+@router.get("/workspaces")
+async def list_workspaces(request: Request):
+    """List all workspaces. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    rows = await fetch_all("SELECT id, name, created_at FROM workspaces ORDER BY name")
+    return {"workspaces": [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+        }
+        for r in (rows or [])
+    ]}
 
 
 @router.get("/deploy-status")
@@ -167,4 +298,3 @@ async def deploy_status(request: Request):
         "message": "✅ Aucun batch en cours — déploiement sûr." if len(active_jobs) == 0
                    else f"⚠️ {len(active_jobs)} batch(s) en cours — attendez avant de déployer.",
     }
-
