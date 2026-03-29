@@ -222,8 +222,16 @@ async def export_master_xlsx(request: Request):
 
 
 @router.get("/{batch_id}/csv")
-async def export_csv(batch_id: str):
+async def export_csv(batch_id: str, request: Request):
     """Download all companies for a query as CSV."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        batch = await fetch_one(
+            "SELECT workspace_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        )
+        if not batch or batch["workspace_id"] != user.workspace_id:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"error": "Accès refusé."})
     rows = await _fetch_export_data(batch_id)
     if not rows:
         return StreamingResponse(
@@ -249,8 +257,16 @@ async def export_csv(batch_id: str):
 
 
 @router.get("/{batch_id}/jsonl")
-async def export_jsonl(batch_id: str):
+async def export_jsonl(batch_id: str, request: Request):
     """Download all companies for a query as JSONL."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        batch = await fetch_one(
+            "SELECT workspace_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        )
+        if not batch or batch["workspace_id"] != user.workspace_id:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"error": "Accès refusé."})
     rows = await _fetch_export_data(batch_id)
     lines = []
     for row in rows:
@@ -272,8 +288,16 @@ async def export_jsonl(batch_id: str):
 
 
 @router.get("/{batch_id}/xlsx")
-async def export_xlsx(batch_id: str):
+async def export_xlsx(batch_id: str, request: Request):
     """Download all companies for a query as XLSX."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        batch = await fetch_one(
+            "SELECT workspace_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        )
+        if not batch or batch["workspace_id"] != user.workspace_id:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"error": "Accès refusé."})
     rows = await _fetch_export_data(batch_id)
     return _to_xlsx(rows, f"{batch_id}.xlsx")
 
@@ -286,7 +310,7 @@ class BulkExportRequest(BaseModel):
 
 
 @router.post("/bulk/csv")
-async def export_bulk_csv(body: BulkExportRequest):
+async def export_bulk_csv(body: BulkExportRequest, request: Request):
     """Export selected SIRENs as CSV (from dashboard bulk selection)."""
     if not body.sirens:
         return StreamingResponse(
@@ -295,42 +319,88 @@ async def export_bulk_csv(body: BulkExportRequest):
             headers={"Content-Disposition": "attachment; filename=fortress_selection.csv"},
         )
 
-    rows = await fetch_all("""
-        WITH best_contact AS (
-            SELECT DISTINCT ON (c2.siren)
-                c2.siren,
-                c2.phone, c2.email, c2.website,
-                c2.address, c2.maps_url,
-                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.source AS contact_source
-            FROM contacts c2
-            WHERE c2.siren = ANY(%s)
-            ORDER BY c2.siren,
-                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
-        SELECT
-            co.siren, co.siret_siege, co.denomination,
-            co.naf_code, co.naf_libelle, co.forme_juridique,
-            co.adresse, co.code_postal, co.ville,
-            co.departement, co.statut, co.date_creation,
-            co.tranche_effectif,
-            bc.phone, bc.email, bc.website,
-            bc.address, bc.maps_url,
-            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source,
-            cn.notes
-        FROM companies co
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
-        LEFT JOIN (
-            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
-            FROM company_notes
-            GROUP BY siren
-        ) cn ON cn.siren = co.siren
-        WHERE co.siren = ANY(%s)
-        ORDER BY co.denomination
-    """, (body.sirens, body.sirens))
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        # Scope: only export SIRENs that belong to the user's workspace via batch_tags
+        rows = await fetch_all("""
+            WITH workspace_sirens AS (
+                SELECT DISTINCT bt.siren
+                FROM batch_tags bt
+                JOIN batch_data bd ON bd.batch_id = bt.batch_id
+                WHERE bd.workspace_id = %s AND bt.siren = ANY(%s)
+            ),
+            best_contact AS (
+                SELECT DISTINCT ON (c2.siren)
+                    c2.siren,
+                    c2.phone, c2.email, c2.website,
+                    c2.address, c2.maps_url,
+                    c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                    c2.rating, c2.review_count, c2.source AS contact_source
+                FROM contacts c2
+                WHERE c2.siren IN (SELECT siren FROM workspace_sirens)
+                ORDER BY c2.siren,
+                    (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                     CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                     CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+            )
+            SELECT
+                co.siren, co.siret_siege, co.denomination,
+                co.naf_code, co.naf_libelle, co.forme_juridique,
+                co.adresse, co.code_postal, co.ville,
+                co.departement, co.statut, co.date_creation,
+                co.tranche_effectif,
+                bc.phone, bc.email, bc.website,
+                bc.address, bc.maps_url,
+                bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+                bc.rating, bc.review_count, bc.contact_source,
+                cn.notes
+            FROM workspace_sirens ws
+            JOIN companies co ON co.siren = ws.siren
+            LEFT JOIN best_contact bc ON bc.siren = co.siren
+            LEFT JOIN (
+                SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+                FROM company_notes
+                GROUP BY siren
+            ) cn ON cn.siren = co.siren
+            ORDER BY co.denomination
+        """, (user.workspace_id, body.sirens))
+    else:
+        rows = await fetch_all("""
+            WITH best_contact AS (
+                SELECT DISTINCT ON (c2.siren)
+                    c2.siren,
+                    c2.phone, c2.email, c2.website,
+                    c2.address, c2.maps_url,
+                    c2.social_linkedin, c2.social_facebook, c2.social_twitter,
+                    c2.rating, c2.review_count, c2.source AS contact_source
+                FROM contacts c2
+                WHERE c2.siren = ANY(%s)
+                ORDER BY c2.siren,
+                    (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
+                     CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
+                     CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
+            )
+            SELECT
+                co.siren, co.siret_siege, co.denomination,
+                co.naf_code, co.naf_libelle, co.forme_juridique,
+                co.adresse, co.code_postal, co.ville,
+                co.departement, co.statut, co.date_creation,
+                co.tranche_effectif,
+                bc.phone, bc.email, bc.website,
+                bc.address, bc.maps_url,
+                bc.social_linkedin, bc.social_facebook, bc.social_twitter,
+                bc.rating, bc.review_count, bc.contact_source,
+                cn.notes
+            FROM companies co
+            LEFT JOIN best_contact bc ON bc.siren = co.siren
+            LEFT JOIN (
+                SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+                FROM company_notes
+                GROUP BY siren
+            ) cn ON cn.siren = co.siren
+            WHERE co.siren = ANY(%s)
+            ORDER BY co.denomination
+        """, (body.sirens, body.sirens))
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")

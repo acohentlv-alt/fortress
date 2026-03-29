@@ -11,7 +11,8 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from fortress.api.db import fetch_one, execute
@@ -154,8 +155,12 @@ async def submit_contact(req: ContactRequest):
 
 
 @router.get("/list")
-async def list_contacts_requests():
+async def list_contacts_requests(request: Request):
     """Admin-only list of contact form submissions."""
+    user = getattr(request.state, "user", None)
+    if not user or not user.is_admin:
+        return JSONResponse(status_code=403, content={"error": "Accès refusé."})
+
     rows = await fetch_one("""
         SELECT
             json_agg(

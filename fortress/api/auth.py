@@ -110,7 +110,8 @@ async def get_user_by_username(conn, username: str) -> dict | None:
                   u.workspace_id, w.name AS workspace_name
            FROM users u
            LEFT JOIN workspaces w ON w.id = u.workspace_id
-           WHERE LOWER(u.username) = LOWER(%s)""",
+           WHERE LOWER(u.username) = LOWER(%s)
+             AND (u.active = TRUE OR u.active IS NULL)""",
         (username,),
     )
     row = await cur.fetchone()

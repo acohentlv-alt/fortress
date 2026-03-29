@@ -197,9 +197,17 @@ async def cancel_job(batch_id: str, request: Request):
 
 
 @router.get("/{batch_id}")
-async def get_job(batch_id: str):
+async def get_job(batch_id: str, request: Request):
     """Single job detail with progress info."""
-    job = await fetch_one("""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    job = await fetch_one(f"""
         SELECT
             sj.batch_id, sj.batch_name,
             sj.status AS status,
@@ -215,8 +223,8 @@ async def get_job(batch_id: str):
             sj.shortfall_reason,
             EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds
         FROM batch_data sj
-        WHERE sj.batch_id = %s
-    """, (batch_id,))
+        WHERE sj.batch_id = %s {ws_filter}
+    """, (batch_id,) + ws_params)
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
@@ -271,15 +279,25 @@ async def get_job(batch_id: str):
 @router.get("/{batch_id}/companies")
 async def get_job_companies(
     batch_id: str,
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str = Query("", description="Filter by name, city, or SIREN"),
     sort: str = Query("completude", description="Sort by: completude | name | date"),
 ):
     """Paginated companies for a job with merged contact data."""
-    # Get the batch_name from the job
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    # Get the batch_name from the job, scoped to user's workspace
     job = await fetch_one(
-        "SELECT batch_name FROM batch_data WHERE batch_id = %s", (batch_id,)
+        f"SELECT batch_name FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        (batch_id,) + ws_params,
     )
     if not job:
         return {"companies": [], "total": 0, "page": page}
@@ -364,14 +382,23 @@ async def get_job_companies(
 
 
 @router.get("/{batch_id}/quality")
-async def get_job_quality(batch_id: str):
+async def get_job_quality(batch_id: str, request: Request):
     """Data quality breakdown scoped to THIS specific batch only.
 
     Uses batch_log (which has batch_id per company) instead of batch_tags
     (which shares batch_name across batches) so each batch shows its own stats.
     """
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
     job = await fetch_one(
-        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        f"SELECT batch_id FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        (batch_id,) + ws_params,
     )
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
