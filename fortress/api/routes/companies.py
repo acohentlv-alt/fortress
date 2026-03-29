@@ -320,27 +320,16 @@ async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
       5. _merge_contacts() dedup + conflict UI handles the rest on next card load
     """
     from fortress.api.routes.websocket import manager
-    from fortress.scraping.http import CurlClient, CurlClientError
-    from fortress.matching.contacts import (
-        extract_emails, extract_phones, extract_social_links,
-        _is_valid_french_phone, is_junk_email,
-    )
+    from fortress.scraping.http import CurlClient
+    from fortress.scraping.crawl import crawl_website as _crawl_website
     from fortress.processing.dedup import log_audit
-    from urllib.parse import urlparse, urljoin
-    import re as _re
-    import time
-
-    _CONTACT_KEYWORDS = _re.compile(
-        r"contact|mention|legal|propos|equipe|coordonn|societe|qui-sommes|nous-contacter|impressum",
-        _re.IGNORECASE,
-    )
 
     async with get_conn() as conn:
         for siren in sirens:
             await manager.broadcast(batch_id, {"siren": siren, "status": "started"})
 
             try:
-                # 1. Fetch company's known website
+                # 1. Fetch company's known website and company info
                 contact_row = await conn.execute(
                     "SELECT website FROM contacts WHERE siren = %s AND website IS NOT NULL ORDER BY collected_at DESC LIMIT 1",
                     (siren,),
@@ -355,78 +344,31 @@ async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
                 website = row[0]
                 await manager.broadcast(batch_id, {"siren": siren, "step": "crawl", "status": "running", "detail": website})
 
+                # Fetch company name and department for crawl context
+                co_row = await (await conn.execute(
+                    "SELECT denomination, departement FROM companies WHERE siren = %s",
+                    (siren,),
+                )).fetchone()
+                co_name = (co_row[0] if co_row else None) or ""
+                co_dept = (co_row[1] if co_row else None) or ""
+
                 # 2. Re-crawl the website
-                try:
-                    parsed = urlparse(website)
-                    root_url = f"{parsed.scheme}://{parsed.netloc}"
-                except Exception:
-                    root_url = website
-
-                all_emails: list[str] = []
-                all_phones: list[str] = []
-                all_social: dict = {}
-                crawled_urls: set[str] = set()
-                t0 = time.monotonic()
-                WALL_CLOCK_LIMIT = 13.0
-                MAX_PAGES = 8
-
+                crawl_result = None
                 curl_client = CurlClient(timeout=5.0, max_retries=1, delay_min=0.2, delay_max=0.4, delay_jitter=0.0)
                 async with curl_client as client:
-                    seed_pages = [root_url, f"{root_url}/contact", f"{root_url}/mentions-legales"]
-                    discovered: list[str] = []
+                    crawl_result = await _crawl_website(
+                        url=website,
+                        client=client,
+                        company_name=co_name,
+                        department=co_dept,
+                        siren=siren,
+                    )
 
-                    try:
-                        resp = await client.get(root_url)
-                        crawled_urls.add(root_url)
-                        if resp.status_code == 200 and len(resp.text) > 500:
-                            all_emails.extend(extract_emails(resp.text))
-                            all_phones.extend(extract_phones(resp.text))
-                            all_social.update(extract_social_links(resp.text))
-                            for href_match in _re.finditer(r'href=["\']([\S]+)["\']', resp.text):
-                                href = href_match.group(1)
-                                if _CONTACT_KEYWORDS.search(href):
-                                    abs_url = urljoin(root_url, href)
-                                    if abs_url.startswith(root_url) and abs_url not in crawled_urls:
-                                        discovered.append(abs_url)
-                    except CurlClientError:
-                        pass
+                best_phone = crawl_result.best_phone
+                best_email = crawl_result.best_email
+                all_social = crawl_result.all_socials
 
-                    pages_to_crawl = [u for u in seed_pages[1:] if u not in crawled_urls]
-                    pages_to_crawl += [u for u in discovered if u not in crawled_urls and u not in pages_to_crawl]
-
-                    for url in pages_to_crawl[:MAX_PAGES]:
-                        if time.monotonic() - t0 > WALL_CLOCK_LIMIT:
-                            break
-                        try:
-                            r = await client.get(url)
-                            crawled_urls.add(url)
-                            if r.status_code == 200 and len(r.text) > 200:
-                                all_emails.extend(extract_emails(r.text))
-                                all_phones.extend(extract_phones(r.text))
-                                all_social.update(extract_social_links(r.text))
-                        except CurlClientError:
-                            continue
-
-                # 3. Deduplicate harvested data
-                seen_phones: set[str] = set()
-                clean_phones = []
-                for p in all_phones:
-                    if _is_valid_french_phone(p) and p not in seen_phones:
-                        seen_phones.add(p)
-                        clean_phones.append(p)
-
-                clean_emails = []
-                seen_emails: set[str] = set()
-                for e in all_emails:
-                    el = e.lower()
-                    if not is_junk_email(el) and el not in seen_emails:
-                        seen_emails.add(el)
-                        clean_emails.append(e)
-
-                best_phone = clean_phones[0] if clean_phones else None
-                best_email = clean_emails[0] if clean_emails else None
-
-                # 4. Persist as a website_crawl contact row — _merge_contacts() detects conflicts
+                # 3. Persist as a website_crawl contact row — _merge_contacts() detects conflicts
                 cols = ["siren", "source", "website"]
                 vals: list = [siren, "website_crawl", website]
 
@@ -437,14 +379,15 @@ async def async_deep_enrich_worker(batch_id: str, sirens: list[str]):
                     cols.append("email")
                     vals.append(best_email)
 
+                # crawl_result.all_socials keys: "linkedin", "facebook", etc. (no "social_" prefix)
                 social_fields = {
-                    "social_linkedin": "social_linkedin",
-                    "social_facebook": "social_facebook",
-                    "social_twitter": "social_twitter",
-                    "social_instagram": "social_instagram",
-                    "social_tiktok": "social_tiktok",
-                    "social_whatsapp": "social_whatsapp",
-                    "social_youtube": "social_youtube",
+                    "linkedin": "social_linkedin",
+                    "facebook": "social_facebook",
+                    "twitter": "social_twitter",
+                    "instagram": "social_instagram",
+                    "tiktok": "social_tiktok",
+                    "whatsapp": "social_whatsapp",
+                    "youtube": "social_youtube",
                 }
                 for key, col in social_fields.items():
                     v = all_social.get(key)
@@ -717,121 +660,42 @@ async def crawl_website_sync(siren: str, request: Request):
 
     website = contact["website"]
 
-    from fortress.scraping.http import CurlClient, CurlClientError
-    from fortress.matching.contacts import (
-        extract_emails, extract_phones, extract_social_links, extract_siret
-    )
-    from urllib.parse import urlparse, urljoin
+    from fortress.scraping.http import CurlClient
+    from fortress.scraping.crawl import crawl_website as _crawl_website
+    from fortress.matching.contacts import is_agency_email
     import time
-    import re as _re
+    from urllib.parse import urlparse
 
-    all_emails = []
-    all_phones = []
-    all_social = {}
-    all_html = []  # Store raw HTML for SIRET extraction
-    
     try:
         parsed = urlparse(website)
         root_url = f"{parsed.scheme}://{parsed.netloc}"
     except Exception:
         root_url = website
 
-    # ── Smart page discovery ────────────────────────────────────
-    # Contact-related keywords to look for in <a href> links
-    _CONTACT_KEYWORDS = _re.compile(
-        r"contact|mention|legal|propos|equipe|coordonn|societe|qui-sommes|nous-contacter|impressum",
-        _re.IGNORECASE,
-    )
-
-    # Start with homepage + common fallback paths
-    seed_pages = [
-        root_url,
-        f"{root_url}/contact",
-        f"{root_url}/mentions-legales",
-    ]
-    crawled_urls: set[str] = set()
-    discovered_pages: list[str] = []
-
     t0 = time.monotonic()
-    WALL_CLOCK_LIMIT = 13.0  # Leave 2s buffer for DB ops within 15s total
-    MAX_PAGES = 10
 
+    crawl_result = None
     curl_client = CurlClient(timeout=5.0, max_retries=1, delay_min=0.2, delay_max=0.4, delay_jitter=0.0)
-    
     async with curl_client as client:
-        # Phase 1: Crawl homepage to discover real nav links
-        try:
-            resp = await client.get(root_url)
-            crawled_urls.add(root_url)
-            if resp.status_code == 200 and len(resp.text) > 500:
-                all_emails.extend(extract_emails(resp.text))
-                all_phones.extend(extract_phones(resp.text))
-                all_social.update(extract_social_links(resp.text))
-                all_html.append(resp.text)
+        crawl_result = await _crawl_website(
+            url=website,
+            client=client,
+            company_name=company_name,
+            department=departement,
+            siren=siren,
+        )
 
-                # Discover contact-related links from homepage
-                for href_match in _re.finditer(r'href=["\']([^"\']+)["\']', resp.text):
-                    href = href_match.group(1)
-                    if _CONTACT_KEYWORDS.search(href):
-                        # Resolve relative URLs
-                        abs_url = urljoin(root_url, href)
-                        if abs_url.startswith(root_url) and abs_url not in crawled_urls:
-                            discovered_pages.append(abs_url)
-        except CurlClientError as exc:
-            err_str = str(exc).lower()
-            if "resolve" in err_str or "ssl" in err_str or "certificate" in err_str:
-                # DNS/SSL failure — site is unreachable, skip everything
-                discovered_pages.clear()
-                seed_pages.clear()
+    all_social = crawl_result.all_socials
+    found_siren = crawl_result.siren_from_website
+    best_email = crawl_result.best_email
+    best_phone = crawl_result.best_phone
 
-        # Phase 2: Crawl seed paths + discovered links
-        pages_to_crawl = []
-        for url in seed_pages[1:]:  # Skip homepage (already crawled)
-            if url not in crawled_urls:
-                pages_to_crawl.append(url)
-        # Discovered pages go after seeds (they're more likely to succeed)
-        for url in discovered_pages:
-            if url not in crawled_urls and url not in pages_to_crawl:
-                pages_to_crawl.append(url)
-
-        for page_url in pages_to_crawl[:MAX_PAGES - 1]:  # -1 for homepage
-            if time.monotonic() - t0 > WALL_CLOCK_LIMIT:
-                break
-            if page_url in crawled_urls:
-                continue
-            crawled_urls.add(page_url)
-            try:
-                resp = await client.get(page_url)
-                if resp.status_code == 200 and len(resp.text) > 500:
-                    all_emails.extend(extract_emails(resp.text))
-                    all_phones.extend(extract_phones(resp.text))
-                    all_social.update(extract_social_links(resp.text))
-                    all_html.append(resp.text)
-            except CurlClientError:
-                continue  # Page doesn't exist or timed out, try next
-
-    # ── SIRET extraction from all crawled HTML ──────────────────
-    found_siren = None
-    for html_chunk in all_html:
-        s = extract_siret(html_chunk)
-        if s:
-            found_siren = s
-            break
-    
-    # Select best email and phone — now with company context
-    from fortress.matching.contacts import _best_email, _best_phone
-    from fortress.matching.contacts import is_agency_email
-    best_email = _best_email(list(set(all_emails)), root_url, siren, company_name=company_name)
-    
     # ── Fix 1: Agency email rejection (domain mismatch) ─────────
     rejected_email = None
     if best_email and is_agency_email(best_email, website):
         rejected_email = best_email
         best_email = None  # Reject the agency email
 
-    # Geographic phone priority — département-aware
-    best_phone = _best_phone(list(set(all_phones)), siren, departement=departement)
-    
     # Google Maps URL is extracted for display but NOT saved to contacts (no column)
     found_gmaps_url = all_social.pop("google_maps", None)
 
@@ -974,7 +838,7 @@ async def crawl_website_sync(siren: str, request: Request):
             log_parts.append(f"ADDED {k}={v}")
         if found_siren:
             log_parts.append(f"SIRET: {found_siren}")
-        log_parts.append(f"pages: {len(crawled_urls)} crawled, {len(discovered_pages)} discovered")
+        log_parts.append(f"pages: {crawl_result.pages_crawled if crawl_result else 0} crawled")
         
         found_data = ", ".join(log_parts) if log_parts else "no new data"
 
@@ -1025,8 +889,8 @@ async def crawl_website_sync(siren: str, request: Request):
         "rejected": {"email": rejected_email} if rejected_email else {},
         "protected": protected_fields,
         "siret_match": siret_merge_info,
-        "pages_crawled": len(crawled_urls),
-        "pages_discovered": len(discovered_pages),
+        "pages_crawled": crawl_result.pages_crawled if crawl_result else 0,
+        "pages_discovered": 0,
     }
 
 

@@ -35,6 +35,7 @@ import structlog
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
 from fortress.scraping.http import CurlClient
+from fortress.scraping.crawl import crawl_website
 from fortress.processing.dedup import (
     bulk_tag_query,
     log_audit,
@@ -504,117 +505,6 @@ async def _match_to_sirene(
     return name_candidate
 
 
-_SIREN_CONTEXT_RE = re.compile(
-    r'(?:SIREN|RCS|immatricul|enregistr|n[°o]\s*d.immatricul)[^0-9]{0,40}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3})',
-    re.IGNORECASE,
-)
-
-# SIRET is 14 digits — first 9 are the SIREN
-_SIRET_RE = re.compile(
-    r'(?:SIRET)[^0-9]{0,20}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{5})',
-    re.IGNORECASE,
-)
-
-# Footer pattern: SIREN near end of page or inside <footer> tag
-_FOOTER_SIREN_RE = re.compile(
-    r'(?:SIREN|RCS|SIRET|N°\s*TVA)[^0-9]{0,30}(\d{3}[\s\u00a0\-]?\d{3}[\s\u00a0\-]?\d{3})',
-    re.IGNORECASE,
-)
-
-
-def _extract_siren_from_html(html: str) -> str | None:
-    """Extract SIREN from an HTML page using 4 strategies."""
-    if not html:
-        return None
-
-    # Strategy 1: Contextual match anywhere (SIREN/RCS/SIRET + digits)
-    match = _SIREN_CONTEXT_RE.search(html)
-    if match:
-        raw = match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-            return raw
-
-    # Strategy 2: SIRET (14 digits) — first 9 are the SIREN
-    siret_match = _SIRET_RE.search(html)
-    if siret_match:
-        raw = siret_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-        if len(raw) == 14 and raw.isdigit():
-            siren = raw[:9]
-            if siren != "000000000":
-                return siren
-
-    # Strategy 3: Check the footer area (last 25% of page)
-    footer_start = len(html) * 3 // 4
-    footer_html = html[footer_start:]
-    footer_match = _FOOTER_SIREN_RE.search(footer_html)
-    if footer_match:
-        raw = footer_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-            return raw
-
-    # Strategy 4: Check inside <footer> tag if present
-    footer_tag = re.search(r'<footer[^>]*>(.*?)</footer>', html, re.DOTALL | re.IGNORECASE)
-    if footer_tag:
-        ft_match = _FOOTER_SIREN_RE.search(footer_tag.group(1))
-        if ft_match:
-            raw = ft_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-            if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-                return raw
-
-    return None
-
-
-async def _extract_siren_from_website(
-    website: str, curl_client: CurlClient
-) -> tuple[str | None, dict[str, str]]:
-    """Extract SIREN from a company website. Also returns all fetched page HTML.
-
-    Strategy order (fastest to slowest):
-    1. Homepage — most French sites put SIREN in the footer
-    2. /mentions-legales
-    3. /cgu
-    4. /a-propos
-
-    Returns (siren_or_None, {url: html}) — HTML is reused by the caller for
-    contact/email/social extraction (zero extra HTTP requests).
-    """
-    if not website:
-        return None, {}
-
-    url = website.strip()
-    if not url.startswith("http"):
-        url = f"https://{url}"
-    url = url.rstrip("/")
-
-    html_pages: dict[str, str] = {}
-    found_siren: str | None = None
-
-    # Check homepage first — most French SMEs have SIREN in the footer
-    try:
-        resp = await curl_client.get(url, timeout=5)
-        if resp and resp.status_code == 200 and resp.text:
-            html_pages[url] = resp.text
-            siren = _extract_siren_from_html(resp.text)
-            if siren:
-                found_siren = siren
-    except Exception:
-        pass
-
-    # Try dedicated legal pages — keep fetching all pages even if SIREN already found
-    # so that /mentions-legales HTML is available for email/contact extraction
-    for path in ("/mentions-legales", "/mentions-legales.html", "/cgu", "/a-propos"):
-        try:
-            resp = await curl_client.get(f"{url}{path}", timeout=5)
-            if resp and resp.status_code == 200 and resp.text:
-                html_pages[f"{url}{path}"] = resp.text
-                if not found_siren:
-                    siren = _extract_siren_from_html(resp.text)
-                    if siren:
-                        found_siren = siren
-        except Exception:
-            continue
-
-    return found_siren, html_pages
 
 
 # ---------------------------------------------------------------------------
@@ -876,10 +766,17 @@ async def run(batch_id: str) -> None:
 
                     # ── Level 3: SIREN extraction from website ────────────
                     extracted_siren = None
-                    html_pages: dict[str, str] = {}
+                    crawl_result = None
                     if maps_website:
                         try:
-                            extracted_siren, html_pages = await _extract_siren_from_website(maps_website, curl_client)
+                            crawl_result = await crawl_website(
+                                url=maps_website,
+                                client=curl_client,
+                                company_name=maps_name,
+                                department=dept_filter or "",
+                                siren="",
+                            )
+                            extracted_siren = crawl_result.siren_from_website
                             if extracted_siren:
                                 log.info("discovery.siren_extracted", name=maps_name, siren=extracted_siren, website=maps_website)
                         except Exception as exc:
@@ -1127,88 +1024,17 @@ async def run(batch_id: str) -> None:
                             workspace_id=batch_workspace_id,
                         )
 
-                    # ── Website crawl: extract contacts from already-fetched HTML ──────
-                    # html_pages was collected during SIREN extraction — zero extra requests
-                    # for homepage and /mentions-legales. Only /contact is a new request.
-                    if maps_website and html_pages:
+                    # ── Website crawl: read contacts from CrawlResult ──────
+                    if maps_website and crawl_result and crawl_result.pages_crawled > 0:
                         try:
-                            from fortress.matching.contacts import (
-                                extract_emails, extract_phones, extract_social_links,
-                                extract_mentions_legales, parse_schema_org,
-                                is_personal_email, is_agency_email,
-                            )
+                            from fortress.matching.contacts import extract_mentions_legales
                             from fortress.models import Officer as OfficerModel
                             from fortress.processing.dedup import upsert_officer
 
-                            combined_html = "\n".join(html_pages.values())
+                            best_phone = crawl_result.best_phone if missing_fields.get("phone", True) else None
+                            best_email = crawl_result.best_email if missing_fields.get("email", True) else None
+                            social = crawl_result.all_socials
 
-                            phones_found = []
-                            if missing_fields.get("phone", True):
-                                phones_found = extract_phones(combined_html)
-
-                            emails_found = []
-                            raw_emails = []
-                            if missing_fields.get("email", True):
-                                raw_emails = extract_emails(combined_html)
-                                emails_found = [
-                                    e for e in raw_emails
-                                    if not is_personal_email(e, maps_name)
-                                    and not is_agency_email(e, maps_website)
-                                ]
-                                if raw_emails and not emails_found:
-                                    log.info(
-                                        "discovery.all_emails_filtered",
-                                        siren=siren,
-                                        website=maps_website,
-                                        raw_emails=raw_emails[:5],
-                                        reason="all emails rejected by personal/agency filters",
-                                    )
-
-                            social = extract_social_links(combined_html)
-                            schema = parse_schema_org(combined_html)
-                            log.info(
-                                "discovery.website_crawl_debug",
-                                siren=siren,
-                                pages_fetched=list(html_pages.keys()),
-                                html_length=len(combined_html),
-                                raw_emails_found=len(raw_emails),
-                                emails_after_filter=len(emails_found),
-                                phones_found=len(phones_found),
-                                social_keys=list(social.keys()),
-                                triage=triage_bucket,
-                            )
-
-                            # If no email found yet, try /contact page (one extra request)
-                            if missing_fields.get("email", True) and not emails_found:
-                                _base_url = maps_website.strip().rstrip("/")
-                                if not _base_url.startswith("http"):
-                                    _base_url = f"https://{_base_url}"
-                                try:
-                                    _resp = await curl_client.get(f"{_base_url}/contact", timeout=5)
-                                    if _resp and _resp.status_code == 200 and _resp.text:
-                                        extra = extract_emails(_resp.text)
-                                        emails_found = [
-                                            e for e in extra
-                                            if not is_personal_email(e, maps_name)
-                                            and not is_agency_email(e, maps_website)
-                                        ]
-                                except Exception:
-                                    pass
-
-                            # Best phone: prefer landline (01-05, 09) over mobile (06-07)
-                            best_phone = None
-                            if phones_found:
-                                def _digits(p: str) -> str:
-                                    d = re.sub(r"[^0-9]", "", p)
-                                    return "0" + d[2:] if d.startswith("33") and len(d) == 11 else d
-                                landlines = [p for p in phones_found if _digits(p)[:2] in ("01","02","03","04","05","09")]
-                                best_phone = landlines[0] if landlines else phones_found[0]
-                            if not best_phone and schema.get("phone"):
-                                best_phone = schema["phone"]
-
-                            best_email = emails_found[0] if emails_found else schema.get("email")
-
-                            # Save website_crawl contact row if we got anything useful
                             has_crawl_data = any([
                                 best_email, best_phone,
                                 social.get("linkedin"), social.get("facebook"),
@@ -1230,29 +1056,16 @@ async def run(batch_id: str) -> None:
                                 async with pool.connection() as crawl_conn:
                                     await upsert_contact(crawl_conn, crawl_contact)
 
-                            # Director from mentions-légales (if that page was fetched)
+                            # Director from mentions-legales
                             ml_html = next(
-                                (html for page_url, html in html_pages.items() if "mentions" in page_url.lower()),
+                                (html for page_url, html in crawl_result.all_html.items() if "mentions" in page_url.lower()),
                                 None,
-                            )
-                            log.info(
-                                "discovery.mentions_legales_lookup",
-                                siren=siren,
-                                ml_html_found=ml_html is not None,
-                                html_pages_keys=list(html_pages.keys()) if not ml_html else None,
                             )
                             if ml_html:
                                 ml_data = extract_mentions_legales(
                                     ml_html,
                                     company_siren=extracted_siren,
                                     website_domain=website_domain,
-                                )
-                                log.info(
-                                    "discovery.mentions_legales_extracted",
-                                    siren=siren,
-                                    director_name=ml_data.get("director_name"),
-                                    director_role=ml_data.get("director_role"),
-                                    has_director=bool(ml_data.get("director_name")),
                                 )
                                 if ml_data.get("director_name"):
                                     director = OfficerModel(
@@ -1265,15 +1078,9 @@ async def run(batch_id: str) -> None:
                                     )
                                     async with pool.connection() as officer_conn:
                                         await upsert_officer(officer_conn, director)
-                                    log.info(
-                                        "discovery.mentions_legales_officer_upserted",
-                                        siren=siren,
-                                        officer_name=ml_data["director_name"],
-                                        officer_role=ml_data.get("director_role"),
-                                    )
 
                         except Exception as exc:
-                            log.warning("discovery.website_crawl_failed", siren=siren, error=str(exc), exc_type=type(exc).__name__, exc_info=True)
+                            log.warning("discovery.website_crawl_failed", siren=siren, error=str(exc))
 
                     # Heartbeat before INPI — website crawl can be slow, keep updated_at fresh
                     await _update_job_safe(

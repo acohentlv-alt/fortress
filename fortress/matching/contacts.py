@@ -424,6 +424,74 @@ def extract_siret(html: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# SIREN extraction from HTML — used by crawl.py
+# ---------------------------------------------------------------------------
+
+_SIREN_CONTEXT_RE = re.compile(
+    r'(?:SIREN|RCS|immatricul|enregistr|n[°o]\s*d.immatricul)[^0-9]{0,40}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3})',
+    re.IGNORECASE,
+)
+
+# SIRET is 14 digits — first 9 are the SIREN
+_SIRET_14_RE = re.compile(
+    r'(?:SIRET)[^0-9]{0,20}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{5})',
+    re.IGNORECASE,
+)
+
+# Footer pattern: SIREN near end of page or inside <footer> tag
+_FOOTER_SIREN_RE = re.compile(
+    r'(?:SIREN|RCS|SIRET|N°\s*TVA)[^0-9]{0,30}(\d{3}[\s\u00a0\-]?\d{3}[\s\u00a0\-]?\d{3})',
+    re.IGNORECASE,
+)
+
+
+def extract_siren_from_html(html: str) -> str | None:
+    """Extract SIREN from an HTML page using 4 strategies.
+
+    Used by crawl.py after fetching website pages.
+    More thorough than extract_siret() — uses context patterns and footer analysis.
+    """
+    if not html:
+        return None
+
+    # Strategy 1: Contextual match anywhere (SIREN/RCS/SIRET + digits)
+    match = _SIREN_CONTEXT_RE.search(html)
+    if match:
+        raw = match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
+        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
+            return raw
+
+    # Strategy 2: SIRET (14 digits) — first 9 are the SIREN
+    siret_match = _SIRET_14_RE.search(html)
+    if siret_match:
+        raw = siret_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
+        if len(raw) == 14 and raw.isdigit():
+            siren = raw[:9]
+            if siren != "000000000":
+                return siren
+
+    # Strategy 3: Check the footer area (last 25% of page)
+    footer_start = len(html) * 3 // 4
+    footer_html = html[footer_start:]
+    footer_match = _FOOTER_SIREN_RE.search(footer_html)
+    if footer_match:
+        raw = footer_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
+        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
+            return raw
+
+    # Strategy 4: Check inside <footer> tag if present
+    footer_tag = re.search(r'<footer[^>]*>(.*?)</footer>', html, re.DOTALL | re.IGNORECASE)
+    if footer_tag:
+        ft_match = _FOOTER_SIREN_RE.search(footer_tag.group(1))
+        if ft_match:
+            raw = ft_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
+            if len(raw) == 9 and raw.isdigit() and raw != "000000000":
+                return raw
+
+    return None
+
+
 def is_junk_email(email: str) -> bool:
     """Return True if the email is not useful as a business contact.
 
