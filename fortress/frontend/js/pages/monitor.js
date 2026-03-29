@@ -20,7 +20,6 @@ import {
 } from '../components.js';
 import { registerCleanup } from '../app.js';
 import { getCachedUser } from '../api.js';
-import { t } from '../i18n.js';
 
 let pollInterval = null;
 
@@ -31,7 +30,6 @@ export async function renderMonitor(container, batchId) {
         pollInterval = null;
     }
 
-    // Router passes gen (number) as last arg — ignore it; real batch IDs are strings
     if (batchId && typeof batchId === 'string') {
         batchId = decodeURIComponent(batchId);
         await renderJobMonitor(container, batchId);
@@ -48,15 +46,15 @@ async function renderMonitorList(container) {
     );
 
     container.innerHTML = `
-        <h1 class="page-title">${t('monitor.title')}</h1>
-        <p class="page-subtitle">${t('monitor.subtitle')}</p>
+        <h1 class="page-title">Pipeline Live</h1>
+        <p class="page-subtitle">Suivi en temps réel des batchs en cours</p>
 
         ${runningJobs.length === 0 ? `
             <div class="empty-state">
                 <div class="empty-state-icon">📡</div>
-                <div class="empty-state-text">${t('monitor.noBatch')}</div>
-                <p style="color: var(--text-muted)">${t('monitor.selectBatch')}</p>
-                <a href="#/new-batch" class="btn btn-primary" style="margin-top:var(--space-lg)">🚀 ${t('newBatch.launch')}</a>
+                <div class="empty-state-text">Aucun batch en cours</div>
+                <p style="color: var(--text-muted)">Les batchs actifs apparaîtront ici automatiquement</p>
+                <a href="#/new-batch" class="btn btn-primary" style="margin-top:var(--space-lg)">🚀 Lancer un batch</a>
             </div>
         ` : `
             <div class="job-list">
@@ -71,8 +69,8 @@ async function renderMonitorList(container) {
                                 <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                                 <div class="job-card-meta">
                                     <span>${formatDateTime(j.created_at)}</span>
-                                    <span>${scraped}/${batchSize} ${t('monitor.companies')}</span>
-                                    ${j.wave_total ? `<span>${t('monitor.wavechip', { current: j.wave_current || 0, total: j.wave_total })}</span>` : ''}
+                                    <span>${scraped}/${batchSize} entreprises</span>
+                                    ${j.wave_total ? `<span>Vague ${j.wave_current || 0}/${j.wave_total}</span>` : ''}
                                 </div>
                             </div>
                             <div class="job-card-stats">
@@ -91,7 +89,7 @@ async function renderMonitorList(container) {
 
         ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).length > 0 ? `
             <h2 style="font-size:var(--font-lg); font-weight:600; margin-top:var(--space-2xl); margin-bottom:var(--space-lg)">
-                ${t('monitor.completed')}
+                Terminés récemment
             </h2>
             <div class="job-list">
                 ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).slice(0, 5).map(j => `
@@ -100,7 +98,7 @@ async function renderMonitorList(container) {
                             <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                             <div class="job-card-meta">
                                 <span>${formatDateTime(j.updated_at)}</span>
-                                <span>${j.companies_scraped || 0} ${t('monitor.companies')}</span>
+                                <span>${j.companies_scraped || 0} entreprises</span>
                             </div>
                         </div>
                         ${statusBadge(j.status)}
@@ -122,12 +120,12 @@ async function renderJobMonitor(container, batchId) {
 
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-xl); margin-bottom:var(--space-2xl)">
             <div>
-                <h1 class="page-title" id="mon-title">${t('monitor.loading')}</h1>
+                <h1 class="page-title" id="mon-title">Chargement...</h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)" id="mon-status-row"></div>
             </div>
             <div style="display:flex; align-items:center; gap:var(--space-sm)">
-                <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="${t('monitor.stopBtnTitle')}">${t('monitor.stopBtn')}</button>
-                <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-secondary">${t('monitor.fullDetail')}</a>
+                <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="Arrêter ce batch">⏹ Arrêter</button>
+                <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-secondary">📋 Détail complet</a>
             </div>
         </div>
 
@@ -146,20 +144,20 @@ async function renderJobMonitor(container, batchId) {
                 <div class="monitor-metrics" style="flex:1; min-width:280px">
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-scraped">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricCompleted')}</div>
+                            <div class="monitor-metric-label">Complétées</div>
                         </div>
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-failed">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricFailed')}</div>
+                            <div class="monitor-metric-label">Échouées</div>
                         </div>
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-batch">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricTarget')}</div>
+                            <div class="monitor-metric-label">Cible</div>
                         </div>
                         ${isAdmin ? `
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-replaced">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricSubstitutions')}</div>
+                            <div class="monitor-metric-label">Substitutions</div>
                         </div>
                         ` : '<div id="mon-replaced" style="display:none">0</div>'}
                 </div>
@@ -175,7 +173,7 @@ async function renderJobMonitor(container, batchId) {
 
         <!-- Pool Breakdown (admin only) -->
         <div class="card" style="margin-bottom:var(--space-xl)">
-            <h3 class="detail-section-title">${t('monitor.poolBreakdown')}</h3>
+            <h3 class="detail-section-title">Répartition du pool</h3>
             <div id="mon-triage">—</div>
         </div>
         ` : `
@@ -187,7 +185,7 @@ async function renderJobMonitor(container, batchId) {
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                ${t('monitor.dataQuality')}
+                Qualité des données enrichies
             </h3>
             <div style="display:flex; gap:var(--space-2xl); justify-content:center" id="mon-gauges">—</div>
         </div>
@@ -196,17 +194,17 @@ async function renderJobMonitor(container, batchId) {
         <div id="mon-completion" style="display:none; margin-bottom:var(--space-xl)"></div>
 
         <div style="font-size:var(--font-xs); color:var(--text-muted); text-align:center" id="mon-footer">
-            ${t('monitor.autoRefresh')}
+            Actualisation automatique toutes les 1.5 secondes
         </div>
 
         <!-- Live Company Cards -->
         <div style="margin-top:var(--space-2xl)">
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)" id="mon-cards-title">
-                ${t('monitor.collectingTitle', { count: 0 })}
+                📋 Entreprises collectées (0)
             </h3>
             <div class="company-grid" id="mon-cards">
                 <div style="text-align:center; color:var(--text-muted); font-style:italic; padding:var(--space-lg); grid-column:1/-1">
-                    ${t('monitor.waitingData')}
+                    ⏳ En attente des premières données...
                 </div>
             </div>
         </div>
@@ -248,21 +246,21 @@ async function renderJobMonitor(container, batchId) {
             const remaining = Math.max(0, batchSize - scraped);
             const pct = batchSize > 0 ? Math.round((scraped / batchSize) * 100) : 0;
             showConfirmModal({
-                title: t('monitor.stopConfirmTitle'),
+                title: '\u23f9 Arr\u00eater ce batch ?',
                 body: `
-                    <p><strong>${t('monitor.stopConfirmBatch')}</strong> ${escapeHtml($.title.textContent)}</p>
-                    <p><strong>${t('monitor.stopConfirmProgress')}</strong> ${scraped}/${batchSize} ${t('monitor.companies')} (${pct}%)</p>
-                    <p style="color:var(--success)">${t('monitor.stopConfirmKept', { count: scraped })}</p>
-                    <p style="color:var(--warning)">${t('monitor.stopConfirmRemaining', { count: remaining })}</p>
+                    <p><strong>Batch :</strong> ${escapeHtml($.title.textContent)}</p>
+                    <p><strong>Progression :</strong> ${scraped}/${batchSize} entreprises (${pct}%)</p>
+                    <p style="color:var(--success)">\u2705 Les ${scraped} entreprises d\u00e9j\u00e0 collect\u00e9es seront conserv\u00e9es.</p>
+                    <p style="color:var(--warning)">\u26a0\ufe0f Les ${remaining} restantes ne seront pas trait\u00e9es.</p>
                 `,
-                confirmLabel: t('monitor.stopConfirmBtn'),
+                confirmLabel: 'Arr\u00eater le batch',
                 danger: true,
                 onConfirm: async () => {
                     const result = await cancelJob(batchId);
                     if (result._ok !== false) {
-                        showToast(t('monitor.stopSuccess'), 'success');
+                        showToast('Batch arr\u00eat\u00e9', 'success');
                     } else {
-                        showToast(t('monitor.stopError'), 'error');
+                        showToast('Erreur lors de l\'arr\u00eat', 'error');
                     }
                 },
             });
@@ -294,9 +292,9 @@ async function renderJobMonitor(container, batchId) {
             failedPolls++;
             if (failedPolls === 1) {
                 $.pollWarning.style.display = 'block';
-                $.pollWarning.innerHTML = `<div class="poll-warning">${t('monitor.connectionInterrupted')}</div>`;
+                $.pollWarning.innerHTML = '<div class="poll-warning">⚠️ Connexion interrompue — nouvelle tentative...</div>';
             } else if (failedPolls >= 2) {
-                $.pollWarning.innerHTML = `<div class="poll-warning">${t('monitor.connectionLost')}</div>`;
+                $.pollWarning.innerHTML = '<div class="poll-warning">⚠️ Connexion perdue — nouvelles tentatives en cours...</div>';
             }
             return; // Keep last valid state
         }
@@ -319,10 +317,10 @@ async function renderJobMonitor(container, batchId) {
             { label: 'Pipeline Live', href: '#/monitor' },
             { label: job.batch_name },
         ]);
-        $.title.textContent = job.batch_name || t('monitor.batchInProgress');
+        $.title.textContent = job.batch_name || 'Batch en cours';
         $.statusRow.innerHTML = `
             ${statusBadge(job.status || 'queued')}
-            ${isRunning ? `<span class="live-badge"><span class="live-badge-dot"></span> ${t('monitor.liveLabel')}</span>` : ''}
+            ${isRunning ? '<span class="live-badge"><span class="live-badge-dot"></span> EN DIRECT</span>' : ''}
         `;
 
         // Show/hide cancel button
@@ -347,7 +345,7 @@ async function renderJobMonitor(container, batchId) {
 
         // ── Metric Counters — animate only on change ────────────
         const completedValue = qualified > 0 ? qualified : (job.triage_green || 0);
-        const completedLabel = qualified > 0 ? t('monitor.metricCompleted') : (job.triage_green || 0) > 0 ? t('monitor.metricKnown') : t('monitor.metricCompleted');
+        const completedLabel = qualified > 0 ? 'Complétées' : (job.triage_green || 0) > 0 ? 'Connues' : 'Complétées';
         if (completedValue !== previousValues.scraped) {
             previousValues.scraped = completedValue;
             animateCounter($.scraped, completedValue);
@@ -393,7 +391,7 @@ async function renderJobMonitor(container, batchId) {
         $.wave.innerHTML = waveTotal > 0
             ? `<div class="wave-chip">
                     <div class="wave-chip-fill" style="width:${wavePct}%"></div>
-                    <span class="wave-chip-text">${t('monitor.wavechip', { current: waveCurrent, total: waveTotal })}</span>
+                    <span class="wave-chip-text">🌊 Vague ${waveCurrent}/${waveTotal}</span>
                </div>`
             : '';
 
@@ -436,10 +434,10 @@ async function renderJobMonitor(container, batchId) {
                 infoBanner = document.createElement('div');
                 infoBanner.id = infoBannerId;
                 infoBanner.style.cssText = 'background:color-mix(in srgb, var(--bg-surface) 90%, var(--success)); border-left:4px solid var(--success); border-radius:var(--radius-md); padding:var(--space-md) var(--space-lg); margin-bottom:var(--space-xl); font-size:var(--font-sm); color:var(--text-secondary);';
-                infoBanner.innerHTML = t('monitor.allEnrichedRunning', { count: triageGreen, plural: triageGreen > 1 ? 's' : '' });
+                infoBanner.innerHTML = `<span style="color:var(--success); font-weight:600">✅ ${triageGreen} entreprise${triageGreen > 1 ? 's' : ''} déjà enrichie${triageGreen > 1 ? 's' : ''} dans votre base</span> — aucun nouveau traitement nécessaire.`;
                 $.completion.parentElement.insertBefore(infoBanner, $.completion);
             } else {
-                infoBanner.innerHTML = t('monitor.allEnrichedRunning', { count: triageGreen, plural: triageGreen > 1 ? 's' : '' });
+                infoBanner.innerHTML = `<span style="color:var(--success); font-weight:600">✅ ${triageGreen} entreprise${triageGreen > 1 ? 's' : ''} déjà enrichie${triageGreen > 1 ? 's' : ''} dans votre base</span> — aucun nouveau traitement nécessaire.`;
             }
             infoBanner.style.display = 'block';
         } else if (infoBanner) {
@@ -452,9 +450,9 @@ async function renderJobMonitor(container, batchId) {
             $.completion.innerHTML = `
                 <div class="completion-card" style="border-left: 4px solid var(--success); background: color-mix(in srgb, var(--bg-surface) 90%, var(--success));">
                     <div class="completion-icon" style="background:rgba(16,185,129,0.1); color:var(--success)">✅</div>
-                    <div class="completion-title" style="color:var(--success)">${t('monitor.completionAllKnown')}</div>
-                    <div class="completion-subtitle">${t('monitor.completionAllKnownSub', { count: scraped })}</div>
-                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--success); color:var(--text)">${t('monitor.completionSeeResults')}</a>
+                    <div class="completion-title" style="color:var(--success)">Toutes les entreprises sont connues</div>
+                    <div class="completion-subtitle">Les ${scraped} entreprises étaient déjà dans votre base — aucune nouvelle extraction nécessaire.</div>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--success); color:var(--text)">📋 Voir les résultats</a>
                 </div>
             `;
         } else if (!isRunning && job.status === 'completed') {
@@ -462,9 +460,9 @@ async function renderJobMonitor(container, batchId) {
             $.completion.innerHTML = `
                 <div class="completion-card">
                     <div class="completion-icon">${qualified > 0 ? '🎉' : '⚠️'}</div>
-                    <div class="completion-title">${qualified > 0 ? t('monitor.completionDone') : t('monitor.completionNoResults')}</div>
-                    <div class="completion-subtitle">${t('monitor.completionQualified', { qualified, scraped })}</div>
-                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-primary">${t('monitor.completionSeeResults')}</a>
+                    <div class="completion-title">${qualified > 0 ? 'Batch terminé !' : 'Batch terminé — aucun résultat qualifié'}</div>
+                    <div class="completion-subtitle">${qualified} entreprises qualifiées sur ${scraped} tentées</div>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-primary">📋 Voir les résultats</a>
                 </div>
             `;
         } else if (!isRunning && job.status === 'failed') {
@@ -472,32 +470,33 @@ async function renderJobMonitor(container, batchId) {
              $.completion.innerHTML = `
                  <div class="completion-card" style="border-left: 4px solid var(--danger); background: color-mix(in srgb, var(--bg-surface) 90%, var(--danger));">
                      <div class="completion-icon" style="background:var(--danger-bg); color:var(--danger)">⚠️</div>
-                     <div class="completion-title" style="color:var(--danger)">${t('monitor.completionInterrupted')}</div>
-                     <div class="completion-subtitle">${t('monitor.completionInterruptedSub', { qualified })}</div>
-                     <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">${t('monitor.completionPartialResults')}</a>
+                     <div class="completion-title" style="color:var(--danger)">Batch interrompu</div>
+                     <div class="completion-subtitle">Le processus s'est arrêté de manière inattendue. Les ${qualified} entreprises qualifiées ont été conservées.</div>
+                     <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">📋 Voir les résultats partiels</a>
                  </div>
              `;
         }
 
         // ── Footer ──────────────────────────────────────────────
-        let footerText = t('monitor.footerAuto', { datetime: formatDateTime(job.updated_at) });
+        let footerText = `Actualisation automatique · ${formatDateTime(job.updated_at)}`;
         if (isRunning && job.updated_at) {
             const idleSec = (Date.now() - new Date(job.updated_at).getTime()) / 1000;
             if (idleSec > 30) {
                 const minutes = Math.floor(idleSec / 60);
-                footerText = minutes > 0
-                    ? t('monitor.footerAutoStale', { datetime: formatDateTime(job.updated_at), minutes })
-                    : t('monitor.footerAutoStaleRecent', { datetime: formatDateTime(job.updated_at) });
+                const staleLabel = minutes > 0
+                    ? `⏳ Dernière mise à jour il y a ${minutes} min`
+                    : `⏳ Dernière mise à jour il y a moins d'une min`;
+                footerText = `Actualisation automatique · ${formatDateTime(job.updated_at)} · ${staleLabel}`;
             }
         } else if (!isRunning) {
             footerText = job.status === 'failed'
-                ? t('monitor.footerFailed', { datetime: formatDateTime(job.updated_at) })
-                : t('monitor.footerDone', { datetime: formatDateTime(job.updated_at) });
+                ? `Batch interrompu · ${formatDateTime(job.updated_at)}`
+                : `Batch terminé · ${formatDateTime(job.updated_at)}`;
         }
         $.footer.textContent = footerText;
 
         // ── Company Cards — append-only (track rendered SIRENs) ──
-        $.cardsTitle.textContent = t('monitor.collectingTitle', { count: qualified });
+        $.cardsTitle.textContent = `📋 Entreprises collectées (${qualified})`;
 
         if (qualified > 0 && qualified !== lastScrapedCount) {
             lastScrapedCount = qualified;
@@ -533,19 +532,19 @@ async function renderJobMonitor(container, batchId) {
         } else if (scraped === 0 && qualified === 0) {
             $.cards.innerHTML = `
                 <div style="text-align:center; color:var(--text-muted); font-style:italic; padding:var(--space-lg); grid-column:1/-1">
-                    ${isRunning ? t('monitor.waitingData') : t('monitor.noCompaniesCollected')}
+                    ${isRunning ? '⏳ En attente des premières données...' : 'Aucune entreprise collectée'}
                 </div>
             `;
         } else if (!isRunning && qualified === 0 && scraped > 0) {
             $.cards.innerHTML = `
                 <div style="text-align:center; color:var(--success); padding:var(--space-lg); grid-column:1/-1">
-                    ${t('monitor.allEnrichedDone', { count: scraped })}
+                    ✅ Toutes les ${scraped} entreprises étaient déjà enrichies — aucune nouvelle extraction nécessaire.
                 </div>
             `;
         } else if (!isRunning && qualified > 0 && scraped === qualified) {
             $.cards.innerHTML = `
                 <div style="text-align:center; color:var(--success); padding:var(--space-lg); grid-column:1/-1">
-                    ${t('monitor.allEnrichedDone', { count: qualified })}
+                    ✅ Toutes les ${qualified} entreprises étaient déjà enrichies — aucune nouvelle extraction nécessaire.
                 </div>
             `;
         }
