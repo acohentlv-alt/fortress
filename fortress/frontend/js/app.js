@@ -2,21 +2,21 @@
  * Fortress SPA — Main Application & Router
  */
 
-import { renderDashboard } from './pages/dashboard.js?v=19';
-import { renderDepartment } from './pages/department.js?v=19';
-import { renderJob } from './pages/job.js?v=19';
-import { renderCompany } from './pages/company.js?v=19';
-import { renderSearch } from './pages/search.js?v=19';
-import { renderMonitor } from './pages/monitor.js?v=21';
-import { renderNewBatch } from './pages/new-batch.js?v=19';
-import { renderOpenQuery } from './pages/open-query.js?v=19';
-import { renderUpload } from './pages/upload.js?v=19';
-import { renderContacts } from './pages/contacts.js?v=19';
-import { renderActivity } from './pages/activity.js?v=19';
-import { renderBlacklist } from './pages/blacklist.js?v=19';
-import { renderAdmin } from './pages/admin.js?v=19';
-import { renderLogin } from './pages/login.js?v=19';
-import { renderIntro } from './pages/intro.js?v=19';
+import { renderDashboard } from './pages/dashboard.js';
+import { renderDepartment } from './pages/department.js';
+import { renderJob } from './pages/job.js';
+import { renderCompany } from './pages/company.js';
+import { renderSearch } from './pages/search.js';
+import { renderMonitor } from './pages/monitor.js';
+import { renderNewBatch } from './pages/new-batch.js';
+import { renderOpenQuery } from './pages/open-query.js';
+import { renderUpload } from './pages/upload.js';
+import { renderContacts } from './pages/contacts.js';
+import { renderActivity } from './pages/activity.js';
+import { renderBlacklist } from './pages/blacklist.js';
+import { renderAdmin } from './pages/admin.js';
+import { renderLogin } from './pages/login.js';
+import { renderIntro } from './pages/intro.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 import { initI18n, changeLanguage, getLang, t, translateDOM, onLanguageChange } from './i18n.js';
 
@@ -268,18 +268,18 @@ async function initApp() {
     // Initialize i18n before anything renders
     await initI18n();
 
-    // Wire language toggle — use event delegation on document for reliability
-    document.addEventListener('click', (e) => {
-        if (e.target && e.target.id === 'lang-toggle') {
-            e.preventDefault();
-            e.stopPropagation();
-            const newLang = getLang() === 'fr' ? 'en' : 'fr';
-            changeLanguage(newLang);
-        }
-    });
+    // Wire language toggle — expose globally for onclick handler
+    window.__toggleLang = () => {
+        const newLang = getLang() === 'fr' ? 'en' : 'fr';
+        console.log('[i18n] Switching to:', newLang);
+        changeLanguage(newLang);
+    };
 
     // Re-render current page when language changes
-    onLanguageChange(() => navigate());
+    onLanguageChange(() => {
+        console.log('[i18n] Language changed, re-rendering...');
+        navigate();
+    });
 
     // Check session with backend — cookie is sent automatically
     const user = await getCurrentUser();

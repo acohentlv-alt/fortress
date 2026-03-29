@@ -87,7 +87,7 @@
                 <div id="user-display" class="sidebar-user-display hidden"></div>
                 <div style="display:flex; align-items:center; gap:8px; justify-content:space-between; width:100%">
                     <span class="sidebar-footer-version" data-i18n="sidebar.version">Fortress v1.0 · Zéro coût</span>
-                    <button id="lang-toggle" style="background:var(--bg-secondary); border:1px solid var(--border-default); color:var(--text-secondary); padding:2px 8px; border-radius:var(--radius-sm); font-size:var(--font-xs); font-weight:700; cursor:pointer;">EN</button>
+                    <button id="lang-toggle" onclick="window.__toggleLang && window.__toggleLang()" style="background:var(--bg-secondary); border:1px solid var(--border-default); color:var(--text-secondary); padding:2px 8px; border-radius:var(--radius-sm); font-size:var(--font-xs); font-weight:700; cursor:pointer; z-index:9999; position:relative;">EN</button>
                 </div>
                 <a href="#" id="btn-logout" class="sidebar-footer-logout hidden" data-i18n="sidebar.logout">Déconnexion</a>
             </div>
@@ -116,7 +116,7 @@
     <!-- SheetJS for XLSX support (client-side parsing + export) -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <!-- JS Modules -->
-    <script type="module" src="/js/app.js?v=22"></script>
+    <script type="module" src="/js/app.js"></script>
 </body>
 
 </html>
