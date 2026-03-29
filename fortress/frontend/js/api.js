@@ -507,6 +507,15 @@ export async function deleteWorkspace(workspaceId) {
     return await request(`/admin/workspaces/${workspaceId}`, { method: 'DELETE' });
 }
 
+export async function getSystemLog(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return await request('/admin/system-log' + (qs ? '?' + qs : ''));
+}
+
+export async function clearSystemLog() {
+    return await request('/admin/system-log', { method: 'DELETE' });
+}
+
 export async function getCurrentUser() {
     try {
         const resp = await fetch(`${API_BASE}/auth/me`, {

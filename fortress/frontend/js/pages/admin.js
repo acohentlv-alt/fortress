@@ -15,6 +15,8 @@ import {
     updateWorkspace,
     deleteWorkspace,
     getActivityLog,
+    getSystemLog,
+    clearSystemLog,
     extractApiError,
     getCachedUser,
 } from '../api.js';
@@ -125,6 +127,29 @@ export async function renderAdmin(container, gen) {
                 <div class="loading"><div class="spinner"></div></div>
             </div>
             <div id="log-pagination" style="margin-top:var(--space-lg)"></div>
+        </div>
+
+        <!-- System Error Log section -->
+        <div class="card" style="margin-top:var(--space-xl)">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                    🔧 Journal système
+                </h3>
+                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center">
+                    <button class="view-toggle-btn syslog-level active" data-level="all">Tout</button>
+                    <button class="view-toggle-btn syslog-level" data-level="error">Erreurs</button>
+                    <button class="view-toggle-btn syslog-level" data-level="warning">Avertissements</button>
+                    <span style="color:var(--border-default)">|</span>
+                    <button class="view-toggle-btn syslog-period active" data-period="week">Semaine</button>
+                    <button class="view-toggle-btn syslog-period" data-period="month">Mois</button>
+                    <button class="view-toggle-btn syslog-period" data-period="all">Tout</button>
+                    <button id="btn-clear-syslog" class="btn btn-secondary" style="font-size:var(--font-xs); padding:var(--space-xs) var(--space-sm); color:var(--text-muted)" title="Nettoyer les entrées de plus de 7 jours">🗑️ Nettoyer</button>
+                </div>
+            </div>
+            <div id="syslog-container">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+            <div id="syslog-pagination" style="margin-top:var(--space-lg)"></div>
         </div>
     `;
 
@@ -719,9 +744,125 @@ export async function renderAdmin(container, gen) {
         });
     });
 
+    // ── System Error Log ───────────────────────────────────────────
+
+    const syslogContainer = container.querySelector('#syslog-container');
+    const syslogPagination = container.querySelector('#syslog-pagination');
+    let _syslogLevel = 'all';
+    let _syslogPeriod = 'week';
+    let _syslogOffset = 0;
+    const SYSLOG_PAGE_SIZE = 30;
+
+    const LEVEL_STYLES = {
+        ERROR: 'background:rgba(239,68,68,0.1); border-left:3px solid var(--text-error); color:var(--text-error)',
+        CRITICAL: 'background:rgba(239,68,68,0.15); border-left:3px solid #dc2626; color:#dc2626',
+        WARNING: 'background:rgba(234,179,8,0.1); border-left:3px solid #eab308; color:#eab308',
+    };
+
+    async function loadSyslog() {
+        syslogContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        syslogPagination.innerHTML = '';
+        try {
+            const data = await getSystemLog({ level: _syslogLevel, period: _syslogPeriod, limit: SYSLOG_PAGE_SIZE, offset: _syslogOffset });
+            if (!data || !data._ok) {
+                syslogContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
+                return;
+            }
+            const entries = data.entries || [];
+            const total = data.total || 0;
+
+            if (entries.length === 0) {
+                syslogContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-text">Aucune erreur système pour cette période.</div></div>`;
+                return;
+            }
+
+            syslogContainer.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:var(--space-xs)">
+                    ${entries.map((e, i) => {
+                        const style = LEVEL_STYLES[e.level] || '';
+                        const hasTraceback = e.traceback && e.traceback.trim();
+                        return `
+                            <div style="padding:var(--space-sm) var(--space-md); border-radius:var(--radius); ${style}">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-md)">
+                                    <div style="display:flex; align-items:center; gap:var(--space-sm); min-width:0">
+                                        <span style="font-weight:700; font-size:var(--font-xs); padding:2px 6px; border-radius:3px; background:rgba(0,0,0,0.2); white-space:nowrap">${escapeHtml(e.level)}</span>
+                                        <span style="font-size:var(--font-xs); opacity:0.7; white-space:nowrap">${escapeHtml(e.source || 'api')}</span>
+                                        ${e.path ? `<span style="font-size:var(--font-xs); font-family:var(--font-mono); opacity:0.6; white-space:nowrap">${escapeHtml(e.path)}</span>` : ''}
+                                    </div>
+                                    <span style="font-size:var(--font-xs); opacity:0.6; white-space:nowrap">${_timeAgo(e.created_at)}</span>
+                                </div>
+                                <div style="font-size:var(--font-sm); margin-top:4px; word-break:break-word">${escapeHtml(e.message)}</div>
+                                ${hasTraceback ? `
+                                    <details style="margin-top:4px">
+                                        <summary style="font-size:var(--font-xs); cursor:pointer; opacity:0.7">Traceback complet</summary>
+                                        <pre style="font-size:11px; margin-top:4px; padding:var(--space-sm); background:rgba(0,0,0,0.3); border-radius:4px; overflow-x:auto; white-space:pre-wrap; word-break:break-all">${escapeHtml(e.traceback)}</pre>
+                                    </details>
+                                ` : ''}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            // Pagination
+            const currentPage = Math.floor(_syslogOffset / SYSLOG_PAGE_SIZE) + 1;
+            const totalPages = Math.ceil(total / SYSLOG_PAGE_SIZE);
+            if (totalPages > 1) {
+                const hasPrev = _syslogOffset > 0;
+                const hasNext = _syslogOffset + SYSLOG_PAGE_SIZE < total;
+                syslogPagination.innerHTML = `
+                    <div style="display:flex; justify-content:center; align-items:center; gap:var(--space-lg)">
+                        <button class="btn btn-secondary" id="syslog-prev" ${hasPrev ? '' : 'disabled'} style="${hasPrev ? '' : 'opacity:0.4; cursor:not-allowed'}">← Précédent</button>
+                        <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">${currentPage} / ${totalPages}</span>
+                        <button class="btn btn-secondary" id="syslog-next" ${hasNext ? '' : 'disabled'} style="${hasNext ? '' : 'opacity:0.4; cursor:not-allowed'}">Suivant →</button>
+                    </div>
+                `;
+                const prevBtn = syslogPagination.querySelector('#syslog-prev');
+                const nextBtn = syslogPagination.querySelector('#syslog-next');
+                if (prevBtn && hasPrev) prevBtn.addEventListener('click', () => { _syslogOffset -= SYSLOG_PAGE_SIZE; loadSyslog(); });
+                if (nextBtn && hasNext) nextBtn.addEventListener('click', () => { _syslogOffset += SYSLOG_PAGE_SIZE; loadSyslog(); });
+            }
+        } catch (err) {
+            syslogContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger le journal système.</div></div>`;
+        }
+    }
+
+    // Wire syslog filter buttons
+    container.querySelectorAll('.syslog-level').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.syslog-level').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _syslogLevel = btn.dataset.level;
+            _syslogOffset = 0;
+            loadSyslog();
+        });
+    });
+
+    container.querySelectorAll('.syslog-period').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.syslog-period').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _syslogPeriod = btn.dataset.period;
+            _syslogOffset = 0;
+            loadSyslog();
+        });
+    });
+
+    // Clear button
+    container.querySelector('#btn-clear-syslog')?.addEventListener('click', async () => {
+        const result = await clearSystemLog();
+        if (!result || !result._ok) {
+            showToast(extractApiError(result), 'error');
+            return;
+        }
+        showToast('Entrées anciennes nettoyées.', 'success');
+        loadSyslog();
+    });
+
     // Load everything
     await loadWorkspaces();
     if (isStale(gen)) return;
     await loadUsers();
     loadLog();
+    loadSyslog();
 }

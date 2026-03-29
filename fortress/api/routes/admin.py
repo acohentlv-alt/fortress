@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.auth import decode_session_token, hash_password
@@ -418,6 +418,61 @@ async def delete_workspace(workspace_id: int, request: Request):
 
     logger.info("admin.workspace_deleted", extra={"workspace_id": workspace_id, "name": ws_name, "by": admin.username})
     return {"deleted": True, "name": ws_name}
+
+
+@router.get("/system-log")
+async def get_system_log(
+    request: Request,
+    level: str = Query("all", description="all, error, warning"),
+    period: str = Query("week", description="day, week, month, all"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """System error log — admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    interval_map = {"day": "1 day", "week": "7 days", "month": "30 days", "all": "10 years"}
+    interval = interval_map.get(period, "7 days")
+
+    level_filter = ""
+    if level == "error":
+        level_filter = "AND level IN ('ERROR', 'CRITICAL')"
+    elif level == "warning":
+        level_filter = "AND level = 'WARNING'"
+
+    rows = await fetch_all(f"""
+        SELECT id, level, source, message, traceback, path, created_at
+        FROM system_log
+        WHERE created_at >= NOW() - %s::interval
+        {level_filter}
+        ORDER BY created_at DESC
+        LIMIT %s OFFSET %s
+    """, (interval, limit, offset))
+
+    count_row = await fetch_one(f"""
+        SELECT COUNT(*) AS total FROM system_log
+        WHERE created_at >= NOW() - %s::interval
+        {level_filter}
+    """, (interval,))
+    total = (count_row or {}).get("total", 0)
+
+    return {"entries": rows or [], "total": total, "period": period}
+
+
+@router.delete("/system-log")
+async def clear_system_log(request: Request):
+    """Clear old system log entries. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    async with get_conn() as conn:
+        await conn.execute("DELETE FROM system_log WHERE created_at < NOW() - INTERVAL '7 days'")
+        await conn.commit()
+
+    return {"cleared": True}
 
 
 @router.get("/deploy-status")

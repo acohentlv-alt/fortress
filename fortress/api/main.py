@@ -274,6 +274,24 @@ async def lifespan(app: FastAPI):
                     """, (ws_id,))
                 logger.info("✅ Workspace isolation migrations complete")
 
+                # ── System log table ────────────────────────────────
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS system_log (
+                        id          SERIAL PRIMARY KEY,
+                        level       VARCHAR(10) NOT NULL DEFAULT 'ERROR',
+                        source      VARCHAR(50) DEFAULT 'api',
+                        message     TEXT NOT NULL,
+                        traceback   TEXT,
+                        path        TEXT,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_system_log_time ON system_log (created_at DESC)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_system_log_level ON system_log (level)")
+
+                # Clean up entries older than 30 days
+                await conn.execute("DELETE FROM system_log WHERE created_at < NOW() - INTERVAL '30 days'")
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
@@ -291,10 +309,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+async def _log_system_error(level: str, message: str, source: str = "api", traceback: str = None, path: str = None):
+    """Write an error to system_log. Fire-and-forget — never crashes the caller."""
+    try:
+        from fortress.api.db import get_conn
+        async with get_conn() as conn:
+            await conn.execute(
+                """INSERT INTO system_log (level, source, message, traceback, path)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (level, source, message, traceback, path),
+            )
+            await conn.commit()
+    except Exception:
+        pass  # If DB is down, we can't log — fall back to console only
+
+
 # Map database errors → 503 Service Unavailable
 @app.exception_handler(RuntimeError)
 async def _runtime_error_handler(request: Request, exc: RuntimeError):
     if "database offline" in str(exc).lower():
+        await _log_system_error(level="WARNING", message=str(exc), source="database", path=str(request.url.path))
         return JSONResponse(
             status_code=503,
             content={"error": "Base de données hors ligne. Réessayez dans quelques instants."},
@@ -308,6 +342,7 @@ import psycopg
 @app.exception_handler(psycopg.OperationalError)
 async def _pg_operational_handler(request: Request, exc: psycopg.OperationalError):
     logger.error("Database connection error: %s", exc)
+    await _log_system_error(level="WARNING", message=str(exc), source="database", path=str(request.url.path))
     return JSONResponse(
         status_code=503,
         content={"error": "Base de données inaccessible. Réessayez dans quelques instants."},
@@ -317,10 +352,27 @@ async def _pg_operational_handler(request: Request, exc: psycopg.OperationalErro
 @app.exception_handler(psycopg.InterfaceError)
 async def _pg_interface_handler(request: Request, exc: psycopg.InterfaceError):
     logger.error("Database interface error: %s", exc)
+    await _log_system_error(level="WARNING", message=str(exc), source="database", path=str(request.url.path))
     return JSONResponse(
         status_code=503,
         content={"error": "Connexion à la base de données perdue. Réessayez dans quelques instants."},
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Catch any unhandled exception, log to system_log, return 500."""
+    import traceback as _tb
+    tb = _tb.format_exc()
+    logger.error(f"Unhandled exception on {request.url.path}: {exc}")
+    await _log_system_error(
+        level="ERROR",
+        message=str(exc),
+        source="api",
+        traceback=tb,
+        path=str(request.url.path),
+    )
+    return JSONResponse(status_code=500, content={"error": "Erreur interne du serveur."})
 
 
 # ── Session Auth Middleware ─────────────────────────────────────────
