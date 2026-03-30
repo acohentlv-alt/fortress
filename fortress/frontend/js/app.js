@@ -134,21 +134,29 @@ function _updateUserDisplay(user) {
     el.classList.remove('hidden');
 }
 
+function _revealApp() {
+    const layout = document.querySelector('.app-layout');
+    if (layout) layout.style.visibility = 'visible';
+}
+
 function _showIntroPage() {
     _showSidebar(false);
     if (window.location.hash !== '#/intro') {
         history.replaceState(null, '', '#/intro');
     }
     renderIntro(getPageContent());
+    _revealApp();
 }
 
 function _showLegalPage() {
     _showSidebar(false);
     renderLegal(getPageContent());
+    _revealApp();
 }
 
 function _showLoginPage() {
     _showSidebar(false);
+    _revealApp();
     renderLogin(getPageContent(), (user) => {
         // On successful login — restore app UI
         _showSidebar(true);
@@ -449,6 +457,7 @@ async function initApp() {
     navigate();
     _setupRunningJobs();
     _wireBugReportButton();
+    _revealApp();
 }
 
 // ── Sidebar Collapse Toggle ─────────────────────────────────────
