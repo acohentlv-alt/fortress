@@ -576,6 +576,8 @@ async def run(batch_id: str) -> None:
         return
 
     try:
+        lock_conn = None  # Maps advisory lock connection
+
         # ── Open status connection ────────────────────────────────────
         status_conn = await psycopg.AsyncConnection.connect(
             settings.db_url, autocommit=False, **_KEEPALIVE_PARAMS,
@@ -678,48 +680,6 @@ async def run(batch_id: str) -> None:
                 triage_counts: dict[str, int] = {"black": 0, "green": 0, "yellow": 0, "red": 0}
                 _current_search_query: str = ""  # Tracks which query is active
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
-
-                # ── Cross-batch dedup: skip businesses already discovered ──
-                if dept_filter:
-                    async with pool.connection() as conn:
-                        cur = await conn.execute(
-                            """SELECT LOWER(denomination), LOWER(COALESCE(adresse, ''))
-                               FROM companies
-                               WHERE siren LIKE 'MAPS%%'
-                               AND departement = %s""",
-                            (dept_filter,),
-                        )
-                        prev_rows = await cur.fetchall()
-                        for r in prev_rows:
-                            seen_names.add(f"{(r[0] or '').strip()}|{(r[1] or '').strip()}")
-                    log.info(
-                        "discovery.cross_batch_dedup",
-                        existing_maps_entities=len(prev_rows),
-                        dept=dept_filter,
-                    )
-
-                # ── Cross-batch SIREN dedup: skip real companies already enriched ──
-                if dept_filter:
-                    async with pool.connection() as conn:
-                        cur = await conn.execute(
-                            """SELECT siren FROM companies
-                               WHERE departement = %s
-                               AND siren NOT LIKE 'MAPS%%'
-                               AND siren IN (
-                                   SELECT siren FROM contacts
-                                   WHERE source = 'google_maps'
-                                   AND (phone IS NOT NULL OR website IS NOT NULL)
-                               )""",
-                            (dept_filter,),
-                        )
-                        existing_sirens = await cur.fetchall()
-                        for r in existing_sirens:
-                            seen_sirens.add(r[0])
-                    log.info(
-                        "discovery.siren_dedup_loaded",
-                        existing=len(seen_sirens),
-                        dept=dept_filter,
-                    )
 
                 # ── Resume support: skip already-processed companies ──
                 async with pool.connection() as conn:
@@ -1190,6 +1150,77 @@ async def run(batch_id: str) -> None:
                             qualified=qualified,
                         )
 
+                # ── Acquire advisory lock (one Maps scrape at a time) ─
+                try:
+                    lock_conn = await psycopg.AsyncConnection.connect(
+                        settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS,
+                    )
+                    await lock_conn.execute("SELECT pg_advisory_lock(42424242)")
+                    log.info("discovery.advisory_lock_acquired", batch_id=batch_id)
+                except Exception as lock_exc:
+                    log.error("discovery.advisory_lock_failed", error=str(lock_exc))
+                    if lock_conn is not None:
+                        try:
+                            await lock_conn.close()
+                        except Exception:
+                            pass
+                        lock_conn = None
+                    raise RuntimeError(f"Cannot acquire Maps scraping lock: {lock_exc}")
+
+                # ── Cross-batch dedup (after lock — sees batch A's results) ──
+                if dept_filter:
+                    async with pool.connection() as conn:
+                        if batch_workspace_id is not None:
+                            cur = await conn.execute(
+                                """SELECT LOWER(denomination), LOWER(COALESCE(adresse, ''))
+                                   FROM companies
+                                   WHERE siren LIKE 'MAPS%%'
+                                   AND departement = %s
+                                   AND workspace_id = %s""",
+                                (dept_filter, batch_workspace_id),
+                            )
+                        else:
+                            cur = await conn.execute(
+                                """SELECT LOWER(denomination), LOWER(COALESCE(adresse, ''))
+                                   FROM companies
+                                   WHERE siren LIKE 'MAPS%%'
+                                   AND departement = %s
+                                   AND workspace_id IS NULL""",
+                                (dept_filter,),
+                            )
+                        prev_rows = await cur.fetchall()
+                        for r in prev_rows:
+                            seen_names.add(f"{(r[0] or '').strip()}|{(r[1] or '').strip()}")
+                    log.info(
+                        "discovery.cross_batch_dedup",
+                        existing_maps_entities=len(prev_rows),
+                        dept=dept_filter,
+                        workspace_id=batch_workspace_id,
+                    )
+
+                # ── Cross-batch SIREN dedup (no workspace filter — SIRENE is shared) ──
+                if dept_filter:
+                    async with pool.connection() as conn:
+                        cur = await conn.execute(
+                            """SELECT siren FROM companies
+                               WHERE departement = %s
+                               AND siren NOT LIKE 'MAPS%%'
+                               AND siren IN (
+                                   SELECT siren FROM contacts
+                                   WHERE source = 'google_maps'
+                                   AND (phone IS NOT NULL OR website IS NOT NULL)
+                               )""",
+                            (dept_filter,),
+                        )
+                        existing_sirens = await cur.fetchall()
+                        for r in existing_sirens:
+                            seen_sirens.add(r[0])
+                    log.info(
+                        "discovery.siren_dedup_loaded",
+                        existing=len(seen_sirens),
+                        dept=dept_filter,
+                    )
+
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
                     # Check for graceful shutdown
@@ -1330,6 +1361,18 @@ async def run(batch_id: str) -> None:
             raise
 
         finally:
+            # Release Maps advisory lock
+            if lock_conn is not None:
+                try:
+                    await lock_conn.execute("SELECT pg_advisory_unlock(42424242)")
+                    log.info("discovery.advisory_lock_released", batch_id=batch_id)
+                except Exception:
+                    pass
+                try:
+                    await lock_conn.close()
+                except Exception:
+                    pass
+                lock_conn = None
             try:
                 await conn_holder[0].close()
             except Exception:
