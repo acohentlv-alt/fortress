@@ -90,6 +90,7 @@
                     <button id="lang-toggle" onclick="window.__toggleLang && window.__toggleLang()" style="background:var(--bg-secondary); border:1px solid var(--border-default); color:var(--text-secondary); padding:2px 8px; border-radius:var(--radius-sm); font-size:var(--font-xs); font-weight:700; cursor:pointer; z-index:9999; position:relative;">EN</button>
                 </div>
                 <a href="#" id="btn-logout" class="sidebar-footer-logout hidden" data-i18n="sidebar.logout">Déconnexion</a>
+                <a href="#/legal" style="font-size:10px; color:var(--text-muted); text-decoration:none; opacity:0.5; display:block; margin-top:4px;">Mentions légales</a>
             </div>
         </aside>
 
@@ -112,6 +113,18 @@
             </div>
         </main>
     </div>
+
+    <!-- ═══════ Cookie Banner ═══════ -->
+    <div id="cookie-banner" style="display:none; position:fixed; bottom:0; left:0; right:0; z-index:9999; background:rgba(18,18,26,0.97); border-top:1px solid rgba(255,255,255,0.08); padding:14px 24px; font-size:0.85rem; color:#8888aa; text-align:center; backdrop-filter:blur(10px);">
+        Ce site utilise un cookie de session nécessaire au fonctionnement. En continuant, vous acceptez son utilisation.
+        <a href="#/legal" style="color:#a29bfe; text-decoration:underline; margin-left:4px;">En savoir plus</a>
+        <button onclick="document.getElementById('cookie-banner').style.display='none'; localStorage.setItem('fortress_cookie_ok','1')" style="margin-left:16px; padding:4px 16px; background:rgba(108,92,231,0.2); border:1px solid rgba(108,92,231,0.3); color:#a29bfe; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">Compris</button>
+    </div>
+    <script>
+        if (!localStorage.getItem('fortress_cookie_ok')) {
+            document.getElementById('cookie-banner').style.display = 'block';
+        }
+    </script>
 
     <!-- SheetJS for XLSX support (client-side parsing + export) -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>

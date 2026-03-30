@@ -311,8 +311,14 @@ export function renderIntro(container) {
                                 placeholder="${t('intro.formMessagePlaceholder')}"
                                 required maxlength="2000" rows="4"></textarea>
                         </div>
+                        <div class="land-form-field land-consent-field">
+                            <label class="land-consent-label">
+                                <input type="checkbox" id="land-consent" class="land-consent-checkbox" required>
+                                <span>J'accepte que mes données soient traitées conformément à la <a href="#/legal" class="land-consent-link">politique de confidentialité</a></span>
+                            </label>
+                        </div>
                         <div class="land-form-actions">
-                            <button type="submit" id="land-submit" class="land-btn-primary" style="width:100%">
+                            <button type="submit" id="land-submit" class="land-btn-primary" style="width:100%" disabled>
                                 ${t('intro.formSubmit')}
                             </button>
                         </div>
@@ -336,6 +342,11 @@ export function renderIntro(container) {
                         ${t('intro.footerSub')}
                     </span>
                 </p>
+                <div class="land-footer-links">
+                    <a href="#/legal">Mentions légales</a>
+                    <span class="land-footer-sep">|</span>
+                    <a href="#/legal">Politique de confidentialité</a>
+                </div>
             </footer>
         </div>
     `;
@@ -410,11 +421,21 @@ export function renderIntro(container) {
     container.querySelectorAll('[data-count]').forEach(el => counterObserver.observe(el));
 
 
+    // ── Consent checkbox — enable/disable submit button ──────────
+    const consentCheckbox = document.getElementById('land-consent');
+    const submitBtn = document.getElementById('land-submit');
+    if (consentCheckbox && submitBtn) {
+        consentCheckbox.addEventListener('change', () => {
+            submitBtn.disabled = !consentCheckbox.checked;
+        });
+    }
+
     // ── Contact form submission ──────────────────────────────────
     const contactForm = document.getElementById('land-contact-form');
     if (contactForm) {
         contactForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (!document.getElementById('land-consent')?.checked) return;
             const btn = document.getElementById('land-submit');
             const statusEl = document.getElementById('land-form-status');
 
@@ -442,10 +463,10 @@ export function renderIntro(container) {
                     statusEl.innerHTML = '✅ ' + (data.message || t('intro.formSent'));
                     statusEl.style.display = 'block';
                     contactForm.reset();
+                    if (submitBtn) submitBtn.disabled = true;
                     btn.textContent = t('intro.formSent');
-                    // Re-enable after 5s
+                    // Re-enable after 5s (user must re-check consent)
                     setTimeout(() => {
-                        btn.disabled = false;
                         btn.textContent = t('intro.formSubmit');
                     }, 5000);
                 } else {

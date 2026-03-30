@@ -63,6 +63,10 @@ export function renderLogin(container, onSuccess) {
                     <a href="#/intro" style="color:var(--text-muted); font-size:var(--font-sm); text-decoration:none">
                         ← ${t('login.backToHome')}
                     </a>
+                    <br>
+                    <a href="#/legal" style="color:var(--text-muted); font-size:0.75rem; text-decoration:none; opacity:0.7; margin-top:8px; display:inline-block">
+                        Mentions légales &amp; Politique de confidentialité
+                    </a>
                 </div>
             </div>
         </div>

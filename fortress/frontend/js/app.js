@@ -17,6 +17,7 @@ import { renderBlacklist } from './pages/blacklist.js';
 import { renderAdmin } from './pages/admin.js';
 import { renderLogin } from './pages/login.js';
 import { renderIntro } from './pages/intro.js';
+import { renderLegal } from './pages/legal.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 import { initI18n, changeLanguage, getLang, t, translateDOM, onLanguageChange } from './i18n.js';
 
@@ -69,6 +70,7 @@ const routes = [
     { pattern: /^#\/admin$/, handler: renderAdmin, nav: 'admin' },
     { pattern: /^#\/login$/, handler: renderLogin, nav: 'none' },
     { pattern: /^#\/intro$/, handler: renderIntro, nav: 'none' },
+    { pattern: /^#\/legal$/, handler: renderLegal, nav: 'none' },
 ];
 
 function getPageContent() {
@@ -122,6 +124,11 @@ function _showIntroPage() {
     renderIntro(getPageContent());
 }
 
+function _showLegalPage() {
+    _showSidebar(false);
+    renderLegal(getPageContent());
+}
+
 function _showLoginPage() {
     _showSidebar(false);
     renderLogin(getPageContent(), (user) => {
@@ -165,9 +172,13 @@ async function navigate() {
     const gen = ++_navGeneration;
     const hash = window.location.hash || '#/';
 
-    // Intro + Login routes — skip auth check
+    // Intro + Login + Legal routes — skip auth check
     if (hash === '#/intro') {
         _showIntroPage();
+        return;
+    }
+    if (hash === '#/legal') {
+        _showLegalPage();
         return;
     }
     if (hash === '#/login') {
@@ -285,9 +296,11 @@ async function initApp() {
     const user = await getCurrentUser();
 
     if (!user) {
-        // Not authenticated — check if navigating to login, otherwise show intro
+        // Not authenticated — check if navigating to login or legal, otherwise show intro
         if (window.location.hash === '#/login') {
             _showLoginPage();
+        } else if (window.location.hash === '#/legal') {
+            _showLegalPage();
         } else {
             _showIntroPage();
         }
@@ -391,6 +404,10 @@ window.addEventListener('hashchange', () => {
     const hash = window.location.hash || '#/';
     if (hash === '#/intro') {
         _showIntroPage();
+        return;
+    }
+    if (hash === '#/legal') {
+        _showLegalPage();
         return;
     }
     if (hash === '#/login') {
