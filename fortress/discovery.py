@@ -717,9 +717,8 @@ async def run(batch_id: str) -> None:
                         already_qualified=qualified,
                     )
 
-                # Fast HTTP client for mentions légales SIREN extraction
-                # No rate-limit delays — this is a single page, not Maps scraping
-                curl_client = CurlClient(timeout=5, delay_min=0, delay_max=0, max_retries=1)
+                # HTTP client for website crawl — polite delays to avoid anti-bot blocks
+                curl_client = CurlClient(timeout=5, delay_min=0.2, delay_max=0.4, max_retries=1)
 
                 # ── Inline persist callback ────────────────────────────
                 # This runs for EACH business extracted by search_all,
@@ -1033,8 +1032,13 @@ async def run(batch_id: str) -> None:
                             from fortress.models import Officer as OfficerModel
                             from fortress.processing.dedup import upsert_officer
 
-                            best_phone = crawl_result.best_phone if missing_fields.get("phone", True) else None
-                            best_email = crawl_result.best_email if missing_fields.get("email", True) else None
+                            best_phone = crawl_result.best_phone
+                            best_email = crawl_result.best_email
+                            # Reject agency emails (web developer's email, not the company's)
+                            if best_email and maps_website:
+                                from fortress.matching.contacts import is_agency_email
+                                if is_agency_email(best_email, maps_website):
+                                    best_email = None
                             social = crawl_result.all_socials
 
                             has_crawl_data = any([
@@ -1054,6 +1058,8 @@ async def run(batch_id: str) -> None:
                                     social_twitter=social.get("twitter"),
                                     social_instagram=social.get("instagram"),
                                     social_tiktok=social.get("tiktok"),
+                                    social_whatsapp=social.get("whatsapp"),
+                                    social_youtube=social.get("youtube"),
                                 )
                                 # Strip RGPD-suppressed data from crawl contact before persisting
                                 if crawl_contact.email and crawl_contact.email.lower().strip() in _opposition_emails:
@@ -1097,6 +1103,9 @@ async def run(batch_id: str) -> None:
 
                         except Exception as exc:
                             log.warning("discovery.website_crawl_failed", siren=siren, error=str(exc))
+
+                    elif maps_website and crawl_result:
+                        log.warning("discovery.crawl_no_pages", siren=siren, website=maps_website)
 
                     # Heartbeat before INPI — website crawl can be slow, keep updated_at fresh
                     await _update_job_safe(

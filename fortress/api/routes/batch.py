@@ -38,9 +38,11 @@ class BatchRunRequest(BaseModel):
 
 
 
-def _build_batch_id(sector: str, dept: str) -> str:
-    """Generate a unique batch_id like TRANSPORT_66_BATCH_003."""
+def _build_batch_id(sector: str, dept: str, workspace_id: int | None = None) -> str:
+    """Generate a unique batch_id like TRANSPORT_66_W1_BATCH_003 (workspace) or TRANSPORT_66_BATCH_003 (admin)."""
     base = f"{sector.upper().replace(' ', '_')}_{dept}"
+    if workspace_id is not None:
+        base = f"{base}_W{workspace_id}"
     return base
 
 
@@ -59,8 +61,13 @@ async def run_batch(body: BatchRunRequest, request: Request):
     else:
         batch_name = f"{sector} {dept}"
 
-    # Build base_id for batch numbering
-    base_id = _build_batch_id(sector, dept)
+    # Resolve workspace_id early so it can be used in base_id construction
+    session_user = getattr(request.state, 'user', None)
+    user_id = session_user.id if session_user else None
+    workspace_id = session_user.workspace_id if session_user else None
+
+    # Build base_id for batch numbering (embeds _W{workspace_id} when not admin)
+    base_id = _build_batch_id(sector, dept, workspace_id)
 
     # Build filters_json from optional fields
     filters_dict = {}
@@ -79,11 +86,20 @@ async def run_batch(body: BatchRunRequest, request: Request):
     # to prevent TOCTOU race where two requests get the same number.
     try:
         async with get_conn() as conn:
-            # Lock existing rows for this base_id to prevent concurrent duplicates
-            rows = await conn.execute(
-                "SELECT batch_id FROM batch_data WHERE batch_id LIKE %s ORDER BY batch_id DESC FOR UPDATE",
-                (f"{base_id}%",),
-            )
+            # Lock existing rows for this base_id to prevent concurrent duplicates.
+            # The LIKE pattern already includes _W{workspace_id} when set, so it is
+            # naturally workspace-scoped. We add an explicit workspace filter for
+            # correctness (handles NULL for admin).
+            if workspace_id is not None:
+                rows = await conn.execute(
+                    "SELECT batch_id FROM batch_data WHERE batch_id LIKE %s AND workspace_id = %s ORDER BY batch_id DESC FOR UPDATE",
+                    (f"{base_id}%", workspace_id),
+                )
+            else:
+                rows = await conn.execute(
+                    "SELECT batch_id FROM batch_data WHERE batch_id LIKE %s AND workspace_id IS NULL ORDER BY batch_id DESC FOR UPDATE",
+                    (f"{base_id}%",),
+                )
             existing = await rows.fetchall()
 
             if not existing:
@@ -103,20 +119,22 @@ async def run_batch(body: BatchRunRequest, request: Request):
                     batch_number = max_num + 1
                     batch_id = f"{base_id}_BATCH_{batch_number:03d}"
 
-            # Calculate batch_offset for discovery mode
+            # Calculate batch_offset for discovery mode — scoped to this workspace
+            # so offset counts only prior batches from the same workspace.
             batch_offset = 0
             if body.mode == "discovery":
-                count_row = await (await conn.execute(
-                    "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted'",
-                    (batch_name.upper(),),
-                )).fetchone()
+                if workspace_id is not None:
+                    count_row = await (await conn.execute(
+                        "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted' AND workspace_id = %s",
+                        (batch_name.upper(), workspace_id),
+                    )).fetchone()
+                else:
+                    count_row = await (await conn.execute(
+                        "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted' AND workspace_id IS NULL",
+                        (batch_name.upper(),),
+                    )).fetchone()
                 if count_row and count_row[0]:
                     batch_offset = count_row[0]
-
-            # Get user_id and workspace_id from authenticated session (if present)
-            session_user = getattr(request.state, 'user', None)
-            user_id = session_user.id if session_user else None
-            workspace_id = session_user.workspace_id if session_user else None
 
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id
