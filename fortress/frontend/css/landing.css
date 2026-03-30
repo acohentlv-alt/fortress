@@ -127,7 +127,6 @@
     width: 200%; height: 200%;
     background:
         radial-gradient(ellipse at 20% 50%, rgba(108, 92, 231, 0.15) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 20%, rgba(9, 132, 227, 0.12) 0%, transparent 50%),
         radial-gradient(ellipse at 60% 80%, rgba(0, 206, 201, 0.1) 0%, transparent 50%);
     animation: meshFloat 20s ease-in-out infinite;
     z-index: 0;
