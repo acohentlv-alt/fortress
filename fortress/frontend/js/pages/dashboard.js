@@ -118,8 +118,8 @@ export async function renderDashboard(container, gen) {
 
         <!-- View Toggle -->
         <div class="view-toggle">
-            ${(user?.role === 'admin' || user?.role === 'head') ? `<button class="view-toggle-btn active" id="btn-analysis">${t('dashboard.tabAnalysis')}</button>` : ''}
-            <button class="view-toggle-btn ${(user?.role !== 'admin' && user?.role !== 'head') ? 'active' : ''}" id="btn-by-job">${t('dashboard.tabByJob')}</button>
+            <button class="view-toggle-btn active" id="btn-analysis">${t('dashboard.tabAnalysis')}</button>
+            <button class="view-toggle-btn" id="btn-by-job">${t('dashboard.tabByJob')}</button>
             <button class="view-toggle-btn" id="btn-by-dept">${t('dashboard.tabByDept')}</button>
             <button class="view-toggle-btn" id="btn-by-upload">${t('dashboard.tabByUpload')}</button>
             <button class="view-toggle-btn" id="btn-pending-links">${t('dashboard.tabPendingLinks')}${pendingBadge}</button>
@@ -132,16 +132,7 @@ export async function renderDashboard(container, gen) {
     // Render initial view — only on first visit (before any tab has been chosen)
     // On subsequent visits, _currentTab will have been set and the restore block below handles it.
     if (_currentTab === 'stats') {
-        if (user?.role === 'admin' || user?.role === 'head') {
-            _loadAnalysisView(container);
-        } else {
-            const byJobData = await getDashboardStatsByJob();
-            if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
-                renderByJobFromAPI(byJobData, container);
-            } else {
-                renderByJob(jobs, container);
-            }
-        }
+        _loadAnalysisView(container);
     }
 
     // Master Export handler — dropdown with CSV + XLSX
@@ -225,7 +216,7 @@ export async function renderDashboard(container, gen) {
         document.getElementById('btn-by-upload')?.click();
     } else if (_currentTab === 'pending-links') {
         document.getElementById('btn-pending-links')?.click();
-    } else if (_currentTab === 'analyse' && (user?.role === 'admin' || user?.role === 'head')) {
+    } else if (_currentTab === 'analyse') {
         document.getElementById('btn-analysis')?.click();
     }
     // Note: the initial render above (lines 119-128) already loaded the default view on first visit.
