@@ -333,6 +333,26 @@ def postal_code_to_dept(postal_code: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Major cities -> department code  (used as backend safety net for query parsing)
+# ---------------------------------------------------------------------------
+
+CITY_TO_DEPT: dict[str, str] = {
+    "perpignan": "66", "montpellier": "34", "toulouse": "31", "marseille": "13",
+    "lyon": "69", "nice": "06", "bordeaux": "33", "nantes": "44", "strasbourg": "67",
+    "lille": "59", "rennes": "35", "grenoble": "38", "toulon": "83", "narbonne": "11",
+    "carcassonne": "11", "beziers": "34", "nimes": "30", "avignon": "84", "cannes": "06",
+    "antibes": "06", "pau": "64", "bayonne": "64", "biarritz": "64", "lourdes": "65",
+    "tarbes": "65", "paris": "75", "rouen": "76", "le havre": "76", "caen": "14",
+    "dijon": "21", "besancon": "25", "orleans": "45", "tours": "37", "limoges": "87",
+    "clermont ferrand": "63", "saint etienne": "42", "annecy": "74", "chambery": "73",
+    "valence": "26", "metz": "57", "nancy": "54", "reims": "51", "troyes": "10",
+    "amiens": "80", "poitiers": "86", "la rochelle": "17", "angouleme": "16",
+    "brest": "29", "quimper": "29", "lorient": "56", "vannes": "56", "saint malo": "35",
+    "ajaccio": "2A", "bastia": "2B", "angers": "49", "le mans": "72",
+}
+
+
 def get_department_code(name: str) -> str | None:
     """Return the department code for a given name.
 

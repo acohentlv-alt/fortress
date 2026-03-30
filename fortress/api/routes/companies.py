@@ -1997,6 +1997,9 @@ async def create_entity(body: CreateEntityRequest, request: Request):
         code_postal = body.code_postal
         ville = body.ville
         departement = body.departement
+        # Validate department: must be a valid 2-3 digit code or Corsica (2A/2B), not "FR"
+        if departement and departement.upper() not in ("2A", "2B") and not (departement.isdigit() and 2 <= len(departement) <= 3):
+            departement = None
         linked_siren = None
         link_confidence = None
         link_method = None

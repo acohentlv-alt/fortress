@@ -14,7 +14,7 @@
  */
 
 import { registerCleanup } from '../app.js';
-import { t } from '../i18n.js';
+import { t, getLang } from '../i18n.js';
 
 export function renderIntro(container) {
     // Remove page-container constraints for full-bleed landing
@@ -42,6 +42,11 @@ export function renderIntro(container) {
                     <a href="#section-features" class="land-nav-link" data-scroll="features">${t('intro.navFeatures')}</a>
                     <a href="#section-contact" class="land-nav-link" data-scroll="contact">${t('intro.navContact')}</a>
                     <a href="#/login" class="land-nav-cta">${t('intro.navLogin')}</a>
+                    <button class="land-lang-toggle" onclick="window.__toggleLang && window.__toggleLang()"
+                        style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#f0f0f5; padding:4px 14px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; letter-spacing:0.5px; transition:background 0.2s;"
+                        onmouseover="this.style.background='rgba(255,255,255,0.15)'"
+                        onmouseout="this.style.background='rgba(255,255,255,0.08)'"
+                    >${getLang() === 'fr' ? 'EN' : 'FR'}</button>
                 </div>
             </nav>
 

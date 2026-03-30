@@ -300,7 +300,7 @@ async def get_job_companies(
         (batch_id,) + ws_params,
     )
     if not job:
-        return {"companies": [], "total": 0, "page": page}
+        return JSONResponse(status_code=404, content={"error": "Batch introuvable."})
 
     batch_name = job["batch_name"]
     qid = batch_id  # Use batch_id for batch-scoped data

@@ -630,6 +630,39 @@ async def run(batch_id: str) -> None:
                 except Exception:
                     pass
 
+            # Safety net: if frontend sent "FR" or empty, try to extract dept from queries
+            if (not dept_filter or dept_filter == "FR") and search_queries:
+                import re as _re
+                import unicodedata as _ud
+                from fortress.config.departments import CITY_TO_DEPT, _NAME_TO_CODE, postal_code_to_dept
+                def _norm(s: str) -> str:
+                    s = _ud.normalize("NFD", s.lower())
+                    return _re.sub(r"[\u0300-\u036f]", "", s).strip()
+                for _q in search_queries:
+                    # Try 2-digit code
+                    _m = _re.search(r"\b(\d{2})\b", _q)
+                    if _m:
+                        dept_filter = _m.group(1)
+                        break
+                    # Try 5-digit postal
+                    _m = _re.search(r"\b(\d{5})\b", _q)
+                    if _m:
+                        _resolved = postal_code_to_dept(_m.group(1))
+                        if _resolved:
+                            dept_filter = _resolved
+                            break
+                    # Try city/department name lookup
+                    _nq = _norm(_q)
+                    _all_names = {**{k.replace("-", " ").lower(): v for k, v in _NAME_TO_CODE.items()}, **CITY_TO_DEPT}
+                    for _name in sorted(_all_names, key=len, reverse=True):
+                        if _name in _nq:
+                            dept_filter = _all_names[_name]
+                            break
+                    if dept_filter and dept_filter != "FR":
+                        break
+                if dept_filter == "FR":
+                    dept_filter = None  # Don't use "FR" as a department filter
+
             # ── Open async pool ───────────────────────────────────────
             async with psycopg_pool.AsyncConnectionPool(
                 settings.db_url, min_size=1, max_size=5, open=True,
@@ -901,12 +934,19 @@ async def run(batch_id: str) -> None:
                         max_row = await cur.fetchone()
                         next_id = (max_row[0] or 0) + 1 if max_row else 1
                     siren = f"MAPS{next_id:05d}"
+                    # Derive department from Maps address postal code if dept_filter is missing
+                    _company_dept = dept_filter
+                    if not _company_dept and maps_address:
+                        _cp = re.search(r"\b(\d{5})\b", maps_address)
+                        if _cp:
+                            _company_dept = _cp.group(1)[:2]
+
                     company = Company(
                         siren=siren,
                         denomination=maps_name,
                         enseigne=maps_name,
                         adresse=maps_address,
-                        departement=dept_filter,
+                        departement=_company_dept,
                         statut="A",
                         workspace_id=batch_workspace_id,
                     )
