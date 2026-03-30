@@ -927,12 +927,8 @@ async def run(batch_id: str) -> None:
 
                     # ALWAYS create a MAPS entity — never use matched SIREN as entity ID
                     async with pool.connection() as id_conn:
-                        cur = await id_conn.execute(
-                            """SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER))
-                               FROM companies WHERE siren LIKE 'MAPS%%'"""
-                        )
-                        max_row = await cur.fetchone()
-                        next_id = (max_row[0] or 0) + 1 if max_row else 1
+                        cur = await id_conn.execute("SELECT nextval('maps_id_seq')")
+                        next_id = (await cur.fetchone())[0]
                     siren = f"MAPS{next_id:05d}"
                     # Derive department from Maps address postal code if dept_filter is missing
                     _company_dept = dept_filter

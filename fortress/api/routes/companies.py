@@ -1982,12 +1982,9 @@ async def create_entity(body: CreateEntityRequest, request: Request):
         )
 
     async with get_conn() as conn:
-        # Generate MAPS ID
-        cur = await conn.execute(
-            "SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER)) FROM companies WHERE siren LIKE 'MAPS%%'"
-        )
-        max_row = await cur.fetchone()
-        next_id = (max_row[0] or 0) + 1 if max_row else 1
+        # Generate MAPS ID (sequence is race-condition-safe)
+        cur = await conn.execute("SELECT nextval('maps_id_seq')")
+        next_id = (await cur.fetchone())[0]
         maps_siren = f"MAPS{next_id:05d}"
 
         # Determine entity fields

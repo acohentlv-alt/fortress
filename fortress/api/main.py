@@ -50,30 +50,6 @@ async def lifespan(app: FastAPI):
         # Existing columns stored naive timestamps (no timezone info).
         # This converts them so the frontend can correctly display local time.
         # Idempotent: only runs ALTER if the column is still 'timestamp without time zone'.
-        try:
-            from fortress.api.db import get_conn, fetch_all
-            cols_to_migrate = await fetch_all("""
-                SELECT table_name, column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND data_type = 'timestamp without time zone'
-                ORDER BY table_name, column_name
-            """)
-            if cols_to_migrate:
-                async with get_conn() as conn:
-                    for col in cols_to_migrate:
-                        tbl = col['table_name']
-                        cname = col['column_name']
-                        await conn.execute(
-                            f'ALTER TABLE "{tbl}" ALTER COLUMN "{cname}" TYPE TIMESTAMPTZ'
-                        )
-                        logger.info("  ✅ %s.%s → TIMESTAMPTZ", tbl, cname)
-                    await conn.commit()
-                logger.info("✅ Timezone migration complete — %d columns upgraded", len(cols_to_migrate))
-            else:
-                logger.info("✅ Timezone migration: all columns already TIMESTAMPTZ")
-        except Exception as e:
-            logger.warning("Timezone migration failed (non-fatal): %s", e)
         # Ensure pg_trgm extension + trigram index for fast ILIKE search
         try:
             from fortress.api.db import get_conn
@@ -91,6 +67,29 @@ async def lifespan(app: FastAPI):
         try:
             from fortress.api.db import get_conn
             async with get_conn() as conn:
+                # Prevent deadlocks with concurrent queries during deploy
+                await conn.execute("SET lock_timeout = '5s'")
+
+                # ── TIMESTAMPTZ migration (moved here to share single connection) ──
+                cols_to_migrate = await (await conn.execute("""
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND data_type = 'timestamp without time zone'
+                    ORDER BY table_name, column_name
+                """)).fetchall()
+                if cols_to_migrate:
+                    for col in cols_to_migrate:
+                        tbl = col[0]
+                        cname = col[1]
+                        await conn.execute(
+                            f'ALTER TABLE "{tbl}" ALTER COLUMN "{cname}" TYPE TIMESTAMPTZ'
+                        )
+                        logger.info("  TIMESTAMPTZ: %s.%s migrated", tbl, cname)
+                    logger.info("Timezone migration complete -- %d columns upgraded", len(cols_to_migrate))
+                else:
+                    logger.info("Timezone migration: all columns already TIMESTAMPTZ")
+
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS contact_requests (
                         id SERIAL PRIMARY KEY,
@@ -228,6 +227,19 @@ async def lifespan(app: FastAPI):
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_link_confidence ON companies (link_confidence)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_batch_id ON batch_tags (batch_id)")
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_upper_batch_name ON batch_tags (UPPER(batch_name))")
+
+                # ── MAPS ID sequence (race-condition-safe) ────────────────
+                await conn.execute("CREATE SEQUENCE IF NOT EXISTS maps_id_seq")
+                await conn.execute("""
+                    SELECT setval('maps_id_seq',
+                        COALESCE(
+                            (SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER))
+                             FROM companies WHERE siren LIKE 'MAPS%%'),
+                            0
+                        ) + 1,
+                        false
+                    )
+                """)
 
                 # Backfill batch_tags.batch_id from batch_data (idempotent — only updates NULLs)
                 await conn.execute("""
