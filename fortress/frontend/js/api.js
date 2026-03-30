@@ -44,7 +44,7 @@ async function request(path, options = {}) {
         if (resp.status === 401) {
             // Session expired or invalid — redirect to login
             _currentUser = null;
-            if (!window.location.hash.startsWith('#/login')) {
+            if (!window.location.hash.startsWith('#/login') && !window.location.hash.startsWith('#/intro')) {
                 window.location.hash = '#/login';
             }
             return data;
