@@ -516,6 +516,33 @@ export async function clearSystemLog() {
     return await request('/admin/system-log', { method: 'DELETE' });
 }
 
+// ── RGPD Oppositions ─────────────────────────────────────────────
+export async function getOppositions() {
+    const res = await fetch('/api/admin/rgpd/oppositions', { credentials: 'include' });
+    if (!res.ok) throw new Error('Failed to load oppositions');
+    return res.json();
+}
+
+export async function submitOpposition(data) {
+    const res = await fetch('/api/admin/rgpd/opposition', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+    });
+    return res.json();
+}
+
+export async function confirmOppositionDeletion(data) {
+    const res = await fetch('/api/admin/rgpd/opposition/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data),
+    });
+    return res.json();
+}
+
 export async function getCurrentUser() {
     try {
         const resp = await fetch(`${API_BASE}/auth/me`, {

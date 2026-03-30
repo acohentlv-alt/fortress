@@ -323,6 +323,33 @@ async def lifespan(app: FastAPI):
                 # Clean up entries older than 30 days
                 await conn.execute("DELETE FROM system_log WHERE created_at < NOW() - INTERVAL '30 days'")
 
+                # ── RGPD opposition table ────────────────────────────────
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS rgpd_oppositions (
+                        id SERIAL PRIMARY KEY,
+                        nom VARCHAR(200),
+                        prenom VARCHAR(200),
+                        email VARCHAR(200),
+                        telephone VARCHAR(50),
+                        motif TEXT NOT NULL,
+                        result_summary TEXT,
+                        processed_by VARCHAR(100),
+                        processed_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_rgpd_oppositions_email
+                    ON rgpd_oppositions (LOWER(email))
+                """)
+
+                # ── RGPD data retention cleanup ──────────────────────────
+                # Contact form submissions: 12 months (lead capture, consent-based)
+                await conn.execute("DELETE FROM contact_requests WHERE created_at < NOW() - INTERVAL '12 months'")
+                # Activity logs: 12 months (operational audit, not business data)
+                await conn.execute("DELETE FROM activity_log WHERE created_at < NOW() - INTERVAL '12 months'")
+                # Bug reports: 90 days (dev debugging, screenshots are heavy)
+                await conn.execute("DELETE FROM bug_reports WHERE created_at < NOW() - INTERVAL '90 days'")
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:

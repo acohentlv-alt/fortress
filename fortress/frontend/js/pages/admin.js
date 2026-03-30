@@ -19,6 +19,9 @@ import {
     clearSystemLog,
     extractApiError,
     getCachedUser,
+    getOppositions,
+    submitOpposition,
+    confirmOppositionDeletion,
 } from '../api.js';
 import { escapeHtml, showToast, showConfirmModal, formatDateTime } from '../components.js';
 import { isStale } from '../app.js';
@@ -87,83 +90,270 @@ export async function renderAdmin(container, gen) {
     }
 
     container.innerHTML = `
+        <style>
+            .admin-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: var(--space-lg); }
+            .admin-tab { padding: 10px 20px; background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: var(--font-sm); font-weight: 600; border-bottom: 2px solid transparent; transition: all 0.2s; }
+            .admin-tab:hover { color: var(--text-primary); }
+            .admin-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        </style>
+
         <h1 class="page-title">Administration</h1>
-        <p class="page-subtitle">Gestion des utilisateurs et des espaces de travail.</p>
+        <p class="page-subtitle">Gestion des utilisateurs, des espaces de travail et conformité RGPD.</p>
 
-        <div id="ws-form-area"></div>
-
-        <div class="card" style="margin-bottom:var(--space-xl)">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
-                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
-                    Espaces de travail
-                </h3>
-                <button id="btn-add-ws" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-xs)">
-                    <span>+</span> <span>Ajouter un espace</span>
-                </button>
-            </div>
-            <div id="ws-table-container">
-                <div class="loading"><div class="spinner"></div></div>
-            </div>
+        <div class="admin-tabs">
+            <button class="admin-tab active" data-tab="workspaces">Espaces de travail</button>
+            <button class="admin-tab" data-tab="users">Utilisateurs</button>
+            <button class="admin-tab" data-tab="logs">Journaux</button>
+            <button class="admin-tab" data-tab="rgpd">RGPD</button>
         </div>
 
-        <div id="admin-form-area"></div>
+        <!-- TAB: Espaces de travail -->
+        <div id="tab-workspaces" class="admin-tab-content" style="display:block">
+            <div id="ws-form-area"></div>
 
-        <div class="card" style="margin-bottom:var(--space-xl)">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
-                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
-                    Comptes utilisateurs
-                </h3>
-                <button id="btn-add-user" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-xs)">
-                    <span>+</span> <span>Ajouter un utilisateur</span>
-                </button>
-            </div>
-            <div id="admin-table-container">
-                <div class="loading"><div class="spinner"></div></div>
-            </div>
-        </div>
-
-        <!-- Activity Log section -->
-        <div class="card">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
-                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
-                    📋 Journal d'activité
-                </h3>
-                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
-                    <button class="view-toggle-btn log-period active" data-period="day">Aujourd'hui</button>
-                    <button class="view-toggle-btn log-period" data-period="week">Cette semaine</button>
-                    <button class="view-toggle-btn log-period" data-period="month">Ce mois</button>
-                    <button class="view-toggle-btn log-period" data-period="all">Tout</button>
+            <div class="card" style="margin-bottom:var(--space-xl)">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                        Espaces de travail
+                    </h3>
+                    <button id="btn-add-ws" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-xs)">
+                        <span>+</span> <span>Ajouter un espace</span>
+                    </button>
+                </div>
+                <div id="ws-table-container">
+                    <div class="loading"><div class="spinner"></div></div>
                 </div>
             </div>
-            <div id="log-container">
-                <div class="loading"><div class="spinner"></div></div>
-            </div>
-            <div id="log-pagination" style="margin-top:var(--space-lg)"></div>
         </div>
 
-        <!-- System Error Log section -->
-        <div class="card" style="margin-top:var(--space-xl)">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
-                <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
-                    🔧 Journal système
-                </h3>
-                <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center">
-                    <button class="view-toggle-btn syslog-level active" data-level="all">Tout</button>
-                    <button class="view-toggle-btn syslog-level" data-level="error">Erreurs</button>
-                    <button class="view-toggle-btn syslog-level" data-level="warning">Avertissements</button>
-                    <span style="color:var(--border-default)">|</span>
-                    <button class="view-toggle-btn syslog-period active" data-period="week">Semaine</button>
-                    <button class="view-toggle-btn syslog-period" data-period="month">Mois</button>
-                    <button class="view-toggle-btn syslog-period" data-period="all">Tout</button>
-                    <button id="btn-clear-syslog" class="btn btn-secondary" style="font-size:var(--font-xs); padding:var(--space-xs) var(--space-sm); color:var(--text-muted)" title="Nettoyer les entrées de plus de 7 jours">🗑️ Nettoyer</button>
+        <!-- TAB: Utilisateurs -->
+        <div id="tab-users" class="admin-tab-content" style="display:none">
+            <div id="admin-form-area"></div>
+
+            <div class="card" style="margin-bottom:var(--space-xl)">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                        Comptes utilisateurs
+                    </h3>
+                    <button id="btn-add-user" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-xs)">
+                        <span>+</span> <span>Ajouter un utilisateur</span>
+                    </button>
+                </div>
+                <div id="admin-table-container">
+                    <div class="loading"><div class="spinner"></div></div>
                 </div>
             </div>
-            <div id="syslog-container">
-                <div class="loading"><div class="spinner"></div></div>
+        </div>
+
+        <!-- TAB: Journaux -->
+        <div id="tab-logs" class="admin-tab-content" style="display:none">
+            <!-- Activity Log section -->
+            <div class="card" style="margin-bottom:var(--space-xl)">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                        📋 Journal d'activité
+                    </h3>
+                    <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                        <button class="view-toggle-btn log-period active" data-period="day">Aujourd'hui</button>
+                        <button class="view-toggle-btn log-period" data-period="week">Cette semaine</button>
+                        <button class="view-toggle-btn log-period" data-period="month">Ce mois</button>
+                        <button class="view-toggle-btn log-period" data-period="all">Tout</button>
+                    </div>
+                </div>
+                <div id="log-container">
+                    <div class="loading"><div class="spinner"></div></div>
+                </div>
+                <div id="log-pagination" style="margin-top:var(--space-lg)"></div>
             </div>
-            <div id="syslog-pagination" style="margin-top:var(--space-lg)"></div>
+
+            <!-- System Error Log section -->
+            <div class="card">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg); flex-wrap:wrap; gap:var(--space-md)">
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                        🔧 Journal système
+                    </h3>
+                    <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap; align-items:center">
+                        <button class="view-toggle-btn syslog-level active" data-level="all">Tout</button>
+                        <button class="view-toggle-btn syslog-level" data-level="error">Erreurs</button>
+                        <button class="view-toggle-btn syslog-level" data-level="warning">Avertissements</button>
+                        <span style="color:var(--border-default)">|</span>
+                        <button class="view-toggle-btn syslog-period active" data-period="week">Semaine</button>
+                        <button class="view-toggle-btn syslog-period" data-period="month">Mois</button>
+                        <button class="view-toggle-btn syslog-period" data-period="all">Tout</button>
+                        <button id="btn-clear-syslog" class="btn btn-secondary" style="font-size:var(--font-xs); padding:var(--space-xs) var(--space-sm); color:var(--text-muted)" title="Nettoyer les entrées de plus de 7 jours">🗑️ Nettoyer</button>
+                    </div>
+                </div>
+                <div id="syslog-container">
+                    <div class="loading"><div class="spinner"></div></div>
+                </div>
+                <div id="syslog-pagination" style="margin-top:var(--space-lg)"></div>
+            </div>
+        </div>
+
+        <!-- TAB: RGPD -->
+        <div id="tab-rgpd" class="admin-tab-content" style="display:none">
+
+            <!-- Section A: Droit d'opposition -->
+            <div class="card" style="margin-bottom:var(--space-lg)">
+                <div class="card-header">
+                    <h3>🛡️ Droit d'opposition — Suppression de données personnelles</h3>
+                </div>
+                <div class="card-body">
+                    <p style="color:var(--text-muted); margin-bottom:var(--space-md); font-size:var(--font-sm)">
+                        Lorsqu'une personne exerce son droit d'opposition (Art. 21 RGPD), saisissez ses coordonnées ci-dessous.
+                        Le système supprimera ses données personnelles (dirigeants, emails, téléphones) de la base.
+                    </p>
+                    <form id="rgpd-opposition-form" style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-sm)">
+                        <div>
+                            <label style="font-size:var(--font-xs); color:var(--text-muted)">Nom</label>
+                            <input type="text" id="rgpd-nom" class="form-input" placeholder="Dupont" style="${INPUT_STYLE}">
+                        </div>
+                        <div>
+                            <label style="font-size:var(--font-xs); color:var(--text-muted)">Prénom</label>
+                            <input type="text" id="rgpd-prenom" class="form-input" placeholder="Jean" style="${INPUT_STYLE}">
+                        </div>
+                        <div>
+                            <label style="font-size:var(--font-xs); color:var(--text-muted)">Email *</label>
+                            <input type="email" id="rgpd-email" class="form-input" placeholder="jean.dupont@example.com" style="${INPUT_STYLE}">
+                        </div>
+                        <div>
+                            <label style="font-size:var(--font-xs); color:var(--text-muted)">Téléphone</label>
+                            <input type="text" id="rgpd-phone" class="form-input" placeholder="0612345678" style="${INPUT_STYLE}">
+                        </div>
+                        <div style="grid-column:1/-1">
+                            <label style="font-size:var(--font-xs); color:var(--text-muted)">Motif *</label>
+                            <input type="text" id="rgpd-motif" class="form-input" placeholder="Demande par email du 30/03/2026" required style="${INPUT_STYLE}">
+                        </div>
+                        <div style="grid-column:1/-1">
+                            <button type="submit" class="btn btn-primary">Traiter la demande</button>
+                        </div>
+                    </form>
+                    <div id="rgpd-result" style="display:none; margin-top:var(--space-md)"></div>
+
+                    <!-- Name candidates for confirmation -->
+                    <div id="rgpd-candidates" style="display:none; margin-top:var(--space-md)">
+                        <h4 style="margin-bottom:var(--space-sm)">Correspondances par nom (vérification manuelle)</h4>
+                        <div id="rgpd-candidates-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Opposition history -->
+            <div class="card" style="margin-bottom:var(--space-lg)">
+                <div class="card-header">
+                    <h3>📋 Historique des demandes d'opposition</h3>
+                </div>
+                <div class="card-body">
+                    <div id="rgpd-history-container">
+                        <div class="loading"><div class="spinner"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section B: Registre des traitements -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📑 Registre des traitements (Article 30 RGPD)</h3>
+                </div>
+                <div class="card-body">
+
+                    <div style="background:var(--bg-secondary); border-radius:var(--radius-md); padding:var(--space-md); margin-bottom:var(--space-md)">
+                        <h4 style="margin-bottom:var(--space-sm)">1. Prospection commerciale B2B</h4>
+                        <div style="display:grid; grid-template-columns:180px 1fr; gap:4px 12px; font-size:var(--font-sm)">
+                            <span style="color:var(--text-muted); font-weight:600">Finalité</span>
+                            <span>Collecte et enrichissement de données d'entreprises pour la prospection B2B</span>
+                            <span style="color:var(--text-muted); font-weight:600">Base légale</span>
+                            <span>Intérêt légitime (Art. 6.1.f RGPD)</span>
+                            <span style="color:var(--text-muted); font-weight:600">Données</span>
+                            <span>Raisons sociales, SIREN, adresses, noms de dirigeants, emails pro, téléphones, sites web</span>
+                            <span style="color:var(--text-muted); font-weight:600">Sources</span>
+                            <span>Registre SIRENE (INSEE), Google Maps, sites web d'entreprises</span>
+                            <span style="color:var(--text-muted); font-weight:600">Personnes concernées</span>
+                            <span>Dirigeants et contacts d'entreprises françaises</span>
+                            <span style="color:var(--text-muted); font-weight:600">Destinataires</span>
+                            <span>Administrateur, responsables d'espace de travail</span>
+                            <span style="color:var(--text-muted); font-weight:600">Conservation</span>
+                            <span>Tant que l'entreprise est active au registre SIRENE</span>
+                            <span style="color:var(--text-muted); font-weight:600">Sécurité</span>
+                            <span>Chiffrement en transit (HTTPS), base de données en EU, contrôle d'accès par rôle</span>
+                        </div>
+                    </div>
+
+                    <div style="background:var(--bg-secondary); border-radius:var(--radius-md); padding:var(--space-md); margin-bottom:var(--space-md)">
+                        <h4 style="margin-bottom:var(--space-sm)">2. Gestion des comptes utilisateurs</h4>
+                        <div style="display:grid; grid-template-columns:180px 1fr; gap:4px 12px; font-size:var(--font-sm)">
+                            <span style="color:var(--text-muted); font-weight:600">Finalité</span>
+                            <span>Authentification et gestion des accès à la plateforme</span>
+                            <span style="color:var(--text-muted); font-weight:600">Base légale</span>
+                            <span>Exécution du contrat (Art. 6.1.b)</span>
+                            <span style="color:var(--text-muted); font-weight:600">Données</span>
+                            <span>Identifiant, mot de passe hashé (bcrypt), nom d'affichage, rôle</span>
+                            <span style="color:var(--text-muted); font-weight:600">Personnes concernées</span>
+                            <span>Utilisateurs de la plateforme</span>
+                            <span style="color:var(--text-muted); font-weight:600">Destinataires</span>
+                            <span>Administrateur</span>
+                            <span style="color:var(--text-muted); font-weight:600">Conservation</span>
+                            <span>Durée de vie du compte</span>
+                            <span style="color:var(--text-muted); font-weight:600">Sécurité</span>
+                            <span>Mots de passe hashés (bcrypt), sessions signées, cookies HttpOnly</span>
+                        </div>
+                    </div>
+
+                    <div style="background:var(--bg-secondary); border-radius:var(--radius-md); padding:var(--space-md); margin-bottom:var(--space-md)">
+                        <h4 style="margin-bottom:var(--space-sm)">3. Formulaire de contact</h4>
+                        <div style="display:grid; grid-template-columns:180px 1fr; gap:4px 12px; font-size:var(--font-sm)">
+                            <span style="color:var(--text-muted); font-weight:600">Finalité</span>
+                            <span>Traitement des demandes de prospects</span>
+                            <span style="color:var(--text-muted); font-weight:600">Base légale</span>
+                            <span>Consentement (Art. 6.1.a)</span>
+                            <span style="color:var(--text-muted); font-weight:600">Données</span>
+                            <span>Nom, email, entreprise, message</span>
+                            <span style="color:var(--text-muted); font-weight:600">Personnes concernées</span>
+                            <span>Visiteurs du site</span>
+                            <span style="color:var(--text-muted); font-weight:600">Destinataires</span>
+                            <span>Administrateur</span>
+                            <span style="color:var(--text-muted); font-weight:600">Conservation</span>
+                            <span>12 mois</span>
+                            <span style="color:var(--text-muted); font-weight:600">Sécurité</span>
+                            <span>Limitation de débit (5 demandes/jour/email), notification par email</span>
+                        </div>
+                    </div>
+
+                    <div style="background:var(--bg-secondary); border-radius:var(--radius-md); padding:var(--space-md); margin-bottom:var(--space-md)">
+                        <h4 style="margin-bottom:var(--space-sm)">4. Journal d'activité</h4>
+                        <div style="display:grid; grid-template-columns:180px 1fr; gap:4px 12px; font-size:var(--font-sm)">
+                            <span style="color:var(--text-muted); font-weight:600">Finalité</span>
+                            <span>Audit de sécurité et traçabilité des actions</span>
+                            <span style="color:var(--text-muted); font-weight:600">Base légale</span>
+                            <span>Intérêt légitime (Art. 6.1.f)</span>
+                            <span style="color:var(--text-muted); font-weight:600">Données</span>
+                            <span>Actions effectuées, horodatage, identifiant utilisateur</span>
+                            <span style="color:var(--text-muted); font-weight:600">Personnes concernées</span>
+                            <span>Utilisateurs de la plateforme</span>
+                            <span style="color:var(--text-muted); font-weight:600">Destinataires</span>
+                            <span>Administrateur, responsables d'espace de travail (périmètre limité)</span>
+                            <span style="color:var(--text-muted); font-weight:600">Conservation</span>
+                            <span>12 mois</span>
+                            <span style="color:var(--text-muted); font-weight:600">Sécurité</span>
+                            <span>Accès restreint par rôle</span>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
         </div>
     `;
+
+    // ── Tab switching ────────────────────────────────────────────────
+    container.querySelectorAll('.admin-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.admin-tab').forEach(b => b.classList.remove('active'));
+            container.querySelectorAll('.admin-tab-content').forEach(c => { c.style.display = 'none'; c.classList.remove('active'); });
+            btn.classList.add('active');
+            const target = document.getElementById('tab-' + btn.dataset.tab);
+            if (target) { target.style.display = 'block'; target.classList.add('active'); }
+        });
+    });
 
     const wsFormArea = container.querySelector('#ws-form-area');
     const wsTableContainer = container.querySelector('#ws-table-container');
@@ -871,10 +1061,152 @@ export async function renderAdmin(container, gen) {
         loadSyslog();
     });
 
+    // ── RGPD Tab Logic ──────────────────────────────────────────────
+
+    async function loadOppositionHistory() {
+        const historyContainer = document.getElementById('rgpd-history-container');
+        if (!historyContainer) return;
+        try {
+            const data = await getOppositions();
+            if (!data || !Array.isArray(data) || data.length === 0) {
+                historyContainer.innerHTML = `<p style="color:var(--text-muted)">Aucune demande d'opposition enregistrée.</p>`;
+                return;
+            }
+            historyContainer.innerHTML = `
+                <div style="overflow-x:auto">
+                    <table class="data-table" style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                        <thead>
+                            <tr>
+                                <th class="contacts-th">Date</th>
+                                <th class="contacts-th">Nom</th>
+                                <th class="contacts-th">Email</th>
+                                <th class="contacts-th">Téléphone</th>
+                                <th class="contacts-th">Motif</th>
+                                <th class="contacts-th">Résultat</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.map(row => `
+                                <tr class="contacts-row">
+                                    <td class="contacts-td" style="color:var(--text-muted); white-space:nowrap">${row.created_at ? formatDateTime(row.created_at) : '—'}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml((row.nom || '') + (row.prenom ? ' ' + row.prenom : '') || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml(row.email || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml(row.telephone || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml(row.motif || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(row.summary || row.result || '—')}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        } catch (err) {
+            historyContainer.innerHTML = `<p style="color:var(--danger)">Erreur de chargement.</p>`;
+        }
+    }
+
+    function showNameCandidates(candidates, oppositionId) {
+        const candidatesDiv = document.getElementById('rgpd-candidates');
+        const candidatesList = document.getElementById('rgpd-candidates-list');
+        if (!candidatesDiv || !candidatesList) return;
+
+        candidatesDiv.style.display = 'block';
+        candidatesList.innerHTML = `
+            <div style="overflow-x:auto; margin-bottom:var(--space-sm)">
+                <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                    <thead>
+                        <tr>
+                            <th class="contacts-th" style="width:32px"></th>
+                            <th class="contacts-th">Nom</th>
+                            <th class="contacts-th">Prénom</th>
+                            <th class="contacts-th">Entreprise</th>
+                            <th class="contacts-th">Source</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${candidates.map((c, idx) => `
+                            <tr class="contacts-row">
+                                <td class="contacts-td">
+                                    <input type="checkbox" class="rgpd-candidate-check" data-officer-id="${c.id || ''}" data-idx="${idx}" style="cursor:pointer">
+                                </td>
+                                <td class="contacts-td" style="color:var(--text-primary); font-weight:600">${escapeHtml(c.nom || '—')}</td>
+                                <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml(c.prenom || '—')}</td>
+                                <td class="contacts-td" style="color:var(--text-secondary)">${escapeHtml(c.company_name || c.siren || '—')}</td>
+                                <td class="contacts-td" style="color:var(--text-muted); font-size:var(--font-xs)">${escapeHtml(c.source || '—')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <button id="btn-confirm-candidates" class="btn btn-primary" style="font-size:var(--font-sm)">
+                Confirmer la suppression des entrées sélectionnées
+            </button>
+        `;
+
+        candidatesList.querySelector('#btn-confirm-candidates')?.addEventListener('click', async () => {
+            const checked = candidatesList.querySelectorAll('.rgpd-candidate-check:checked');
+            if (checked.length === 0) {
+                showToast('Sélectionnez au moins une entrée à supprimer.', 'error');
+                return;
+            }
+            const officerIds = Array.from(checked).map(cb => cb.dataset.officerId).filter(Boolean);
+            try {
+                const result = await confirmOppositionDeletion({ opposition_id: oppositionId, officer_ids: officerIds });
+                if (result && result.summary) {
+                    showToast(result.summary, 'success');
+                } else {
+                    showToast('Suppression confirmée.', 'success');
+                }
+                candidatesDiv.style.display = 'none';
+                loadOppositionHistory();
+            } catch (err) {
+                showToast('Erreur lors de la confirmation : ' + err.message, 'error');
+            }
+        });
+    }
+
+    const oppForm = document.getElementById('rgpd-opposition-form');
+    if (oppForm) {
+        oppForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                nom: document.getElementById('rgpd-nom').value.trim(),
+                prenom: document.getElementById('rgpd-prenom').value.trim(),
+                email: document.getElementById('rgpd-email').value.trim(),
+                telephone: document.getElementById('rgpd-phone').value.trim(),
+                motif: document.getElementById('rgpd-motif').value.trim(),
+            };
+            if (!data.email && !data.telephone) {
+                showToast('Email ou téléphone requis', 'error');
+                return;
+            }
+            if (!data.motif) {
+                showToast('Le motif est requis', 'error');
+                return;
+            }
+            try {
+                const result = await submitOpposition(data);
+                const resultDiv = document.getElementById('rgpd-result');
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = `<div style="padding:var(--space-sm) var(--space-md); background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:var(--radius-sm); color:#34d399; font-size:var(--font-sm)">${escapeHtml(result.summary || 'Demande traitée.')}</div>`;
+
+                if (result.name_candidates && result.name_candidates.length > 0) {
+                    showNameCandidates(result.name_candidates, result.opposition_id);
+                }
+
+                oppForm.reset();
+                loadOppositionHistory();
+            } catch (err) {
+                showToast('Erreur: ' + err.message, 'error');
+            }
+        });
+    }
+
     // Load everything
     await loadWorkspaces();
     if (isStale(gen)) return;
     await loadUsers();
     loadLog();
     loadSyslog();
+    loadOppositionHistory();
 }

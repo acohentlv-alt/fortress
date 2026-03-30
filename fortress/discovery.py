@@ -955,6 +955,12 @@ async def run(batch_id: str) -> None:
                     if has_data:
                         qualified += 1
 
+                    # Strip RGPD-suppressed data from Maps contact before persisting
+                    if contact.email and contact.email.lower().strip() in _opposition_emails:
+                        contact.email = None
+                    if contact.phone and contact.phone.strip() in _opposition_phones:
+                        contact.phone = None
+
                     # Persist to DB immediately
                     async with pool.connection() as conn:
                         await upsert_company(conn, company)
@@ -1049,6 +1055,12 @@ async def run(batch_id: str) -> None:
                                     social_instagram=social.get("instagram"),
                                     social_tiktok=social.get("tiktok"),
                                 )
+                                # Strip RGPD-suppressed data from crawl contact before persisting
+                                if crawl_contact.email and crawl_contact.email.lower().strip() in _opposition_emails:
+                                    crawl_contact.email = None
+                                if crawl_contact.phone and crawl_contact.phone.strip() in _opposition_phones:
+                                    crawl_contact.phone = None
+
                                 async with pool.connection() as crawl_conn:
                                     await upsert_contact(crawl_conn, crawl_contact)
 
@@ -1072,8 +1084,16 @@ async def run(batch_id: str) -> None:
                                         email_direct=ml_data.get("director_email"),
                                         source=ContactSource.MENTIONS_LEGALES,
                                     )
-                                    async with pool.connection() as officer_conn:
-                                        await upsert_officer(officer_conn, director)
+                                    # Check RGPD opposition before upserting officer
+                                    _oname = (director.nom or '').lower().strip()
+                                    _oprenom = (director.prenom or '').lower().strip()
+                                    _oemail = (director.email_direct or '').lower().strip()
+                                    if (_oemail and _oemail in _opposition_emails) or \
+                                       (_oname, _oprenom) in _opposition_names:
+                                        log.info("discovery.rgpd_skip_officer", nom=director.nom, prenom=director.prenom)
+                                    else:
+                                        async with pool.connection() as officer_conn:
+                                            await upsert_officer(officer_conn, director)
 
                         except Exception as exc:
                             log.warning("discovery.website_crawl_failed", siren=siren, error=str(exc))
@@ -1106,6 +1126,14 @@ async def run(batch_id: str) -> None:
                                         civilite=d.get("civilite"),
                                         source=CS.RECHERCHE_ENTREPRISES,
                                     )
+                                    # Check RGPD opposition before upserting officer
+                                    _oname = (officer.nom or '').lower().strip()
+                                    _oprenom = (officer.prenom or '').lower().strip()
+                                    _oemail = (officer.email_direct or '').lower().strip() if hasattr(officer, 'email_direct') and officer.email_direct else ''
+                                    if (_oemail and _oemail in _opposition_emails) or \
+                                       (_oname, _oprenom) in _opposition_names:
+                                        log.info("discovery.rgpd_skip_officer", nom=officer.nom, prenom=officer.prenom)
+                                        continue
                                     await upsert_officer(conn, officer)
 
                                 if dirigeants:
@@ -1220,6 +1248,33 @@ async def run(batch_id: str) -> None:
                         existing=len(seen_sirens),
                         dept=dept_filter,
                     )
+
+                # ── RGPD opposition list (preloaded for in-memory checks) ──
+                _opposition_emails: set[str] = set()
+                _opposition_phones: set[str] = set()
+                _opposition_names: set[tuple[str, str]] = set()
+                try:
+                    async with pool.connection() as opp_conn:
+                        cur = await opp_conn.execute(
+                            "SELECT email, telephone, nom, prenom FROM rgpd_oppositions"
+                        )
+                        for opp_row in await cur.fetchall():
+                            if opp_row[0]:
+                                _opposition_emails.add(opp_row[0].lower().strip())
+                            if opp_row[1]:
+                                _opposition_phones.add(opp_row[1].strip())
+                            if opp_row[2]:
+                                _opposition_names.add(
+                                    (opp_row[2].lower().strip(), (opp_row[3] or '').lower().strip())
+                                )
+                    log.info(
+                        "discovery.rgpd_loaded",
+                        emails=len(_opposition_emails),
+                        phones=len(_opposition_phones),
+                        names=len(_opposition_names),
+                    )
+                except Exception as _rgpd_exc:
+                    log.warning("discovery.rgpd_load_failed", error=str(_rgpd_exc))
 
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):

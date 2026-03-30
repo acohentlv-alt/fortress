@@ -461,6 +461,199 @@ async def get_system_log(
     return {"entries": rows or [], "total": total, "period": period}
 
 
+def _normalize_phone(phone: str) -> str:
+    """Normalize French phone: +33467658567 -> 0467658567"""
+    digits = ''.join(c for c in phone if c.isdigit())
+    if digits.startswith('33') and len(digits) == 11:
+        return '0' + digits[2:]
+    return phone.strip()
+
+
+@router.get("/rgpd/oppositions")
+async def list_rgpd_oppositions(request: Request):
+    """List all RGPD opposition records. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    rows = await fetch_all(
+        "SELECT id, nom, prenom, email, telephone, motif, result_summary, processed_by, processed_at FROM rgpd_oppositions ORDER BY processed_at DESC"
+    )
+    result = []
+    for r in (rows or []):
+        result.append({
+            "id": r["id"],
+            "nom": r["nom"],
+            "prenom": r["prenom"],
+            "email": r["email"],
+            "telephone": r["telephone"],
+            "motif": r["motif"],
+            "result_summary": r["result_summary"],
+            "processed_by": r["processed_by"],
+            "processed_at": r["processed_at"].isoformat() if r.get("processed_at") else None,
+        })
+    return result
+
+
+@router.post("/rgpd/opposition")
+async def submit_rgpd_opposition(request: Request):
+    """Process an RGPD opposition request. Admin only.
+
+    Tier 1: auto-delete officers and strip contacts matching by email/phone.
+    Tier 2: return name-match candidates for admin review.
+    """
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Corps invalide."})
+
+    nom = (body.get("nom") or "").strip() or None
+    prenom = (body.get("prenom") or "").strip() or None
+    email = (body.get("email") or "").strip() or None
+    telephone = (body.get("telephone") or "").strip() or None
+    motif = (body.get("motif") or "").strip()
+
+    if not email and not telephone:
+        return JSONResponse(status_code=400, content={"error": "Au moins un email ou un téléphone est requis."})
+    if not motif:
+        return JSONResponse(status_code=400, content={"error": "Le motif est requis."})
+
+    deleted_officers = 0
+    stripped_contacts = 0
+
+    async with get_conn() as conn:
+        # ── Tier 1: Email/phone match (auto-process) ──
+        if email:
+            result = await conn.execute(
+                "DELETE FROM officers WHERE LOWER(email_direct) = LOWER(%s) RETURNING siren, nom, prenom",
+                (email,)
+            )
+            deleted_officers += result.rowcount
+
+        if telephone:
+            phone_norm = _normalize_phone(telephone)
+            result = await conn.execute(
+                "DELETE FROM officers WHERE ligne_directe = %s OR ligne_directe = %s RETURNING siren, nom, prenom",
+                (telephone, phone_norm)
+            )
+            deleted_officers += result.rowcount
+
+        if email:
+            result = await conn.execute(
+                "UPDATE contacts SET email = NULL WHERE LOWER(email) = LOWER(%s)",
+                (email,)
+            )
+            stripped_contacts += result.rowcount
+
+        if telephone:
+            phone_norm = _normalize_phone(telephone)
+            result = await conn.execute(
+                "UPDATE contacts SET phone = NULL WHERE phone = %s OR phone = %s",
+                (telephone, phone_norm)
+            )
+            stripped_contacts += result.rowcount
+
+        # ── Tier 2: Name match (return candidates, don't auto-delete) ──
+        name_candidates = []
+        if nom:
+            rows = await fetch_all(
+                """SELECT id, siren, nom, prenom, role, email_direct, ligne_directe
+                   FROM officers
+                   WHERE LOWER(nom) = LOWER(%s)
+                   OR LOWER(nom) LIKE LOWER(%s)
+                   ORDER BY nom, prenom
+                   LIMIT 50""",
+                (nom, f"%{nom}%")
+            )
+            name_candidates = []
+            for r in (rows or []):
+                name_candidates.append({
+                    "id": r["id"],
+                    "siren": r["siren"],
+                    "nom": r["nom"],
+                    "prenom": r["prenom"],
+                    "role": r["role"],
+                    "email_direct": r["email_direct"],
+                    "ligne_directe": r["ligne_directe"],
+                })
+
+        summary = f"{deleted_officers} dirigeant(s) supprimé(s), {stripped_contacts} contact(s) nettoyé(s)"
+        cur = await conn.execute(
+            """INSERT INTO rgpd_oppositions (nom, prenom, email, telephone, motif, result_summary, processed_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (nom, prenom, email, telephone, motif, summary, admin.username)
+        )
+        row = await cur.fetchone()
+        opposition_id = row[0] if row else None
+        await conn.commit()
+
+    logger.info("admin.rgpd_opposition", extra={"email": email, "deleted_officers": deleted_officers, "by": admin.username})
+    return {
+        "ok": True,
+        "opposition_id": opposition_id,
+        "summary": summary,
+        "deleted_officers": deleted_officers,
+        "stripped_contacts": stripped_contacts,
+        "name_candidates": name_candidates,
+    }
+
+
+@router.post("/rgpd/opposition/confirm")
+async def confirm_rgpd_opposition(request: Request):
+    """Confirm name-based officer deletions for an RGPD opposition. Admin only."""
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Corps invalide."})
+
+    officer_ids = body.get("officer_ids") or []
+    opposition_id = body.get("opposition_id")
+
+    if not officer_ids:
+        return JSONResponse(status_code=400, content={"error": "Aucun dirigeant sélectionné."})
+    if not opposition_id:
+        return JSONResponse(status_code=400, content={"error": "L'identifiant de l'opposition est requis."})
+
+    deleted_count = 0
+    async with get_conn() as conn:
+        # Delete officers by ID (one by one for safety — list sizes are small)
+        for oid in officer_ids:
+            try:
+                result = await conn.execute(
+                    "DELETE FROM officers WHERE id = %s RETURNING id",
+                    (int(oid),)
+                )
+                deleted_count += result.rowcount
+            except (ValueError, TypeError):
+                continue
+
+        # Update the opposition record's result_summary
+        if deleted_count > 0:
+            await conn.execute(
+                """UPDATE rgpd_oppositions
+                   SET result_summary = result_summary || %s
+                   WHERE id = %s""",
+                (f" + {deleted_count} dirigeant(s) confirmé(s) supprimé(s)", opposition_id)
+            )
+
+        await conn.commit()
+
+    logger.info("admin.rgpd_confirm", extra={"opposition_id": opposition_id, "deleted": deleted_count, "by": admin.username})
+    return {
+        "ok": True,
+        "deleted_officers": deleted_count,
+        "opposition_id": opposition_id,
+    }
+
+
 @router.delete("/system-log")
 async def clear_system_log(request: Request):
     """Clear old system log entries. Admin only."""
