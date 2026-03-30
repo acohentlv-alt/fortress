@@ -136,6 +136,9 @@ function _updateUserDisplay(user) {
 
 function _showIntroPage() {
     _showSidebar(false);
+    if (window.location.hash !== '#/intro') {
+        history.replaceState(null, '', '#/intro');
+    }
     renderIntro(getPageContent());
 }
 

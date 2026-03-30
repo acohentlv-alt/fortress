@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Cookie settings
 _COOKIE_NAME = "fortress_session"
-_COOKIE_MAX_AGE = 86400  # 24 hours
+_COOKIE_MAX_AGE = 2_592_000  # 30 days
 
 
 @router.post("/login")

@@ -10,7 +10,7 @@ Session flow:
   2. All /api/* requests → middleware reads cookie → attaches user to request.state
   3. POST /api/auth/logout → clears cookie
 
-Session tokens are signed with SESSION_SECRET (from settings) and expire after 24h.
+Session tokens are signed with SESSION_SECRET (from settings) and expire after 30 days.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.auth")
 
-# Session token lifetime: 24 hours
-_SESSION_MAX_AGE = 86400
+# Session token lifetime: 30 days
+_SESSION_MAX_AGE = 2_592_000
 
 # Lazy-init serializer (needs settings.session_secret)
 _serializer: TimedSerializer | None = None
