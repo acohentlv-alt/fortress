@@ -28,6 +28,7 @@ export function renderIntro(container) {
         mainContent.style.background = 'transparent';
     }
     document.body.style.overflow = 'auto';
+    document.body.style.background = '#0a0a0f';
 
     container.innerHTML = `
         <div class="landing">
@@ -506,5 +507,6 @@ export function renderIntro(container) {
         if (handleScroll) window.removeEventListener('scroll', handleScroll);
         observer.disconnect();
         counterObserver.disconnect();
+        document.body.style.background = '';
     });
 }
