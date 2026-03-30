@@ -29,6 +29,7 @@ from psycopg.types.json import Json
 from fortress.api.column_mapper import MappingResult, map_columns, normalize_siren
 from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
+from fortress.api.routes.dashboard import _invalidate_cache
 
 router = APIRouter(prefix="/api/client", tags=["client"])
 logger = logging.getLogger("fortress.api.client")
@@ -110,7 +111,7 @@ async def upload_client_file(request: Request, file: UploadFile = File(...)):
                     # Savepoint per row: if one row fails, only that
                     # savepoint rolls back — the outer transaction stays clean.
                     async with conn.transaction():
-                        await _ingest_row(conn, row, headers, mapping, stats, batch_id)
+                        await _ingest_row(conn, row, headers, mapping, stats, batch_id, workspace_id)
                 except Exception as exc:
                     stats["rows_skipped"] += 1
                     err_msg = f"Row {row_idx + 2}: {type(exc).__name__}: {exc}"
@@ -336,13 +337,14 @@ async def clear_client_sirens(request: Request):
 
     try:
         async with get_conn() as conn:
-            # Get upload job batch_names to clear their tags (scoped)
+            # Get upload job batch_names and batch_ids to clear their tags and logs (scoped)
             jobs = await conn.execute(
-                f"SELECT batch_name FROM batch_data WHERE mode = 'upload' {ws_scope}",
+                f"SELECT batch_id, batch_name FROM batch_data WHERE mode = 'upload' {ws_scope}",
                 ws_params if ws_params else None,
             )
             job_rows = await jobs.fetchall()
-            batch_names = [r[0] for r in job_rows] if job_rows else []
+            batch_ids = [r[0] for r in job_rows] if job_rows else []
+            batch_names = [r[1] for r in job_rows] if job_rows else []
 
             deleted_tags = 0
             for qn in batch_names:
@@ -352,6 +354,10 @@ async def clear_client_sirens(request: Request):
                 )
                 deleted_tags += res.rowcount
 
+            # Delete batch_log rows before deleting batch_data
+            for bid in batch_ids:
+                await conn.execute("DELETE FROM batch_log WHERE batch_id = %s", (bid,))
+
             # Delete the upload jobs themselves (scoped)
             res = await conn.execute(
                 f"DELETE FROM batch_data WHERE mode = 'upload' {ws_scope}",
@@ -360,6 +366,7 @@ async def clear_client_sirens(request: Request):
             deleted_jobs = res.rowcount
             await conn.commit()
 
+        _invalidate_cache()
         return {
             "cleared": True,
             "deleted_jobs": deleted_jobs,
@@ -375,7 +382,7 @@ async def clear_client_sirens(request: Request):
 
 async def _ingest_row(
     conn, row: list, headers: list[str],
-    mapping: MappingResult, stats: dict, batch_id: str,
+    mapping: MappingResult, stats: dict, batch_id: str, workspace_id=None,
 ):
     """Ingest a single row into companies, contacts, and officers tables."""
 
@@ -428,9 +435,9 @@ async def _ingest_row(
 
     # ── Audit trail ──
     await conn.execute("""
-        INSERT INTO batch_log (batch_id, siren, action, result, timestamp)
-        VALUES (%s, %s, 'upload', 'success', %s)
-    """, (batch_id, siren, datetime.now(tz=timezone.utc)))
+        INSERT INTO batch_log (batch_id, siren, action, result, timestamp, workspace_id)
+        VALUES (%s, %s, 'upload', 'success', %s, %s)
+    """, (batch_id, siren, datetime.now(tz=timezone.utc), workspace_id))
 
 
 async def _upsert_company(conn, siren: str, fields: dict, extra: dict, stats: dict):

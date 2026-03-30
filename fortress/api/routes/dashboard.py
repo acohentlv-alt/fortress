@@ -28,6 +28,10 @@ def _set_cache(key: str, data):
     _cache[key] = {"data": data, "ts": time.time()}
 
 
+def _invalidate_cache():
+    _cache.clear()
+
+
 @router.get("/stats")
 async def get_stats(request: Request):
     """Dashboard statistics — scoped by workspace."""
@@ -69,7 +73,7 @@ async def get_stats(request: Request):
             COUNT(*) FILTER (WHERE cs.website IS NOT NULL)              AS with_website,
             COUNT(DISTINCT co.departement)
                 FILTER (WHERE co.departement IS NOT NULL)               AS departments_covered,
-            (SELECT COUNT(*) FROM batch_data WHERE 1=1 {jobs_clause})   AS total_jobs,
+            (SELECT COUNT(*) FROM batch_data WHERE status != 'deleted' {jobs_clause})   AS total_jobs,
             (SELECT COUNT(*) FROM batch_data
              WHERE status = 'completed' {jobs_clause})                  AS completed_jobs,
             (SELECT COUNT(*) FROM batch_data
@@ -103,7 +107,7 @@ async def get_recent_activity(request: Request):
                triage_black, triage_green, triage_yellow, triage_red,
                created_at, updated_at, worker_id
         FROM batch_data
-        WHERE 1=1 {ws_filter}
+        WHERE status != 'deleted' {ws_filter}
         ORDER BY updated_at DESC
         LIMIT 10
     """, ws_params if ws_params else None)
@@ -358,24 +362,24 @@ async def get_analysis(request: Request):
         audit_stats, audit_24h, outcomes = await asyncio.gather(
             _fetch_all_sem(f"""
                 SELECT
-                    action,
+                    bl.action,
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE result = 'success') AS success,
-                    ROUND(AVG(duration_ms) FILTER (WHERE result = 'success')) AS avg_time_ms,
-                    MAX(timestamp) AS last_run
-                FROM batch_log
-                WHERE action IN ('maps_lookup', 'website_crawl') {batch_ws}
-                GROUP BY action
+                    COUNT(*) FILTER (WHERE bl.result = 'success') AS success,
+                    ROUND(AVG(bl.duration_ms) FILTER (WHERE bl.result = 'success')) AS avg_time_ms,
+                    MAX(bl.timestamp) AS last_run
+                FROM batch_log bl JOIN batch_data bd ON bd.batch_id = bl.batch_id AND bd.status != 'deleted'
+                WHERE bl.action IN ('maps_lookup', 'website_crawl') {batch_ws.replace('workspace_id', 'bl.workspace_id')}
+                GROUP BY bl.action
             """, batch_ws_params if batch_ws_params else None),
             _fetch_all_sem(f"""
                 SELECT
-                    action,
+                    bl.action,
                     COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE result = 'success') AS success
-                FROM batch_log
-                WHERE action IN ('maps_lookup', 'website_crawl')
-                  AND timestamp >= NOW() - INTERVAL '24 hours' {batch_ws}
-                GROUP BY action
+                    COUNT(*) FILTER (WHERE bl.result = 'success') AS success
+                FROM batch_log bl JOIN batch_data bd ON bd.batch_id = bl.batch_id AND bd.status != 'deleted'
+                WHERE bl.action IN ('maps_lookup', 'website_crawl')
+                  AND bl.timestamp >= NOW() - INTERVAL '24 hours' {batch_ws.replace('workspace_id', 'bl.workspace_id')}
+                GROUP BY bl.action
             """, batch_ws_params if batch_ws_params else None),
             _fetch_all_sem(f"""
                 SELECT outcome, COUNT(*) AS count
@@ -1172,14 +1176,23 @@ async def delete_sector_tags(sector_name: str, request: Request):
         )
         tag_count = deleted.rowcount or 0
 
-        # Soft-delete jobs (scoped)
+        # Soft-delete jobs and collect their batch_ids for batch_log cleanup
+        sector_batch_ids: list = []
         for name in names:
-            await conn.execute(
-                f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_name = %s AND status != 'deleted' {ws_scope}",
+            bids_result = await conn.execute(
+                f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_name = %s AND status != 'deleted' {ws_scope} RETURNING batch_id",
                 (name,) + ws_params,
             )
+            for r in await bids_result.fetchall():
+                sector_batch_ids.append(r[0])
+
+        # Remove batch_log for deleted batches
+        for bid in sector_batch_ids:
+            await conn.execute("DELETE FROM batch_log WHERE batch_id = %s", (bid,))
+
         await conn.commit()
 
+    _invalidate_cache()
     return {"deleted": True, "sector": sector_name, "tags_removed": tag_count, "jobs_affected": len(names)}
 
 
@@ -1216,6 +1229,7 @@ async def delete_department_tags(dept: str, request: Request):
     if tag_count == 0:
         return JSONResponse(status_code=404, content={"error": "Aucun tag trouvé pour ce département"})
 
+    _invalidate_cache()
     return {"deleted": True, "department": dept, "tags_removed": tag_count}
 
 
@@ -1256,6 +1270,12 @@ async def delete_job_group(batch_name: str, request: Request):
             (batch_name,) + ws_params,
         )
         tag_count = tag_result.rowcount or 0
+
+        # Remove batch_log for deleted batches
+        for bid in job_ids:
+            await conn.execute("DELETE FROM batch_log WHERE batch_id = %s", (bid,))
+
         await conn.commit()
 
+    _invalidate_cache()
     return {"deleted": True, "batch_name": batch_name, "jobs_deleted": len(job_ids), "tags_removed": tag_count}

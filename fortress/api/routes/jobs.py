@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
+from fortress.api.routes.dashboard import _invalidate_cache
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -138,7 +139,12 @@ async def delete_job(batch_id: str, request: Request):
         )
         deleted_tags = deleted_tags_result.rowcount or 0
 
+        # 3. Delete batch_log for this batch
+        await conn.execute("DELETE FROM batch_log WHERE batch_id = %s", (batch_id,))
+
         await conn.commit()
+
+    _invalidate_cache()
 
     await log_activity(
         user_id=getattr(user, 'id', None),
