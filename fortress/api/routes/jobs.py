@@ -282,6 +282,87 @@ async def get_job(batch_id: str, request: Request):
     return {**job, "departments": depts, "pending_links": pending_links}
 
 
+@router.get("/{batch_id}/summary")
+async def get_job_summary(batch_id: str, request: Request):
+    """Batch summary — why results were low, triage breakdown, shortfall reason."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    job = await fetch_one(
+        f"""SELECT batch_size, total_companies, companies_scraped, companies_qualified,
+                   companies_failed, triage_black, triage_green, triage_yellow, triage_red,
+                   shortfall_reason
+            FROM batch_data sj
+            WHERE sj.batch_id = %s {ws_filter}""",
+        (batch_id,) + ws_params,
+    )
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
+
+    # Aggregate batch_log by action + result
+    log_rows = await fetch_all(
+        "SELECT action, result, COUNT(*) AS cnt FROM batch_log WHERE batch_id = %s GROUP BY action, result",
+        (batch_id,),
+    )
+
+    # Build lookup: (action, result) -> count
+    log_counts: dict = {}
+    for row in (log_rows or []):
+        log_counts[(row["action"], row["result"])] = row["cnt"]
+
+    def _log(action, result):
+        return log_counts.get((action, result), 0)
+
+    target = job.get("batch_size") or job.get("total_companies") or 0
+    found = job.get("companies_scraped") or 0
+    qualified = job.get("companies_qualified") or 0
+    failed = job.get("companies_failed") or 0
+    black = job.get("triage_black") or 0
+    green = job.get("triage_green") or 0
+    yellow = job.get("triage_yellow") or 0
+    red = job.get("triage_red") or 0
+
+    # website crawl failures: action=website_crawl, result=fail (or error/timeout)
+    website_crawl_failed = (
+        _log("website_crawl", "fail")
+        + _log("website_crawl", "error")
+        + _log("website_crawl", "timeout")
+    )
+
+    # no sirene match: action=maps_lookup, result=no_data or no_match
+    no_sirene_match = (
+        _log("maps_lookup", "no_data")
+        + _log("maps_lookup", "no_match")
+        + _log("maps_lookup", "not_found")
+    )
+
+    return {
+        "target": target,
+        "found": found,
+        "qualified": qualified,
+        "failed": failed,
+        "triage": {
+            "black": black,
+            "green": green,
+            "yellow": yellow,
+            "red": red,
+        },
+        "breakdown": {
+            "already_enriched": green,
+            "blacklisted": black,
+            "new_processed": yellow + red,
+            "website_crawl_failed": website_crawl_failed,
+            "no_sirene_match": no_sirene_match,
+        },
+        "shortfall_reason": job.get("shortfall_reason"),
+    }
+
+
 @router.get("/{batch_id}/companies")
 async def get_job_companies(
     batch_id: str,

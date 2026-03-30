@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getJobSummary, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
@@ -18,9 +18,10 @@ let _currentSort = 'completude';
 export async function renderJob(container, batchId) {
     batchId = decodeURIComponent(batchId);
 
-    const [job, quality] = await Promise.all([
+    const [job, quality, summary] = await Promise.all([
         getJob(batchId),
         getJobQuality(batchId),
+        getJobSummary(batchId),
     ]);
 
     if (!job || job._ok === false || job.error) {
@@ -42,11 +43,68 @@ export async function renderJob(container, batchId) {
     const progressPct = Math.min(100, Math.round((qualified / batchSize) * 100));
     const q = quality || {};
 
+    // ── Build summary card HTML ──────────────────────────────────
+    function buildSummaryCard(s) {
+        if (!s) return '';
+        const target = s.target || 0;
+        const qual = s.qualified || 0;
+        const black = (s.triage && s.triage.black) || 0;
+        const green = (s.triage && s.triage.green) || 0;
+        const yellow = (s.triage && s.triage.yellow) || 0;
+        const red = (s.triage && s.triage.red) || 0;
+        const total = black + green + yellow + red;
+
+        // Triage bar: colored segments proportional to count
+        const triageBar = total > 0 ? `
+            <div style="display:flex; height:8px; border-radius:4px; overflow:hidden; margin:12px 0">
+                <div style="flex:${black}; background:#555" title="${black} en liste noire"></div>
+                <div style="flex:${green}; background:#00cec9" title="${green} déjà enrichies"></div>
+                <div style="flex:${yellow}; background:#fdcb6e" title="${yellow} enrichissements partiels"></div>
+                <div style="flex:${red}; background:#e74c3c" title="${red} nouvelles entreprises"></div>
+            </div>
+            <div style="display:flex; gap:var(--space-md); flex-wrap:wrap; font-size:var(--font-xs); color:var(--text-muted); margin-bottom:var(--space-md)">
+                ${black > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#555;border-radius:2px;margin-right:4px"></span>${black} liste noire</span>` : ''}
+                ${green > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#00cec9;border-radius:2px;margin-right:4px"></span>${green} déjà enrichie${green > 1 ? 's' : ''}</span>` : ''}
+                ${yellow > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#fdcb6e;border-radius:2px;margin-right:4px"></span>${yellow} partiel${yellow > 1 ? 's' : ''}</span>` : ''}
+                ${red > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#e74c3c;border-radius:2px;margin-right:4px"></span>${red} nouvelle${red > 1 ? 's' : ''}</span>` : ''}
+            </div>
+        ` : '';
+
+        const breakdownLines = [];
+        if (green > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#00cec9">🟢</span> <span>${green} déjà enrichie${green > 1 ? 's' : ''} — ignorée${green > 1 ? 's' : ''} (cache Maps complet)</span></div>`);
+        if (black > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span>⚫</span> <span>${black} en liste noire ou sans nom</span></div>`);
+        if (red > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#e74c3c">🔴</span> <span>${red} nouvelle${red > 1 ? 's' : ''} entreprise${red > 1 ? 's' : ''} — traitement complet</span></div>`);
+        if (yellow > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#fdcb6e">🟡</span> <span>${yellow} enrichissement${yellow > 1 ? 's' : ''} partiel${yellow > 1 ? 's' : ''}</span></div>`);
+        if ((s.failed || 0) > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#e74c3c">❌</span> <span>${s.failed} échec${s.failed > 1 ? 's' : ''}</span></div>`);
+
+        const shortfallHtml = s.shortfall_reason
+            ? `<div style="margin-top:var(--space-md);padding:12px;background:rgba(253,203,110,0.1);border-left:3px solid #fdcb6e;border-radius:4px;font-size:var(--font-sm);color:var(--text-secondary)">💡 ${escapeHtml(s.shortfall_reason)}</div>`
+            : '';
+
+        return `
+            <div class="card" style="margin-bottom:var(--space-xl); border-left:3px solid var(--accent)">
+                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
+                    Résumé du batch
+                </h3>
+                <p style="font-size:var(--font-lg); font-weight:700; margin-bottom:var(--space-md)">
+                    ${qual} entreprise${qual > 1 ? 's' : ''} qualifiée${qual > 1 ? 's' : ''} sur ${target} demandée${target > 1 ? 's' : ''}
+                </p>
+                ${triageBar}
+                <div style="font-size:var(--font-sm); color:var(--text-secondary)">
+                    ${breakdownLines.join('')}
+                </div>
+                ${shortfallHtml}
+            </div>
+        `;
+    }
+
     container.innerHTML = `
         ${breadcrumb([
         { label: 'Dashboard', href: '#/' },
         { label: job.batch_name },
     ])}
+
+        ${buildSummaryCard(summary)}
 
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-xl); flex-wrap:wrap; margin-bottom:var(--space-2xl)">
             <div>

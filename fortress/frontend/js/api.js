@@ -188,6 +188,12 @@ export async function getJobQuality(batchId) {
     return await request(`/jobs/${encodeURIComponent(batchId)}/quality`);
 }
 
+export async function getJobSummary(batchId) {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/summary`, { credentials: 'include' });
+    if (!res.ok) return null;
+    return res.json();
+}
+
 // ── Companies ────────────────────────────────────────────────────
 export async function searchCompanies(query, {
     limit = 50, offset = 0, sortBy = '', order = '', department = '', sector = '',

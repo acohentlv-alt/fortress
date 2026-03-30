@@ -24,6 +24,36 @@ import { t, getLang } from '../i18n.js';
 
 let pollInterval = null;
 
+/**
+ * Build the summary HTML from polled job data (no extra API call needed).
+ * Uses triage counts already present in the job detail response.
+ */
+function renderSummary(job) {
+    const green = job.triage_green || 0;
+    const black = job.triage_black || 0;
+    const yellow = job.triage_yellow || 0;
+    const red = job.triage_red || 0;
+    const failed = job.companies_failed || 0;
+    const shortfall = job.shortfall_reason;
+
+    const lines = [];
+    if (green > 0) lines.push(`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="color:#00cec9;font-size:1.1em">🟢</span> <span>${green} déjà enrichie${green > 1 ? 's' : ''} (ignorée${green > 1 ? 's' : ''})</span></div>`);
+    if (black > 0) lines.push(`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="font-size:1.1em">⚫</span> <span>${black} en liste noire ou sans nom</span></div>`);
+    if (red > 0) lines.push(`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="color:#e74c3c;font-size:1.1em">🔴</span> <span>${red} nouvelle${red > 1 ? 's' : ''} entreprise${red > 1 ? 's' : ''} (traitement complet)</span></div>`);
+    if (yellow > 0) lines.push(`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="color:#fdcb6e;font-size:1.1em">🟡</span> <span>${yellow} enrichissement${yellow > 1 ? 's' : ''} partiel${yellow > 1 ? 's' : ''}</span></div>`);
+    if (failed > 0) lines.push(`<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><span style="color:#e74c3c;font-size:1.1em">❌</span> <span>${failed} échec${failed > 1 ? 's' : ''}</span></div>`);
+
+    if (shortfall) {
+        lines.push(`<div style="margin-top:12px;padding:12px;background:rgba(253,203,110,0.1);border-left:3px solid #fdcb6e;border-radius:4px;font-size:var(--font-sm);color:var(--text-secondary)">💡 ${escapeHtml(shortfall)}</div>`);
+    }
+
+    if (lines.length === 0) {
+        return '<span style="color:var(--text-muted)">En attente des premiers résultats...</span>';
+    }
+
+    return lines.join('');
+}
+
 export async function renderMonitor(container, batchId) {
     // Clear any previous polling (safety net — cleanup system handles this too)
     if (pollInterval) {
@@ -191,6 +221,14 @@ async function renderJobMonitor(container, batchId) {
             <div style="display:flex; gap:var(--space-2xl); justify-content:center" id="mon-gauges">—</div>
         </div>
 
+        <!-- Batch Summary -->
+        <div class="card" style="margin-bottom:var(--space-xl)">
+            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                Résumé de la recherche
+            </h3>
+            <div id="mon-summary">—</div>
+        </div>
+
         <!-- Completion CTA (hidden by default) -->
         <div id="mon-completion" style="display:none; margin-bottom:var(--space-xl)"></div>
 
@@ -231,6 +269,7 @@ async function renderJobMonitor(container, batchId) {
         pollWarning: document.getElementById('mon-poll-warning'),
         completion: document.getElementById('mon-completion'),
         cancelBtn: document.getElementById('mon-cancel-btn'),
+        summary: document.getElementById('mon-summary'),
     };
 
     // ── State tracking ──────────────────────────────────────────
@@ -476,6 +515,11 @@ async function renderJobMonitor(container, batchId) {
                      <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">${t('monitor.completionPartialResults')}</a>
                  </div>
              `;
+        }
+
+        // ── Batch Summary ───────────────────────────────────────
+        if ($.summary) {
+            $.summary.innerHTML = renderSummary(job);
         }
 
         // ── Footer ──────────────────────────────────────────────
