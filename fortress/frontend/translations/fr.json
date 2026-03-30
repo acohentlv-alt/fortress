@@ -616,7 +616,7 @@
     "queries": "🔍 Que cherchez-vous ?",
     "queriesHint": "Décrivez votre recherche en incluant le <strong>secteur</strong> et la <strong>localisation</strong>. Chaque terme sera recherché séparément sur Google Maps.",
     "addQuery": "＋ Ajouter un terme de recherche",
-    "addQueryTip": "💡 Ajoutez des variations (camping + ville, camping + code postal) pour maximiser la couverture",
+    "addQueryTip": "💡 Chaque ligne = une recherche Google Maps. Variez les combinaisons (secteur + ville, secteur + code postal, secteur + département) pour couvrir plus de résultats.",
     "removeQuery": "Supprimer",
     "removeQueryTitle": "Supprimer cette recherche",
     "queryPlaceholder": "ex: camping Perpignan",
