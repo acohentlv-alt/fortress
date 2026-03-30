@@ -107,7 +107,7 @@ async def create_user(request: Request):
 
     async with get_conn() as conn:
         # Check if username already exists
-        cur = await conn.execute("SELECT id FROM users WHERE username = %s", (username,))
+        cur = await conn.execute("SELECT id FROM users WHERE username = %s AND (active = TRUE OR active IS NULL)", (username,))
         if await cur.fetchone():
             return JSONResponse(status_code=409, content={"error": f"L'identifiant '{username}' existe déjà."})
 
@@ -207,7 +207,7 @@ async def update_user(user_id: int, request: Request):
         # Check uniqueness for the new username (ignore current user's own row)
         async with get_conn() as conn:
             cur = await conn.execute(
-                "SELECT id FROM users WHERE username = %s AND id != %s",
+                "SELECT id FROM users WHERE username = %s AND id != %s AND (active = TRUE OR active IS NULL)",
                 (new_username, user_id)
             )
             if await cur.fetchone():
@@ -244,7 +244,7 @@ async def deactivate_user(user_id: int, request: Request):
 
     async with get_conn() as conn:
         cur = await conn.execute(
-            "UPDATE users SET active = FALSE WHERE id = %s AND (active = TRUE OR active IS NULL) RETURNING username",
+            "UPDATE users SET active = FALSE, username = username || '_deactivated_' || id::text WHERE id = %s AND (active = TRUE OR active IS NULL) RETURNING username",
             (user_id,)
         )
         row = await cur.fetchone()

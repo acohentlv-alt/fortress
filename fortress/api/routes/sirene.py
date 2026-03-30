@@ -92,8 +92,13 @@ async def search_sirene(
                     # 1-2 characters → simple prefix on denomination (fast LIKE)
                     where_parts.append("denomination LIKE %s")
                     params.append(f"{clean_q.upper()}%")
+                elif department:
+                    # 3+ chars WITH department filter → use ILIKE (B-tree on dept narrows to ~100K rows first)
+                    # Trigram similarity on 14.7M rows is too slow even with department filter
+                    where_parts.append("denomination ILIKE %s")
+                    params.append(f"%{clean_q.upper()}%")
                 else:
-                    # 3+ characters → trigram fuzzy search (GIN index)
+                    # 3+ characters, no department → trigram fuzzy search (GIN index)
                     # Use similarity() function — NOT the % operator (conflicts with psycopg)
                     await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
                     where_parts.append("similarity(denomination, %s) > 0.15")
