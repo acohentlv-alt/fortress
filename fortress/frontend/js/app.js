@@ -21,6 +21,21 @@ import { renderLegal } from './pages/legal.js';
 import { getDashboardStats, getCurrentUser, logoutUser, getCachedUser } from './api.js';
 import { initI18n, changeLanguage, getLang, t, translateDOM, onLanguageChange } from './i18n.js';
 
+// ── Console Error Capture (for bug reports) ─────────────────────
+const _consoleErrors = [];
+const _origConsoleError = console.error;
+console.error = function (...args) {
+    _consoleErrors.push({
+        time: new Date().toISOString(),
+        message: args.map(a => {
+            try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+            catch { return String(a); }
+        }).join(' ')
+    });
+    if (_consoleErrors.length > 10) _consoleErrors.shift();
+    _origConsoleError.apply(console, args);
+};
+
 // ── Navigation Generation Counter ───────────────────────────────
 // Each navigate() call increments _navGeneration. Page handlers
 // receive this value and call isStale(gen) after every `await`
@@ -138,6 +153,7 @@ function _showLoginPage() {
         _updateUserDisplay(user);
         _setupLogout();
         _setupRunningJobs();
+        _wireBugReportButton();
         // Show admin section for admin users only
         const adminSection = document.getElementById('nav-section-admin');
         const adminNav = document.getElementById('nav-admin');
@@ -273,6 +289,111 @@ function _setupRunningJobs() {
     _runningJobsInterval = setInterval(checkRunningJobs, 30000);
 }
 
+// ── Bug Report Modal ────────────────────────────────────────────
+
+function _wireBugReportButton() {
+    const btn = document.getElementById('btn-bug-report');
+    if (btn) btn.onclick = _openBugReportModal;
+}
+
+function _openBugReportModal() {
+    if (document.querySelector('.bug-report-overlay')) return;
+
+    const user = getCachedUser();
+    if (!user) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'bug-report-overlay';
+
+    overlay.innerHTML = `
+        <div class="bug-report-modal">
+            <h3>Signaler un bug</h3>
+            <label for="bug-desc">Décrivez le problème *</label>
+            <textarea id="bug-desc" placeholder="Que s'est-il passé ? Qu'attendiez-vous ?"></textarea>
+            <div class="bug-report-file-row">
+                <label for="bug-file">Capture d'écran (optionnel, max 5 Mo)</label>
+                <input type="file" id="bug-file" accept=".png,.jpg,.jpeg,.gif" />
+            </div>
+            <div class="bug-report-actions">
+                <button class="btn btn-ghost" id="bug-cancel">Annuler</button>
+                <button class="btn btn-primary" id="bug-send">Envoyer</button>
+            </div>
+            <div class="bug-report-status" id="bug-status"></div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+    document.getElementById('bug-cancel').addEventListener('click', () => overlay.remove());
+
+    const escHandler = (e) => {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    document.getElementById('bug-send').addEventListener('click', async () => {
+        const desc = document.getElementById('bug-desc').value.trim();
+        const fileInput = document.getElementById('bug-file');
+        const statusEl = document.getElementById('bug-status');
+        const sendBtn = document.getElementById('bug-send');
+
+        if (!desc) {
+            statusEl.innerHTML = '<span style="color:var(--danger)">Veuillez décrire le problème.</span>';
+            return;
+        }
+        if (fileInput.files.length > 0 && fileInput.files[0].size > 5 * 1024 * 1024) {
+            statusEl.innerHTML = '<span style="color:var(--danger)">Le fichier dépasse 5 Mo.</span>';
+            return;
+        }
+
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Envoi...';
+        statusEl.innerHTML = '';
+
+        const context = {
+            username: user.username,
+            role: user.role,
+            workspace_id: user.workspace_id || null,
+            page_url: window.location.href,
+            timestamp: new Date().toISOString(),
+            user_agent: navigator.userAgent,
+            screen: `${window.screen.width}x${window.screen.height}`,
+            console_errors: _consoleErrors.slice(-5)
+        };
+
+        const formData = new FormData();
+        formData.append('description', desc);
+        formData.append('context', JSON.stringify(context));
+        if (fileInput.files.length > 0) {
+            formData.append('screenshot', fileInput.files[0]);
+        }
+
+        try {
+            const resp = await fetch('/api/bug-report', {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: formData
+            });
+            if (resp.ok) {
+                statusEl.innerHTML = '<span style="color:var(--success)">Merci ! Votre rapport a été envoyé.</span>';
+                setTimeout(() => overlay.remove(), 1500);
+            } else {
+                const data = await resp.json().catch(() => ({}));
+                statusEl.innerHTML = `<span style="color:var(--danger)">${data.error || "Erreur lors de l'envoi."}</span>`;
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Envoyer';
+            }
+        } catch {
+            statusEl.innerHTML = '<span style="color:var(--danger)">Erreur réseau. Réessayez.</span>';
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Envoyer';
+        }
+    });
+}
+
 // ── App Init ─────────────────────────────────────────────────────
 
 async function initApp() {
@@ -324,6 +445,7 @@ async function initApp() {
     }
     navigate();
     _setupRunningJobs();
+    _wireBugReportButton();
 }
 
 // ── Sidebar Collapse Toggle ─────────────────────────────────────

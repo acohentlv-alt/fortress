@@ -27,7 +27,7 @@ from starlette.requests import Request as StarletteRequest
 
 from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
-from fortress.api.routes import activity, admin, auth as auth_routes, batch, blacklist, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
+from fortress.api.routes import activity, admin, auth as auth_routes, batch, blacklist, bug_report, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
@@ -97,6 +97,20 @@ async def lifespan(app: FastAPI):
                         email VARCHAR(200) NOT NULL,
                         company VARCHAR(200) DEFAULT '',
                         message TEXT NOT NULL,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS bug_reports (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(100) NOT NULL,
+                        role VARCHAR(20),
+                        workspace_id INTEGER,
+                        description TEXT NOT NULL,
+                        context TEXT,
+                        screenshot_name VARCHAR(255),
+                        screenshot_data TEXT,
+                        page_url TEXT,
                         created_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
@@ -477,6 +491,7 @@ app.include_router(contacts_list.router)
 app.include_router(contact.router)
 app.include_router(activity.router)
 app.include_router(blacklist.router, prefix="/api/blacklist")
+app.include_router(bug_report.router)
 
 from fortress.api.routes.websocket import router as websocket_router
 app.include_router(websocket_router)

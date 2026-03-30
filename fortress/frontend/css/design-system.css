@@ -804,3 +804,94 @@ a:hover { color: var(--accent); }
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* ── Bug Report Button ────────────────────────────────────────── */
+.bug-report-btn {
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+    line-height: 1;
+}
+.bug-report-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+
+/* ── Bug Report Modal ─────────────────────────────────────────── */
+.bug-report-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+}
+.bug-report-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-2xl);
+    width: 90%;
+    max-width: 520px;
+    box-shadow: var(--shadow-lg);
+}
+.bug-report-modal h3 {
+    margin: 0 0 var(--space-lg) 0;
+    font-size: var(--font-lg);
+    color: var(--text-primary);
+}
+.bug-report-modal textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: var(--space-md);
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-family);
+    font-size: var(--font-base);
+    resize: vertical;
+    outline: none;
+    box-sizing: border-box;
+}
+.bug-report-modal textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.bug-report-modal label {
+    display: block;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xs);
+    font-weight: 500;
+}
+.bug-report-file-row {
+    margin-top: var(--space-md);
+}
+.bug-report-file-row input[type="file"] {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+.bug-report-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-md);
+    margin-top: var(--space-xl);
+}
+.bug-report-status {
+    margin-top: var(--space-md);
+    font-size: var(--font-sm);
+    text-align: center;
+}
