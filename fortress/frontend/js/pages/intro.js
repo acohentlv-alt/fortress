@@ -34,14 +34,16 @@ export function renderIntro(container) {
         <div class="landing">
             <!-- ═══════ Fixed Navigation ═══════ -->
             <nav class="land-nav">
-                <a href="#/intro" class="land-nav-logo">
-                    <span class="land-nav-logo-icon">🏰</span>
-                    <span>Fortress</span>
-                </a>
-                <div class="land-nav-links">
+                <div class="land-nav-left">
+                    <a href="#/intro" class="land-nav-logo">
+                        <span class="land-nav-logo-icon">🏰</span>
+                        <span>Fortress</span>
+                    </a>
                     <a href="#section-how" class="land-nav-link" data-scroll="how">${t('intro.navHow')}</a>
                     <a href="#section-features" class="land-nav-link" data-scroll="features">${t('intro.navFeatures')}</a>
                     <a href="#section-contact" class="land-nav-link" data-scroll="contact">${t('intro.navContact')}</a>
+                </div>
+                <div class="land-nav-right">
                     <a href="#/login" class="land-nav-cta">${t('intro.navLogin')}</a>
                     <button class="land-lang-toggle" onclick="window.__toggleLang && window.__toggleLang()"
                         style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#f0f0f5; padding:4px 14px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; letter-spacing:0.5px; transition:background 0.2s;"

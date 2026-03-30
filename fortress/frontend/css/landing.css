@@ -50,6 +50,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0;
     background: rgba(10, 10, 15, 0.8);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
@@ -71,10 +72,16 @@
     font-size: 1.6rem;
 }
 
-.land-nav-links {
+.land-nav-left {
     display: flex;
     align-items: center;
-    gap: 32px;
+    gap: 24px;
+}
+
+.land-nav-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
 }
 
 .land-nav-link {
@@ -757,7 +764,8 @@
 /* ── Mobile Responsive ────────────────────────────────────────── */
 @media (max-width: 768px) {
     .land-nav { padding: 12px 20px; }
-    .land-nav-links { gap: 16px; }
+    .land-nav-left { gap: 12px; }
+    .land-nav-right { gap: 10px; }
     .land-nav-link { display: none; }
     .land-hero { padding: 100px 20px 60px; min-height: 90vh; }
     .land-section { padding: 60px 20px; }
