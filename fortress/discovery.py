@@ -1226,20 +1226,27 @@ async def run(batch_id: str) -> None:
                         workspace_id=batch_workspace_id,
                     )
 
-                # ── Cross-batch SIREN dedup (no workspace filter — SIRENE is shared) ──
+                # ── Cross-batch SIREN dedup (workspace-scoped via linked_siren) ──
                 if dept_filter:
                     async with pool.connection() as conn:
-                        cur = await conn.execute(
-                            """SELECT siren FROM companies
-                               WHERE departement = %s
-                               AND siren NOT LIKE 'MAPS%%'
-                               AND siren IN (
-                                   SELECT siren FROM contacts
-                                   WHERE source = 'google_maps'
-                                   AND (phone IS NOT NULL OR website IS NOT NULL)
-                               )""",
-                            (dept_filter,),
-                        )
+                        if batch_workspace_id is not None:
+                            cur = await conn.execute(
+                                """SELECT linked_siren FROM companies
+                                   WHERE departement = %s
+                                   AND siren LIKE 'MAPS%%'
+                                   AND linked_siren IS NOT NULL
+                                   AND workspace_id = %s""",
+                                (dept_filter, batch_workspace_id),
+                            )
+                        else:
+                            cur = await conn.execute(
+                                """SELECT linked_siren FROM companies
+                                   WHERE departement = %s
+                                   AND siren LIKE 'MAPS%%'
+                                   AND linked_siren IS NOT NULL
+                                   AND workspace_id IS NULL""",
+                                (dept_filter,),
+                            )
                         existing_sirens = await cur.fetchall()
                         for r in existing_sirens:
                             seen_sirens.add(r[0])
@@ -1247,6 +1254,7 @@ async def run(batch_id: str) -> None:
                         "discovery.siren_dedup_loaded",
                         existing=len(seen_sirens),
                         dept=dept_filter,
+                        workspace_id=batch_workspace_id,
                     )
 
                 # ── RGPD opposition list (preloaded for in-memory checks) ──
