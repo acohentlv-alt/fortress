@@ -1161,7 +1161,7 @@ async def _get_company_impl(siren: str, request=None):
             social_linkedin, social_facebook, social_twitter,
             social_instagram, social_tiktok, social_whatsapp, social_youtube,
             siren_match,
-            rating, review_count, maps_url, address, collected_at
+            rating, review_count, maps_url, address, siren_from_website, collected_at
         FROM contacts
         WHERE siren = %s
         ORDER BY collected_at DESC

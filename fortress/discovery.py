@@ -1060,6 +1060,7 @@ async def run(batch_id: str) -> None:
                                     social_tiktok=social.get("tiktok"),
                                     social_whatsapp=social.get("whatsapp"),
                                     social_youtube=social.get("youtube"),
+                                    siren_from_website=extracted_siren,
                                 )
                                 # Strip RGPD-suppressed data from crawl contact before persisting
                                 if crawl_contact.email and crawl_contact.email.lower().strip() in _opposition_emails:

@@ -128,6 +128,7 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_instagram TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS social_tiktok TEXT")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS match_confidence VARCHAR(10)")
+                await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS siren_from_website VARCHAR(9)")
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS shortfall_reason TEXT")
                 
                 # Index for Enrichment History timeline rendering performance

@@ -93,6 +93,7 @@ class Contact(BaseModel):
     social_youtube: str | None = None
     siren_match: bool | None = None
     match_confidence: str | None = None  # 'high', 'low', 'none' — Maps vs SIRENE match quality
+    siren_from_website: str | None = None  # SIREN extracted from crawled website
     rating: Decimal | None = None
     review_count: int | None = None
     maps_url: str | None = None

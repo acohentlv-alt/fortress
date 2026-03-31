@@ -159,7 +159,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
     const crawl = (contacts || []).find(c => c.source === 'website_crawl') || {};
 
     const _buildCrawlColumn = () => {
-        const sirenFromWebsite = (linkMethod === 'siren_website' && linkedCo) ? linkedCo.siren : null;
+        const sirenFromWebsite = crawl.siren_from_website || null;
         const hasCrawl = sirenFromWebsite || crawl.phone || crawl.email || crawl.website || crawl.social_linkedin || crawl.social_facebook;
         return `
         <div style="padding:var(--space-md); background:rgba(139,92,246,0.06); border:1px solid rgba(139,92,246,0.2); border-radius:var(--radius-md)">

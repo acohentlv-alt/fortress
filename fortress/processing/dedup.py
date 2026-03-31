@@ -126,14 +126,14 @@ async def upsert_contact(conn: Any, contact: Contact) -> None:
             social_linkedin, social_facebook, social_twitter,
             social_instagram, social_tiktok, social_whatsapp, social_youtube,
             siren_match, match_confidence,
-            rating, review_count, maps_url, collected_at
+            rating, review_count, maps_url, siren_from_website, collected_at
         )
         VALUES (
             %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s,
             %s, %s,
-            %s, %s, %s, %s
+            %s, %s, %s, %s, %s
         )
         ON CONFLICT (siren, source) DO UPDATE SET
             phone          = COALESCE(EXCLUDED.phone,          contacts.phone),
@@ -153,6 +153,7 @@ async def upsert_contact(conn: Any, contact: Contact) -> None:
             rating         = COALESCE(EXCLUDED.rating,         contacts.rating),
             review_count   = COALESCE(EXCLUDED.review_count,   contacts.review_count),
             maps_url       = COALESCE(EXCLUDED.maps_url,       contacts.maps_url),
+            siren_from_website = COALESCE(EXCLUDED.siren_from_website, contacts.siren_from_website),
             collected_at   = EXCLUDED.collected_at
         """,
         (
@@ -175,6 +176,7 @@ async def upsert_contact(conn: Any, contact: Contact) -> None:
             contact.rating,
             contact.review_count,
             contact.maps_url,
+            contact.siren_from_website,
             contact.collected_at or datetime.now(tz=timezone.utc),
         ),
     )
