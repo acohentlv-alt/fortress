@@ -39,7 +39,7 @@ export function renderGauge(pct, label, color = null) {
     const r = 20;
     const circumference = 2 * Math.PI * r;
     const offset = circumference - (pct / 100) * circumference;
-    const c = color || (pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)');
+    const c = color || (pct >= 70 ? 'var(--success)' : pct >= 30 ? 'var(--warning)' : 'var(--danger)');
 
     return `
         <div class="gauge">
@@ -156,7 +156,7 @@ export function completudeBar(company) {
     if (company.siret_siege) score++;
     if (company.naf_code) score++;
     const pct = Math.round((score / 8) * 100);
-    const cls = pct >= 80 ? 'high' : pct >= 50 ? 'medium' : 'low';
+    const cls = pct >= 70 ? 'high' : pct >= 30 ? 'medium' : 'low';
     return `
         <div class="completude-bar">
             <div class="completude-bar-fill ${cls}" style="width: ${pct}%"></div>

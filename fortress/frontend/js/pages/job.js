@@ -89,6 +89,20 @@ export async function renderJob(container, batchId) {
                 <p style="font-size:var(--font-lg); font-weight:700; margin-bottom:var(--space-md)">
                     ${qual} entreprise${qual > 1 ? 's' : ''} qualifiée${qual > 1 ? 's' : ''} sur ${target} demandée${target > 1 ? 's' : ''}
                 </p>
+                ${(() => {
+                    const yieldPct = target > 0 ? Math.round((qual / target) * 100) : 0;
+                    const yieldColor = yieldPct >= 70 ? '#10b981' : yieldPct >= 30 ? '#f59e0b' : '#ef4444';
+                    return `
+                    <div style="margin-bottom:var(--space-md)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
+                            <span style="font-size:var(--font-xs); color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.06em">Rendement</span>
+                            <span style="font-size:var(--font-sm); font-weight:700; color:${yieldColor}">${yieldPct}%</span>
+                        </div>
+                        <div style="height:6px; background:var(--bg-secondary); border-radius:3px; overflow:hidden">
+                            <div style="width:${yieldPct}%; height:100%; background:${yieldColor}; border-radius:3px; transition:width 0.4s ease"></div>
+                        </div>
+                    </div>`;
+                })()}
                 ${triageBar}
                 <div style="font-size:var(--font-sm); color:var(--text-secondary)">
                     ${breakdownLines.join('')}
@@ -140,7 +154,7 @@ export async function renderJob(container, batchId) {
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                <span style="font-weight:600">${t('job.progress')} — ${t('job.companiesCount', { count: batchSize, plural: batchSize > 1 ? 's' : '' })}</span>
+                <span style="font-weight:600">${job.status === 'completed' ? t('job.results') : t('job.progress')} — ${t('job.companiesCount', { count: batchSize, plural: batchSize > 1 ? 's' : '' })}</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
                     <span style="color:var(--text-secondary); font-weight:500">${qualified} ${t('job.foundLabel', { plural: qualified !== 1 ? 's' : '' })}</span>
                     ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">${t('job.pendingLinks', { count: job.pending_links, plural: job.pending_links > 1 ? 's' : '' })}</span>` : ''}

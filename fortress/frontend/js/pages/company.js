@@ -152,8 +152,28 @@ function _buildSocialSection(mc, siren) {
 // ── Context-aware breadcrumb ─────────────────────────────────────
 // ── Entity Link Banner ───────────────────────────────────────────────
 
-function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
+function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, contacts) {
     if (!co.siren || !co.siren.startsWith('MAPS')) return '';
+
+    // Extract website crawl data for third column
+    const crawl = (contacts || []).find(c => c.source === 'website_crawl') || {};
+
+    const _buildCrawlColumn = () => {
+        const hasCrawl = crawl.phone || crawl.email || crawl.website || crawl.social_linkedin || crawl.social_facebook;
+        return `
+        <div style="padding:var(--space-md); background:rgba(139,92,246,0.06); border:1px solid rgba(139,92,246,0.2); border-radius:var(--radius-md)">
+            <div style="font-weight:700; font-size:var(--font-sm); color:#8b5cf6; margin-bottom:var(--space-sm)">${t('company.websiteCrawlLabel')}</div>
+            <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
+                ${hasCrawl ? `
+                    ${crawl.phone ? `<div>📞 ${escapeHtml(crawl.phone)}</div>` : ''}
+                    ${crawl.email ? `<div>✉️ ${escapeHtml(crawl.email)}</div>` : ''}
+                    ${crawl.website ? `<div>🌐 ${escapeHtml(crawl.website)}</div>` : ''}
+                    ${crawl.social_linkedin ? `<div style="color:var(--text-secondary)">🔗 LinkedIn</div>` : ''}
+                    ${crawl.social_facebook ? `<div style="color:var(--text-secondary)">📘 Facebook</div>` : ''}
+                ` : `<div style="color:var(--text-disabled); font-style:italic">—</div>`}
+            </div>
+        </div>`;
+    };
 
     const _linkReasonLabel = (method) => {
         if (method === 'enseigne') return t('company.linkReasonEnseigne');
@@ -198,6 +218,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                         ${linkedCo.ville ? `<div style="color:var(--text-secondary)">${escapeHtml(linkedCo.ville)}</div>` : ''}
                     </div>
                 </div>
+                <!-- Third column: Website crawl data -->
+                ${_buildCrawlColumn()}
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
                 <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>
@@ -260,6 +282,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod) {
                         ${m.ville ? `<div style="color:var(--text-secondary)">${escapeHtml(m.ville)}</div>` : ''}
                     </div>
                 </div>
+                <!-- Third column: Website crawl data -->
+                ${_buildCrawlColumn()}
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
                 <button class="btn btn-primary btn-sm" id="btn-link-entity" data-maps="${co.siren}" data-target="${m.siren}" style="font-size:var(--font-sm)">${t('company.btnLinkYes')}</button>
@@ -281,6 +305,7 @@ function _initEntityLinkHandlers(container, siren) {
             if (!confirm(t('company.mergeConfirm', { maps: mapsSiren, target: targetSiren }))) return;
             mergeBtn.disabled = true;
             mergeBtn.textContent = t('company.merging');
+            if (_currentBatchId) sessionStorage.setItem('fortress_merge_from_batch', _currentBatchId);
             try {
                 const res = await fetch(`${window.__API_BASE || ''}/api/companies/${mapsSiren}/merge`, {
                     method: 'POST',
@@ -429,6 +454,15 @@ function _buildBreadcrumb(co, tags) {
         }
     }
 
+    // After merge, check sessionStorage for batch context
+    // (merged company is a real SIREN with no batch tags, parentHref would be '#/search')
+    const fromBatch = sessionStorage.getItem('fortress_merge_from_batch');
+    if (fromBatch && (!tags || tags.length === 0)) {
+        parentHref = '#/job/' + encodeURIComponent(fromBatch);
+        parentLabel = 'Batch';
+        sessionStorage.removeItem('fortress_merge_from_batch');
+    }
+
     items.push({ label: parentLabel, href: parentHref });
     items.push({ label: co.denomination });
     return breadcrumb(items);
@@ -456,7 +490,8 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
             Object.assign({}, co, {_merged_contact: mc}),
             null,
             matches,
-            null
+            null,
+            _currentContacts
         );
 
         placeholder.outerHTML = bannerHtml || `<div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
@@ -474,6 +509,8 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
 
 // ── AbortController — cancel stale renders on rapid navigation ───
 let _companyAbortCtrl = null;
+let _currentContacts = [];
+let _currentBatchId = null;
 
 export async function renderCompany(container, siren) {
     // Cancel any in-flight render from a previous company
@@ -499,11 +536,14 @@ export async function renderCompany(container, siren) {
     const linkedCo = data.linked_company;
     const suggestedMatches = data.suggested_matches || [];
 
+    // Store module-level context for later use
+    _currentContacts = data.contacts || [];
+    _currentBatchId = (tags[0] && tags[0].batch_id) || null;
 
     container.innerHTML = `
         ${_buildBreadcrumb(co, tags)}
 
-        ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method)}
+        ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method, data.contacts || [])}
 
         ${data.matching_available && suggestedMatches.length === 0 ? `
         <div id="entity-match-placeholder" class="card" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.15); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; align-items:center; gap:var(--space-sm)">

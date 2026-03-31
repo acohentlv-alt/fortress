@@ -328,7 +328,8 @@
     "crawlNetworkError": "Erreur réseau lors du crawl",
     "crawlScanning": "⏳ Scan du site en cours...",
     "crawlNoContact": "Aucun contact trouvé sur le site",
-    "conflictReason": "{{src1}} et {{src2}} ont trouvé des valeurs différentes"
+    "conflictReason": "{{src1}} et {{src2}} ont trouvé des valeurs différentes",
+    "websiteCrawlLabel": "Données site web"
   },
   "contacts": {
     "title": "Contacts",
@@ -539,6 +540,7 @@
     "liveMonitor": "📡 Suivi Live",
     "rerun": "🔄 Relancer",
     "progress": "Progression",
+    "results": "Résultats",
     "companiesCount": "{{count}} entreprise{{plural}}",
     "foundLabel": "entreprise{{plural}} trouvée{{plural}}",
     "pendingLinks": "⏳ {{count}} lien{{plural}} en attente",
