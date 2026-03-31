@@ -103,7 +103,6 @@ export async function renderJob(container, batchId) {
                         </div>
                     </div>`;
                 })()}
-                ${triageBar}
                 <div style="font-size:var(--font-sm); color:var(--text-secondary)">
                     ${breakdownLines.join('')}
                 </div>
