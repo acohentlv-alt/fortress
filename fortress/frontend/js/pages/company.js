@@ -157,6 +157,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
 
     // Extract website crawl data for third column
     const crawl = (contacts || []).find(c => c.source === 'website_crawl') || {};
+    const mapsContact = (contacts || []).find(c => c.source === 'google_maps') || {};
 
     const _buildCrawlColumn = () => {
         const sirenFromWebsite = crawl.siren_from_website || null;
@@ -190,7 +191,6 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
     if (linkedCo) {
         // Confirmed link — side-by-side comparison (same layout as suggested match, green theme)
         const reasonText = _linkReasonLabel(linkMethod);
-        const mc = co._merged_contact || {};
         return `
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
@@ -205,8 +205,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(co.denomination)}</strong></div>
                         ${co.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(co.adresse)}</div>` : ''}
-                        ${mc.phone ? `<div>📞 ${escapeHtml(mc.phone)}</div>` : ''}
-                        ${mc.website ? `<div>🌐 ${escapeHtml(mc.website)}</div>` : ''}
+                        ${mapsContact.phone ? `<div>📞 ${escapeHtml(mapsContact.phone)}</div>` : ''}
+                        ${mapsContact.website ? `<div>🌐 ${escapeHtml(mapsContact.website)}</div>` : ''}
                     </div>
                 </div>
                 <!-- Right: SIRENE data -->
@@ -254,7 +254,6 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         }
         const contextStr = hints.length > 0 ? ` · ${hints.join(' · ')}` : '';
 
-        const mc = co._merged_contact || {};
         return `
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
@@ -269,8 +268,8 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
                     <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                         <div><strong>${escapeHtml(co.denomination)}</strong></div>
                         ${co.adresse ? `<div style="color:var(--text-secondary)">${escapeHtml(co.adresse)}</div>` : ''}
-                        ${mc.phone ? `<div>📞 ${escapeHtml(mc.phone)}</div>` : ''}
-                        ${mc.website ? `<div>🌐 ${escapeHtml(mc.website)}</div>` : ''}
+                        ${mapsContact.phone ? `<div>📞 ${escapeHtml(mapsContact.phone)}</div>` : ''}
+                        ${mapsContact.website ? `<div>🌐 ${escapeHtml(mapsContact.website)}</div>` : ''}
                     </div>
                 </div>
                 <!-- Right: SIRENE candidate -->
@@ -671,35 +670,34 @@ export async function renderCompany(container, siren) {
             <div class="detail-section" style="margin-bottom:0">
                 <h3 class="detail-section-title">${t('company.sectionIdentity')}</h3>
                 ${(() => {
-                    let identitySource;
-                    if (!co.siren.startsWith('MAPS')) {
-                        identitySource = t('company.sourceRegistre');
-                    } else if (!linkedCo) {
-                        identitySource = t('company.sourceMaps');
-                    } else if (data.link_method === 'manual') {
-                        identitySource = t('company.sourceSireneManual');
-                    } else {
-                        const methodLabels = {
-                            'enseigne': t('company.methodEnseigne'),
-                            'phone': t('company.methodPhone'),
-                            'address': t('company.methodAddress'),
-                            'siren_website': t('company.methodSirenWebsite')
-                        };
-                        const reason = methodLabels[data.link_method] || t('company.methodAuto');
-                        identitySource = t('company.sourceSireneAuto', { reason });
-                    }
+                    const sourceRegistre = t('company.sourceRegistre');
+                    const sourceMaps = t('company.sourceMaps');
+                    const sourceSystemId = t('company.sourceSystemId');
+                    const isMaps = co.siren.startsWith('MAPS');
+                    const isLinked = isMaps && !!linkedCo;
+
+                    // Per-field source labels
+                    // denomination: Maps for MAPS entities, SIRENE for real SIREN
+                    const denomSource = isMaps ? sourceMaps : sourceRegistre;
+                    // adresse: Maps for MAPS entities, SIRENE for real SIREN
+                    const adresseSource = isMaps ? sourceMaps : sourceRegistre;
+                    // code_postal/ville: Maps if unlinked, SIRENE if linked or real SIREN
+                    const cpVilleSource = isMaps && !isLinked ? sourceMaps : sourceRegistre;
+                    // siren: system ID for MAPS entities, SIRENE for real SIREN
+                    const sirenSource = isMaps ? sourceSystemId : sourceRegistre;
+
                     return `
-                ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, identitySource, 'denomination', co.denomination || '')}
-                ${detailRow(t('company.labelSiren'), formatSiren(co.siren), t('company.sourceRegistre'))}
-                ${detailRow(t('company.labelSiret'), formatSiret(co.siret_siege), t('company.sourceRegistre'))}
-                ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
-                ${detailRow(t('company.labelStatut'), statutBadge(co.statut), t('company.sourceRegistre'))}
-                ${detailRow(t('company.labelCreated'), formatDate(co.date_creation), t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, denomSource, 'denomination', co.denomination || '')}
+                ${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}
+                ${detailRow(t('company.labelSiret'), formatSiret(co.siret_siege), isLinked ? sourceRegistre : sirenSource)}
+                ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', sourceRegistre)}
+                ${detailRow(t('company.labelStatut'), statutBadge(co.statut), sourceRegistre)}
+                ${detailRow(t('company.labelCreated'), formatDate(co.date_creation), sourceRegistre)}
                 <div style="border-top:1px solid var(--border-subtle); margin:var(--space-sm) 0"></div>
-                ${detailRow(t('company.labelAddress'), co.adresse || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'adresse', co.adresse || '')}
-                ${detailRow(t('company.labelPostal'), co.code_postal || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'code_postal', co.code_postal || '')}
-                ${detailRow(t('company.labelCity'), co.ville || '<span style="color:var(--text-disabled)">—</span>', identitySource, 'ville', co.ville || '')}
-                ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
+                ${detailRow(t('company.labelAddress'), co.adresse || '<span style="color:var(--text-disabled)">—</span>', adresseSource, 'adresse', co.adresse || '')}
+                ${detailRow(t('company.labelPostal'), co.code_postal || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'code_postal', co.code_postal || '')}
+                ${detailRow(t('company.labelCity'), co.ville || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'ville', co.ville || '')}
+                ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', sourceRegistre)}
                     `;
                 })()}
             </div>

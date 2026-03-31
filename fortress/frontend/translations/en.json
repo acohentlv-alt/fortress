@@ -252,6 +252,7 @@
     "noRevenue": "Not available",
     "sourceRegistre": "SIRENE Registry",
     "sourceMaps": "Google Maps",
+    "sourceSystemId": "System ID",
     "sourceSireneAuto": "SIRENE (auto: {{reason}})",
     "sourceSireneManual": "SIRENE (manually confirmed)",
     "methodEnseigne": "same trade name",
