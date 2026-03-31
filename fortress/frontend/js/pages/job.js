@@ -54,22 +54,6 @@ export async function renderJob(container, batchId) {
         const red = (s.triage && s.triage.red) || 0;
         const total = black + green + yellow + red;
 
-        // Triage bar: colored segments proportional to count
-        const triageBar = total > 0 ? `
-            <div style="display:flex; height:8px; border-radius:4px; overflow:hidden; margin:12px 0">
-                <div style="flex:${black}; background:#555" title="${black} en liste noire"></div>
-                <div style="flex:${green}; background:#00cec9" title="${green} déjà enrichies"></div>
-                <div style="flex:${yellow}; background:#fdcb6e" title="${yellow} enrichissements partiels"></div>
-                <div style="flex:${red}; background:#e74c3c" title="${red} nouvelles entreprises"></div>
-            </div>
-            <div style="display:flex; gap:var(--space-md); flex-wrap:wrap; font-size:var(--font-xs); color:var(--text-muted); margin-bottom:var(--space-md)">
-                ${black > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#555;border-radius:2px;margin-right:4px"></span>${black} liste noire</span>` : ''}
-                ${green > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#00cec9;border-radius:2px;margin-right:4px"></span>${green} déjà enrichie${green > 1 ? 's' : ''}</span>` : ''}
-                ${yellow > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#fdcb6e;border-radius:2px;margin-right:4px"></span>${yellow} partiel${yellow > 1 ? 's' : ''}</span>` : ''}
-                ${red > 0 ? `<span><span style="display:inline-block;width:10px;height:10px;background:#e74c3c;border-radius:2px;margin-right:4px"></span>${red} nouvelle${red > 1 ? 's' : ''}</span>` : ''}
-            </div>
-        ` : '';
-
         const breakdownLines = [];
         if (green > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#00cec9">🟢</span> <span>${green} déjà enrichie${green > 1 ? 's' : ''} — ignorée${green > 1 ? 's' : ''} (cache Maps complet)</span></div>`);
         if (black > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span>⚫</span> <span>${black} en liste noire ou sans nom</span></div>`);
