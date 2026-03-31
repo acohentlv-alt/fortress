@@ -159,12 +159,14 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
     const crawl = (contacts || []).find(c => c.source === 'website_crawl') || {};
 
     const _buildCrawlColumn = () => {
-        const hasCrawl = crawl.phone || crawl.email || crawl.website || crawl.social_linkedin || crawl.social_facebook;
+        const sirenFromWebsite = (linkMethod === 'siren_website' && linkedCo) ? linkedCo.siren : null;
+        const hasCrawl = sirenFromWebsite || crawl.phone || crawl.email || crawl.website || crawl.social_linkedin || crawl.social_facebook;
         return `
         <div style="padding:var(--space-md); background:rgba(139,92,246,0.06); border:1px solid rgba(139,92,246,0.2); border-radius:var(--radius-md)">
             <div style="font-weight:700; font-size:var(--font-sm); color:#8b5cf6; margin-bottom:var(--space-sm)">${t('company.websiteCrawlLabel')}</div>
             <div style="font-size:var(--font-sm); display:flex; flex-direction:column; gap:4px; color:var(--text-primary)">
                 ${hasCrawl ? `
+                    ${sirenFromWebsite ? `<div style="font-weight:700; color:var(--success)">SIREN: ${escapeHtml(sirenFromWebsite)}</div>` : ''}
                     ${crawl.phone ? `<div>📞 ${escapeHtml(crawl.phone)}</div>` : ''}
                     ${crawl.email ? `<div>✉️ ${escapeHtml(crawl.email)}</div>` : ''}
                     ${crawl.website ? `<div>🌐 ${escapeHtml(crawl.website)}</div>` : ''}
