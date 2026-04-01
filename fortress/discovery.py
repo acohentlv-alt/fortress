@@ -123,6 +123,15 @@ _INDUSTRY_WORDS = {
     "coiffure", "beaute", "auto", "taxi", "ambulance", "demenagement",
     "nettoyage", "securite", "formation", "conseil", "immobilier",
     "assurance", "agence", "bureau", "services", "solutions",
+    "clinique", "laboratoire", "cabinet", "boutique", "atelier",
+    "studio", "institut", "societe", "entreprise", "groupe",
+    "espace", "comptabilite", "expertise", "renovation",
+    "construction", "batiment", "travaux", "distribution",
+    "location", "maintenance", "depannage", "livraison",
+    "commerce", "import", "export", "editions", "production",
+    "communication", "informatique", "digital", "consulting",
+    "ingenierie", "technique", "technologies", "systemes",
+    "medical", "dentaire", "optique", "veterinaire",
 }
 
 
@@ -193,7 +202,21 @@ async def _match_to_sirene(
     if not search_terms:
         return None
 
-    primary_term = max(search_terms, key=len) if search_terms else ""
+    maps_city_tokens: set[str] = set()
+    if maps_address:
+        addr_norm = _normalize_name(maps_address)
+        maps_city_tokens = {t for t in addr_norm.split() if len(t) > 3}
+
+    meaningful_terms = [
+        t for t in search_terms
+        if len(t) >= 3
+        and t not in _INDUSTRY_WORDS
+        and t not in maps_city_tokens
+    ]
+    if not meaningful_terms:
+        meaningful_terms = [t for t in search_terms if len(t) >= 3]
+
+    primary_term = max(meaningful_terms, key=len) if meaningful_terms else ""
     if len(primary_term) < 3:
         return None
 
@@ -208,11 +231,6 @@ async def _match_to_sirene(
     if maps_address and normalize_address and _extract_street_key:
         maps_norm_addr = normalize_address(maps_address)
         maps_street_key = _extract_street_key(maps_norm_addr)
-
-    maps_city_tokens: set[str] = set()
-    if maps_address:
-        addr_norm = _normalize_name(maps_address)
-        maps_city_tokens = {t for t in addr_norm.split() if len(t) > 3}
 
     def _score_rows(candidate_rows: list) -> tuple[dict | None, float]:
         """Score a list of candidate rows, return best candidate and its score."""
@@ -282,18 +300,21 @@ async def _match_to_sirene(
     # If it matches the Maps name well, it's the business — even if the
     # legal address is different (owner registered company elsewhere).
     if departement:
+        term_clauses = " OR ".join(["LOWER(enseigne) LIKE %s"] * len(meaningful_terms))
+        ens_params: list[Any] = [f"%{t}%" for t in meaningful_terms]
+        ens_params.extend([departement])
         ens_cur = await conn.execute(
-            """SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
+            f"""SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
                       forme_juridique, adresse, code_postal, ville, departement,
                       region, statut, date_creation, tranche_effectif,
                       latitude, longitude, fortress_id
                FROM companies
-               WHERE LOWER(enseigne) LIKE %s
+               WHERE ({term_clauses})
                  AND statut = 'A'
                  AND departement = %s
                  AND siren NOT LIKE 'MAPS%%'
                LIMIT 20""",
-            (f"%{primary_term}%", departement),
+            ens_params,
         )
         ens_rows = await ens_cur.fetchall()
         if ens_rows:
@@ -466,11 +487,18 @@ async def _match_to_sirene(
                 )
 
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
+    # Each term needs 2 params: one for enseigne LIKE, one for denomination LIKE
+    name_clauses = " OR ".join(
+        ["(LOWER(enseigne) LIKE %s OR LOWER(denomination) LIKE %s)"] * len(meaningful_terms)
+    )
     conditions = [
-        "(LOWER(enseigne) LIKE %s OR LOWER(denomination) LIKE %s)",
+        f"({name_clauses})",
         "statut = 'A'",
     ]
-    params: list[Any] = [f"%{primary_term}%", f"%{primary_term}%"]
+    params: list[Any] = []
+    for t in meaningful_terms:
+        params.append(f"%{t}%")  # for enseigne
+        params.append(f"%{t}%")  # for denomination
 
     if departement and re.match(r"^\d{2,3}$", departement):
         conditions.append("departement = %s")
