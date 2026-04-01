@@ -195,9 +195,10 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
             <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-md)">
                 <span style="font-size:1.3rem">🔗</span>
-                <span style="font-weight:700; color:var(--success); font-size:var(--font-base)">${t('company.linkedTo', { name: escapeHtml(linkedCo.denomination || '') })}</span>
+                <span style="font-weight:700; color:var(--success); font-size:var(--font-base)">${t('company.linkedEnriched', { name: escapeHtml(linkedCo.denomination || '') })}</span>
                 <span style="font-size:var(--font-sm); color:var(--text-secondary); margin-left:var(--space-sm); font-weight:600">${reasonText}</span>
             </div>
+            <div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md); margin-top:calc(-1 * var(--space-xs))">${t('company.linkedEnrichedSubtitle')}</div>
             <div class="entity-banner-grid">
                 <!-- Left: Maps data -->
                 <div style="padding:var(--space-md); background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.2); border-radius:var(--radius-md)">
@@ -564,7 +565,9 @@ export async function renderCompany(container, siren) {
                     ${co.siren && co.siren.startsWith('MAPS') && linkedCo
                         ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>
                           <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS\u00a0${escapeHtml(co.siren)}</span>`
-                        : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>`
+                        : (co.siren && co.siren.startsWith('MAPS')
+                            ? `<span class="glass-badge glass-badge--blue">🏢 ${escapeHtml(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.mapsIdTooltip')}</strong><br>${t('company.mapsIdTooltipDesc')}<span class="info-tip-source">${t('company.mapsIdTooltipSource')}</span></span></span></span>`
+                            : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>`)
                     }
                     ${statutBadge(co.statut)}
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
@@ -581,7 +584,7 @@ export async function renderCompany(container, siren) {
                     ${co.chiffre_affaires ? `<span class="glass-badge glass-badge--gold">💰 ${formatCurrency(co.chiffre_affaires)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.caTooltip')}</strong><br>${t('company.caTooltipDesc')}<span class="info-tip-source">${t('company.caTooltipSource')}</span></span></span>
                     </span>` : ''}
-                    ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}</span>` : ''}
+                    ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.ratingTooltip')}</strong><br>${t('company.ratingTooltipDesc')}<span class="info-tip-source">${t('company.ratingTooltipSource')}</span></span></span></span>` : ''}
                     ${mc.maps_url ? `<a href="${mc.maps_url}" target="_blank" rel="noopener" class="glass-badge glass-badge--lg glass-badge--cyan" style="text-decoration:none">🗺️ Google Maps ↗</a>` : ''}
                 </div>
             </div>
@@ -627,6 +630,7 @@ export async function renderCompany(container, siren) {
                                     ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
                                 </span>
                                 <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
+                                ${o.source ? `<span style="font-size:var(--font-xs); color:var(--text-disabled); margin-left:4px">${sourceLabel(o.source)}</span>` : ''}
                             </div>
                             ${o.email_direct || o.ligne_directe ? `
                                 <div style="display:flex; gap:var(--space-md); font-size:var(--font-sm); color:var(--text-secondary)">
@@ -690,14 +694,14 @@ export async function renderCompany(container, siren) {
                 ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, denomSource, 'denomination', co.denomination || '')}
                 ${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}
                 ${detailRow(t('company.labelSiret'), formatSiret(co.siret_siege), isLinked ? sourceRegistre : sirenSource)}
-                ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', sourceRegistre)}
-                ${detailRow(t('company.labelStatut'), statutBadge(co.statut), sourceRegistre)}
-                ${detailRow(t('company.labelCreated'), formatDate(co.date_creation), sourceRegistre)}
+                ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', isMaps && !isLinked ? sourceSystemId : sourceRegistre)}
+                ${detailRow(t('company.labelStatut'), statutBadge(co.statut), isMaps ? sourceSystemId : sourceRegistre)}
+                ${detailRow(t('company.labelCreated'), formatDate(co.date_creation), isLinked ? sourceRegistre : (isMaps ? sourceSystemId : sourceRegistre))}
                 <div style="border-top:1px solid var(--border-subtle); margin:var(--space-sm) 0"></div>
                 ${detailRow(t('company.labelAddress'), co.adresse || '<span style="color:var(--text-disabled)">—</span>', adresseSource, 'adresse', co.adresse || '')}
                 ${detailRow(t('company.labelPostal'), co.code_postal || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'code_postal', co.code_postal || '')}
                 ${detailRow(t('company.labelCity'), co.ville || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'ville', co.ville || '')}
-                ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', sourceRegistre)}
+                ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', isMaps ? sourceMaps : sourceRegistre)}
                     `;
                 })()}
             </div>
@@ -709,11 +713,13 @@ export async function renderCompany(container, siren) {
                     ${detailRow(t('company.labelRevenue'),
                         co.chiffre_affaires
                             ? `<span style="font-weight:700; color:var(--success)">${formatCurrency(co.chiffre_affaires)}</span>`
-                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`)}
+                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`,
+                        t('company.srcRechercheEntreprises'))}
                     ${detailRow(t('company.labelNetResult'),
                         co.resultat_net
                             ? `<span style="font-weight:700">${formatCurrency(co.resultat_net)}</span>`
-                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`)}
+                            : `<span style="color:var(--text-disabled); font-style:italic">${t('company.noRevenue')}</span>`,
+                        t('company.srcRechercheEntreprises'))}
                     ${detailRow(t('company.labelNaf'), co.naf_code ? `<strong>${escapeHtml(co.naf_code)}</strong>${co.naf_libelle ? ` <span style="color:var(--text-secondary); font-size:var(--font-sm)">— ${escapeHtml(co.naf_libelle)}</span>` : ''}` : '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
                     ${detailRow(t('company.labelEffectif'), effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
                 </div>
@@ -1343,6 +1349,7 @@ function sourceLabel(src) {
         inpi:                  `📋 INPI`,
         sirene:                `🏛️ ${t('company.sourceRegistre')}`,
         manual_edit:           `✏️ ${t('company.srcManualEdit')}`,
+        manual:                `✏️ ${t('company.srcManualEdit')}`,
         upload:                `📤 ${t('company.srcUpload')}`,
         directory_search:      `📖 ${t('company.srcDirectory')}`,
         pages_jaunes:          `📒 ${t('company.srcPagesJaunes')}`,
