@@ -1074,6 +1074,18 @@ async def untag_company(siren: str, batch_name: str, request: Request):
         row = await result.fetchone()
         if not row:
             return JSONResponse(status_code=404, content={"error": "Tag introuvable"})
+
+        # Also remove from batch_log — look up batch_ids by batch_name
+        batch_id_rows = await (await conn.execute(
+            "SELECT batch_id FROM batch_data WHERE batch_name = %s",
+            (batch_name,),
+        )).fetchall()
+        for bid_row in (batch_id_rows or []):
+            await conn.execute(
+                "DELETE FROM batch_log WHERE siren = %s AND batch_id = %s",
+                (siren, bid_row[0]),
+            )
+
         await conn.commit()
     return {"untagged": True, "siren": siren, "batch_name": batch_name}
 

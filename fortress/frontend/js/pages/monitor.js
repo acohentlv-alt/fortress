@@ -12,7 +12,7 @@
  *   - Counters: animate only when value changes
  */
 
-import { getJobs, getJob, getJobQuality, getJobCompanies, cancelJob } from '../api.js';
+import { getJobs, getJob, getJobQuality, getJobCompanies, cancelJob, deleteJob } from '../api.js';
 import {
     breadcrumb, statusBadge, formatDateTime, escapeHtml,
     renderGauge, companyCard, renderTriageBar, renderPipelineStages,
@@ -70,6 +70,9 @@ export async function renderMonitor(container, batchId) {
 }
 
 async function renderMonitorList(container) {
+    const user = getCachedUser();
+    const canDelete = user?.role === 'admin' || user?.role === 'head';
+
     const jobs = await getJobs();
     const jobsList = Array.isArray(jobs) ? jobs : [];
     const runningJobs = jobsList.filter(j =>
@@ -104,13 +107,14 @@ async function renderMonitorList(container) {
                                     ${j.wave_total ? `<span>${t('monitor.wavechip', { current: j.wave_current || 0, total: j.wave_total })}</span>` : ''}
                                 </div>
                             </div>
-                            <div class="job-card-stats">
+                            <div class="job-card-stats" style="display:flex;align-items:center;gap:var(--space-sm)">
                                 ${statusBadge(j.status)}
                                 <div style="width:100px">
                                     <div class="progress-bar">
                                         <div class="progress-bar-fill animated" style="width:${pct}%"></div>
                                     </div>
                                 </div>
+                                ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-running="true" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -132,12 +136,70 @@ async function renderMonitorList(container) {
                                 <span>${j.companies_scraped || 0} ${t('monitor.companies')}</span>
                             </div>
                         </div>
-                        ${statusBadge(j.status)}
+                        <div style="display:flex;align-items:center;gap:var(--space-sm)">
+                            ${statusBadge(j.status)}
+                            ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-running="false" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
+                        </div>
                     </div>
                 `).join('')}
             </div>
         ` : ''}
     `;
+
+    // ── Event delegation for delete buttons ──────────────────────────
+    container.addEventListener('click', async (event) => {
+        const btn = event.target.closest('.btn-delete-job');
+        if (!btn) return;
+        event.stopPropagation();
+
+        const batchId = btn.dataset.batchId;
+        const batchName = btn.dataset.batchName;
+        const isRunning = btn.dataset.running === 'true';
+
+        if (isRunning) {
+            showConfirmModal({
+                title: 'Supprimer ce batch en cours ?',
+                body: `
+                    <p><strong>Batch :</strong> ${escapeHtml(batchName)}</p>
+                    <p style="color:var(--warning)">Ce batch est encore en cours. Il sera d'abord annulé, puis supprimé.</p>
+                    <p style="color:var(--danger)">Toutes les données collectées seront supprimées.</p>
+                `,
+                confirmLabel: 'Annuler et supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    try {
+                        await cancelJob(batchId);
+                    } catch { /* ignore cancel errors — proceed to delete */ }
+                    const result = await deleteJob(batchId);
+                    if (result && result._ok !== false) {
+                        showToast(`Batch « ${batchName} » supprimé.`, 'success');
+                        await renderMonitorList(container);
+                    } else {
+                        showToast('Erreur lors de la suppression.', 'error');
+                    }
+                },
+            });
+        } else {
+            showConfirmModal({
+                title: 'Supprimer ce batch ?',
+                body: `
+                    <p><strong>Batch :</strong> ${escapeHtml(batchName)}</p>
+                    <p style="color:var(--danger)">Les entités MAPS orphelines et leurs données associées seront supprimées.</p>
+                `,
+                confirmLabel: 'Supprimer',
+                danger: true,
+                onConfirm: async () => {
+                    const result = await deleteJob(batchId);
+                    if (result && result._ok !== false) {
+                        showToast(`Batch « ${batchName} » supprimé.`, 'success');
+                        await renderMonitorList(container);
+                    } else {
+                        showToast('Erreur lors de la suppression.', 'error');
+                    }
+                },
+            });
+        }
+    });
 }
 
 async function renderJobMonitor(container, batchId) {

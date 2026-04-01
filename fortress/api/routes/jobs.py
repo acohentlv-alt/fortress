@@ -123,28 +123,89 @@ async def delete_job(batch_id: str, request: Request):
 
         batch_name = row[1]
 
-        # ── Soft delete: mark status='deleted' + remove batch_tags ───
-        # Never delete contacts, batch_log, or enrichment_log
+        # ── Step 1: Find all MAPS sirens in this batch ───────────────
+        maps_rows = await (await conn.execute(
+            "SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s AND siren LIKE 'MAPS%'",
+            (batch_id,),
+        )).fetchall()
+        maps_sirens_in_batch = {r[0] for r in maps_rows} if maps_rows else set()
 
-        # 1. Soft-delete the batch_data row
+        # ── Step 2: Find MAPS sirens shared with OTHER active batches ─
+        orphan_sirens: set = set()
+        if maps_sirens_in_batch:
+            placeholders = ",".join(["%s"] * len(maps_sirens_in_batch))
+            shared_rows = await (await conn.execute(
+                f"""SELECT DISTINCT siren FROM batch_log
+                    WHERE siren IN ({placeholders})
+                    AND batch_id != %s
+                    AND batch_id IN (
+                        SELECT batch_id FROM batch_data WHERE status != 'deleted'
+                    )""",
+                tuple(maps_sirens_in_batch) + (batch_id,),
+            )).fetchall()
+            shared_sirens = {r[0] for r in shared_rows} if shared_rows else set()
+            orphan_sirens = maps_sirens_in_batch - shared_sirens
+        else:
+            shared_sirens = set()
+
+        # ── Step 3: Soft-delete batch_data ───────────────────────────
         await conn.execute(
             f"UPDATE batch_data SET status = 'deleted', updated_at = NOW() WHERE batch_id = %s {ws_scope}",
             (batch_id,) + ws_params,
         )
 
-        # 2. Delete batch_tags for this batch (scoped by workspace)
+        # ── Step 4: Delete batch_tags for this batch ──────────────────
         deleted_tags_result = await conn.execute(
             f"DELETE FROM batch_tags WHERE batch_id = %s {ws_scope}",
             (batch_id,) + ws_params,
         )
         deleted_tags = deleted_tags_result.rowcount or 0
 
-        # 3. Delete batch_log for this batch
+        # ── Step 5: Delete batch_log for this batch ───────────────────
         await conn.execute("DELETE FROM batch_log WHERE batch_id = %s", (batch_id,))
+
+        # ── Step 6: Delete enrichment_log for this batch ─────────────
+        await conn.execute(
+            "DELETE FROM enrichment_log WHERE batch_id = %s",
+            (batch_id,),
+        )
+
+        # ── Step 7: Delete orphan MAPS entities ───────────────────────
+        deleted_companies = 0
+        if orphan_sirens:
+            # Extra safety: only process sirens that actually start with MAPS
+            safe_orphans = [s for s in orphan_sirens if s.startswith('MAPS')]
+            if safe_orphans:
+                siren_placeholders = ",".join(["%s"] * len(safe_orphans))
+                siren_tuple = tuple(safe_orphans)
+                await conn.execute(
+                    f"DELETE FROM company_notes WHERE siren IN ({siren_placeholders})",
+                    siren_tuple,
+                )
+                await conn.execute(
+                    f"DELETE FROM officers WHERE siren IN ({siren_placeholders})",
+                    siren_tuple,
+                )
+                await conn.execute(
+                    f"DELETE FROM contacts WHERE siren IN ({siren_placeholders})",
+                    siren_tuple,
+                )
+                await conn.execute(
+                    f"DELETE FROM batch_tags WHERE siren IN ({siren_placeholders})",
+                    siren_tuple,
+                )
+                del_result = await conn.execute(
+                    f"DELETE FROM companies WHERE siren IN ({siren_placeholders})",
+                    siren_tuple,
+                )
+                deleted_companies = del_result.rowcount or 0
 
         await conn.commit()
 
     _invalidate_cache()
+
+    maps_sirens_found = len(maps_sirens_in_batch)
+    shared_sirens_kept = len(shared_sirens)
 
     await log_activity(
         user_id=getattr(user, 'id', None),
@@ -152,7 +213,12 @@ async def delete_job(batch_id: str, request: Request):
         action='delete_job',
         target_type='job',
         target_id=batch_id,
-        details=f"Suppression (soft) du batch {batch_name or batch_id}: {deleted_tags} tags supprimés",
+        details=(
+            f"Suppression du batch {batch_name or batch_id}: "
+            f"{deleted_tags} tags supprimés, "
+            f"{deleted_companies} entités MAPS supprimées "
+            f"({shared_sirens_kept} partagées conservées)"
+        ),
     )
 
     return {
@@ -160,6 +226,9 @@ async def delete_job(batch_id: str, request: Request):
         "batch_id": batch_id,
         "batch_name": batch_name,
         "deleted_tags": deleted_tags,
+        "deleted_companies": deleted_companies,
+        "maps_sirens_found": maps_sirens_found,
+        "shared_sirens_kept": shared_sirens_kept,
     }
 
 

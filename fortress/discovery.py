@@ -1338,6 +1338,34 @@ async def run(batch_id: str) -> None:
                         )
                         break
 
+                    # Check for admin cancellation request
+                    try:
+                        cancel_row = await (await conn_holder[0].execute(
+                            "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                            (batch_id,),
+                        )).fetchone()
+                        if cancel_row and cancel_row[0]:
+                            log.info(
+                                "discovery.cancellation_requested",
+                                query=search_query,
+                                progress=f"{q_idx}/{total_queries}",
+                                saved=companies_discovered,
+                            )
+                            await conn_holder[0].execute(
+                                """UPDATE batch_data SET status = 'cancelled',
+                                   shortfall_reason = %s,
+                                   updated_at = NOW()
+                                   WHERE batch_id = %s""",
+                                (
+                                    f"Annulé par l'administrateur après {companies_discovered} entreprises",
+                                    batch_id,
+                                ),
+                            )
+                            await conn_holder[0].commit()
+                            return  # Exit cleanly — data already saved
+                    except Exception as _cancel_exc:
+                        log.debug("discovery.cancel_check_error", error=str(_cancel_exc))
+
                     # Check if batch_size already reached (across queries)
                     if batch_size > 0 and companies_discovered >= batch_size:
                         log.info(
