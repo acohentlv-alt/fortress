@@ -346,6 +346,7 @@ class PlaywrightMapsScraper:
         query: str,
         *,
         on_result: Any = None,
+        dept_code: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search Google Maps with a generic query and extract ALL results.
 
@@ -372,7 +373,7 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 return await asyncio.wait_for(
-                    self._do_search_all(query, on_result),
+                    self._do_search_all(query, on_result, dept_code=dept_code),
                     timeout=300.0,  # 5 min max per search_all query
                 )
             except asyncio.TimeoutError:
@@ -390,11 +391,50 @@ class PlaywrightMapsScraper:
                 )
                 return []
 
+    DEPT_COORDINATES: dict[str, str] = {
+        "01": "46.2,5.3,10z", "02": "49.5,3.6,10z", "03": "46.3,3.2,10z",
+        "04": "44.1,6.2,10z", "05": "44.7,6.3,10z", "06": "43.8,7.2,10z",
+        "07": "44.7,4.6,10z", "08": "49.6,4.6,10z", "09": "42.9,1.5,10z",
+        "10": "48.3,4.1,10z", "11": "43.1,2.4,10z", "12": "44.3,2.6,10z",
+        "13": "43.5,5.1,10z", "14": "49.1,-0.4,10z", "15": "45.0,2.7,10z",
+        "16": "45.7,0.2,10z", "17": "45.9,-0.8,10z", "18": "47.0,2.5,10z",
+        "19": "45.3,1.8,10z", "2A": "41.9,9.0,10z", "2B": "42.4,9.2,10z",
+        "21": "47.3,4.7,10z", "22": "48.5,-3.0,10z", "23": "46.1,2.1,10z",
+        "24": "45.0,0.7,10z", "25": "47.2,6.4,10z", "26": "44.7,5.2,10z",
+        "27": "49.1,1.2,10z", "28": "48.3,1.5,10z", "29": "48.4,-4.2,10z",
+        "30": "44.0,4.1,10z", "31": "43.3,1.2,10z", "32": "43.7,0.6,10z",
+        "33": "44.8,-0.6,10z", "34": "43.6,3.5,10z", "35": "48.1,-1.7,10z",
+        "36": "46.8,1.6,10z", "37": "47.3,0.7,10z", "38": "45.2,5.7,10z",
+        "39": "46.7,5.7,10z", "40": "43.9,-0.8,10z", "41": "47.6,1.3,10z",
+        "42": "45.7,4.2,10z", "43": "45.1,3.7,10z", "44": "47.3,-1.8,10z",
+        "45": "47.9,2.2,10z", "46": "44.6,1.7,10z", "47": "44.3,0.5,10z",
+        "48": "44.5,3.5,10z", "49": "47.4,-0.6,10z", "50": "48.9,-1.3,10z",
+        "51": "48.9,4.0,10z", "52": "48.1,5.3,10z", "53": "48.1,-0.8,10z",
+        "54": "48.7,6.2,10z", "55": "49.0,5.4,10z", "56": "47.7,-2.8,10z",
+        "57": "49.0,6.7,10z", "58": "47.1,3.5,10z", "59": "50.4,3.2,10z",
+        "60": "49.4,2.5,10z", "61": "48.6,0.1,10z", "62": "50.5,2.3,10z",
+        "63": "45.7,3.1,10z", "64": "43.3,-0.8,10z", "65": "43.0,0.2,10z",
+        "66": "42.6,2.5,10z", "67": "48.6,7.5,10z", "68": "47.9,7.2,10z",
+        "69": "45.8,4.7,10z", "70": "47.6,6.2,10z", "71": "46.6,4.5,10z",
+        "72": "47.9,0.2,10z", "73": "45.5,6.5,10z", "74": "46.0,6.3,10z",
+        "75": "48.86,2.35,12z", "76": "49.6,1.1,10z", "77": "48.6,2.9,10z",
+        "78": "48.8,1.9,10z", "79": "46.5,-0.3,10z", "80": "49.9,2.3,10z",
+        "81": "43.8,2.2,10z", "82": "44.0,1.3,10z", "83": "43.5,6.3,10z",
+        "84": "44.0,5.1,10z", "85": "46.7,-1.3,10z", "86": "46.6,0.5,10z",
+        "87": "45.9,1.3,10z", "88": "48.2,6.5,10z", "89": "47.8,3.6,10z",
+        "90": "47.6,6.9,10z", "91": "48.5,2.2,10z", "92": "48.84,2.25,12z",
+        "93": "48.91,2.48,12z", "94": "48.78,2.47,12z", "95": "49.1,2.2,10z",
+        "971": "16.2,-61.5,9z", "972": "14.6,-61.0,9z", "973": "3.9,-53.2,7z",
+        "974": "-21.1,55.5,9z", "975": "46.8,-56.2,10z", "976": "-12.8,45.2,10z",
+    }
+
     async def _do_search_all(
         self,
         query: str,
         on_result: Any = None,
         max_results: int = 0,
+        *,
+        dept_code: str | None = None,
     ) -> list[dict[str, Any]]:
         """Internal: perform generic Maps search and extract all results.
 
@@ -409,13 +449,16 @@ class PlaywrightMapsScraper:
         results: list[dict[str, Any]] = []
         seen_keys: set[str] = set()  # Dedup by name+address
 
-        # ── Step 1: Navigate directly to search URL (France-scoped) ────
-        # gl=fr restricts results to France, @46.6,2.3,6z centers on France
+        # ── Step 1: Navigate directly to search URL ──────────────────
+        # gl=fr restricts results to France.
+        # If a department code is provided and known, zoom to that dept center.
+        # Otherwise fall back to France-wide center @46.6,2.3,6z.
         france_query = query if "france" in query.lower() else f"{query}, France"
+        map_center = self.DEPT_COORDINATES.get(dept_code, "46.6,2.3,6z") if dept_code else "46.6,2.3,6z"
         search_url = (
             f"https://www.google.com/maps/search/"
             f"{urllib.parse.quote_plus(france_query)}"
-            f"/@46.6,2.3,6z"
+            f"/@{map_center}"
             f"?hl=fr&gl=fr"
         )
         log.info("maps_discovery.navigating", query=query, url=search_url)

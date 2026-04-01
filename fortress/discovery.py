@@ -1337,6 +1337,7 @@ async def run(batch_id: str) -> None:
                     # search_all calls _persist_result for each business
                     results = await maps_scraper.search_all(
                         search_query, on_result=_persist_result,
+                        dept_code=dept_filter,
                     )
 
                     log.info(
