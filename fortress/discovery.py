@@ -132,6 +132,10 @@ _INDUSTRY_WORDS = {
     "communication", "informatique", "digital", "consulting",
     "ingenierie", "technique", "technologies", "systemes",
     "medical", "dentaire", "optique", "veterinaire",
+    "village", "domaine", "chateau", "parc", "residence",
+    "vacances", "loisirs", "tourisme", "club",
+    "ferme", "auberge", "gite", "relais",
+    "hotellerie", "restauration",
 }
 
 
