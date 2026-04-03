@@ -234,18 +234,26 @@ async def delete_job(batch_id: str, request: Request):
 
 @router.post("/{batch_id}/cancel")
 async def cancel_job(batch_id: str, request: Request):
-    """Request graceful cancellation of a running batch. Admin only."""
+    """Request graceful cancellation of a running batch. Admin or head."""
     user = getattr(request.state, 'user', None)
-    if not user or user.role != 'admin':
-        return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
+
     async with get_conn() as conn:
         row = await (await conn.execute(
-            "SELECT status FROM batch_data WHERE batch_id = %s",
-            (batch_id,),
+            f"SELECT status FROM batch_data WHERE batch_id = %s {ws_scope}",
+            (batch_id,) + ws_params,
         )).fetchone()
 
         if not row:
-            return JSONResponse(status_code=404, content={"error": "Job introuvable"})
+            return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
         if row[0] not in ("in_progress", "queued", "triage", "new"):
             return JSONResponse(status_code=409, content={
                 "error": "Le batch n'est pas en cours",
@@ -253,8 +261,8 @@ async def cancel_job(batch_id: str, request: Request):
             })
 
         await conn.execute(
-            "UPDATE batch_data SET cancel_requested = TRUE, updated_at = NOW() WHERE batch_id = %s",
-            (batch_id,),
+            f"UPDATE batch_data SET cancel_requested = TRUE, updated_at = NOW() WHERE batch_id = %s {ws_scope}",
+            (batch_id,) + ws_params,
         )
         await conn.commit()
 

@@ -1242,20 +1242,22 @@ async def run(batch_id: str) -> None:
                     async with pool.connection() as conn:
                         if batch_workspace_id is not None:
                             cur = await conn.execute(
-                                """SELECT LOWER(denomination), LOWER(COALESCE(adresse, ''))
-                                   FROM companies
-                                   WHERE siren LIKE 'MAPS%%'
-                                   AND departement = %s
-                                   AND workspace_id = %s""",
+                                """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
+                                   FROM companies c
+                                   WHERE c.siren LIKE 'MAPS%%'
+                                   AND c.departement = %s
+                                   AND c.workspace_id = %s
+                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
                                 (dept_filter, batch_workspace_id),
                             )
                         else:
                             cur = await conn.execute(
-                                """SELECT LOWER(denomination), LOWER(COALESCE(adresse, ''))
-                                   FROM companies
-                                   WHERE siren LIKE 'MAPS%%'
-                                   AND departement = %s
-                                   AND workspace_id IS NULL""",
+                                """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
+                                   FROM companies c
+                                   WHERE c.siren LIKE 'MAPS%%'
+                                   AND c.departement = %s
+                                   AND c.workspace_id IS NULL
+                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
                                 (dept_filter,),
                             )
                         prev_rows = await cur.fetchall()
@@ -1273,20 +1275,22 @@ async def run(batch_id: str) -> None:
                     async with pool.connection() as conn:
                         if batch_workspace_id is not None:
                             cur = await conn.execute(
-                                """SELECT linked_siren FROM companies
-                                   WHERE departement = %s
-                                   AND siren LIKE 'MAPS%%'
-                                   AND linked_siren IS NOT NULL
-                                   AND workspace_id = %s""",
+                                """SELECT c.linked_siren FROM companies c
+                                   WHERE c.departement = %s
+                                   AND c.siren LIKE 'MAPS%%'
+                                   AND c.linked_siren IS NOT NULL
+                                   AND c.workspace_id = %s
+                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
                                 (dept_filter, batch_workspace_id),
                             )
                         else:
                             cur = await conn.execute(
-                                """SELECT linked_siren FROM companies
-                                   WHERE departement = %s
-                                   AND siren LIKE 'MAPS%%'
-                                   AND linked_siren IS NOT NULL
-                                   AND workspace_id IS NULL""",
+                                """SELECT c.linked_siren FROM companies c
+                                   WHERE c.departement = %s
+                                   AND c.siren LIKE 'MAPS%%'
+                                   AND c.linked_siren IS NOT NULL
+                                   AND c.workspace_id IS NULL
+                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
                                 (dept_filter,),
                             )
                         existing_sirens = await cur.fetchall()
