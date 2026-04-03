@@ -1398,9 +1398,19 @@ async def run(batch_id: str) -> None:
                         triage_red=triage_counts["red"],
                     )
 
+                    # Strip department code from query text — viewport already handles geography
+                    clean_query = search_query
+                    if dept_filter and re.match(r"^\d{2,3}$", dept_filter):
+                        clean_query = re.sub(r'\b' + re.escape(dept_filter) + r'\b', '', search_query).strip()
+                        clean_query = re.sub(r'\s{2,}', ' ', clean_query).strip().rstrip(',').strip()
+                        if clean_query:
+                            log.info("discovery.query_cleaned", original=search_query, cleaned=clean_query)
+                        else:
+                            clean_query = search_query
+
                     # search_all calls _persist_result for each business
                     results = await maps_scraper.search_all(
-                        search_query, on_result=_persist_result,
+                        clean_query, on_result=_persist_result,
                         dept_code=dept_filter,
                     )
 
