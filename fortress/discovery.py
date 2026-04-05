@@ -32,6 +32,7 @@ import psycopg
 import psycopg_pool
 import structlog
 
+from fortress.config.departments import DEPARTMENTS, DEPT_CITIES
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
 from fortress.scraping.http import CurlClient
@@ -109,6 +110,32 @@ def _name_match_score(name_a: str, name_b: str) -> float:
     # Token overlap
     overlap = sum(1 for t in ta if t in tb)
     return overlap / max(len(ta), len(tb))
+
+
+def _expand_queries(
+    sector_word: str, dept_code: str, original_queries: list[str]
+) -> list[str]:
+    """Generate up to 5 expansion queries for a sector + department."""
+    original_lower = {q.lower().strip() for q in original_queries}
+    candidates: list[str] = []
+
+    # 1. Department name query
+    dept_name = DEPARTMENTS.get(dept_code)
+    if dept_name:
+        q = f"{sector_word} {dept_name}"
+        if q.lower() not in original_lower:
+            candidates.append(q)
+
+    # 2. City queries from DEPT_CITIES
+    cities = DEPT_CITIES.get(dept_code, [])
+    for city in cities:
+        q = f"{sector_word} {city}"
+        if q.lower() not in original_lower:
+            candidates.append(q)
+        if len(candidates) >= 5:
+            break
+
+    return candidates[:5]
 
 
 # ---------------------------------------------------------------------------
@@ -1522,6 +1549,102 @@ async def run(batch_id: str) -> None:
                     if q_idx < total_queries:
                         await asyncio.sleep(3)
 
+                # ── Query Expansion Cascade ───────────────────────────
+                expansion_used: list[str] = []
+                pre_expansion_count = companies_discovered
+                if (
+                    batch_size > 0
+                    and companies_discovered < batch_size
+                    and dept_filter
+                    and re.match(r"^\d{2,3}$", dept_filter)
+                ):
+                    _first_q = search_queries[0] if search_queries else ""
+                    sector_word = re.sub(
+                        r'\b' + re.escape(dept_filter) + r'\b', '', _first_q
+                    ).strip()
+                    sector_word = re.sub(r'\s{2,}', ' ', sector_word).strip().rstrip(',').strip()
+
+                    if sector_word:  # Skip if query was just the dept code
+                        expansion_queries = _expand_queries(
+                            sector_word, dept_filter, search_queries
+                        )
+                        if expansion_queries:
+                            log.info(
+                                "discovery.expansion_start",
+                                sector=sector_word,
+                                dept=dept_filter,
+                                expansion_count=len(expansion_queries),
+                                companies_so_far=companies_discovered,
+                                target=batch_size,
+                            )
+
+                            # Update wave_total so monitor shows correct denominator
+                            await _update_job_safe(
+                                conn_holder, batch_id,
+                                wave_total=total_queries + len(expansion_queries),
+                            )
+
+                            # Delay before first expansion query
+                            await asyncio.sleep(3)
+
+                        for eq_idx, exp_query in enumerate(expansion_queries, 1):
+                            if _shutdown:
+                                break
+                            if batch_size > 0 and companies_discovered >= batch_size:
+                                break
+
+                            # Check for admin cancellation
+                            try:
+                                cancel_row = await (await conn_holder[0].execute(
+                                    "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                                    (batch_id,),
+                                )).fetchone()
+                                if cancel_row and cancel_row[0]:
+                                    break
+                            except Exception:
+                                pass
+
+                            log.info(
+                                "discovery.expansion_query",
+                                query=exp_query,
+                                progress=f"expansion {eq_idx}/{len(expansion_queries)}",
+                                companies_so_far=companies_discovered,
+                            )
+
+                            await _update_job_safe(
+                                conn_holder, batch_id,
+                                wave_current=total_queries + eq_idx,
+                                wave_total=total_queries + len(expansion_queries),
+                            )
+
+                            # Clean the expansion query
+                            clean_exp = re.sub(
+                                r'\b' + re.escape(dept_filter) + r'\b', '', exp_query
+                            ).strip()
+                            clean_exp = re.sub(r'\s{2,}', ' ', clean_exp).strip().rstrip(',').strip()
+                            if not clean_exp:
+                                clean_exp = exp_query
+
+                            _current_search_query = exp_query
+
+                            results = await maps_scraper.search_all(
+                                clean_exp, on_result=_persist_result,
+                                dept_code=dept_filter,
+                            )
+
+                            expansion_used.append(exp_query)
+
+                            log.info(
+                                "discovery.expansion_query_done",
+                                query=exp_query,
+                                results=len(results),
+                                total_saved=companies_discovered,
+                            )
+
+                            # Delay between expansion queries
+                            if eq_idx < len(expansion_queries) and companies_discovered < batch_size:
+                                await asyncio.sleep(3)
+
                 # Web crawl skipped in Maps-first discovery mode.
                 # Maps provides phone + website with 90%+ hit rates.
                 # Email enrichment via website crawl can be triggered
@@ -1531,7 +1654,21 @@ async def run(batch_id: str) -> None:
                 shortfall_msg = None
                 if batch_size > 0 and companies_discovered < batch_size:
                     already_known = len(prev_rows) if dept_filter and prev_rows else 0
-                    if already_known > 0:
+                    expansion_gained = companies_discovered - pre_expansion_count
+                    if expansion_used:
+                        expansion_list = ", ".join(expansion_used)
+                        shortfall_msg = (
+                            f"{pre_expansion_count} avec la recherche principale"
+                            f" + {expansion_gained} avec recherches étendues"
+                            f" ({expansion_list})."
+                            f" Total : {companies_discovered}/{batch_size}."
+                        )
+                        if already_known > 0:
+                            shortfall_msg += (
+                                f" {already_known} entreprises de cette zone avaient"
+                                f" déjà été découvertes et ont été exclues."
+                            )
+                    elif already_known > 0:
                         shortfall_msg = (
                             f"{qualified} nouvelles entreprises qualifiées "
                             f"(objectif : {batch_size}). "

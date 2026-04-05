@@ -353,6 +353,48 @@ CITY_TO_DEPT: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Notable cities per department — used by query expansion in discovery.py
+# Curated list: prefectures, tourist towns, commercial centers.
+# ---------------------------------------------------------------------------
+
+DEPT_CITIES: dict[str, list[str]] = {
+    "01": ["Bourg-en-Bresse", "Oyonnax", "Belley", "Ambérieu-en-Bugey"],
+    "06": ["Nice", "Cannes", "Antibes", "Grasse", "Menton"],
+    "13": ["Marseille", "Aix-en-Provence", "Arles", "Martigues", "Salon-de-Provence"],
+    "14": ["Caen", "Deauville", "Lisieux", "Bayeux", "Honfleur"],
+    "17": ["La Rochelle", "Rochefort", "Saintes", "Royan", "Saint-Jean-d'Angély"],
+    "29": ["Brest", "Quimper", "Morlaix", "Concarneau", "Douarnenez"],
+    "30": ["Nîmes", "Alès", "Beaucaire", "Bagnols-sur-Cèze", "Le Grau-du-Roi"],
+    "31": ["Toulouse", "Colomiers", "Tournefeuille", "Muret", "Blagnac"],
+    "33": ["Bordeaux", "Mérignac", "Pessac", "Libourne", "Arcachon"],
+    "34": ["Montpellier", "Béziers", "Sète", "Agde", "Lunel"],
+    "35": ["Rennes", "Saint-Malo", "Fougères", "Vitré", "Dinard"],
+    "38": ["Grenoble", "Vienne", "Bourgoin-Jallieu", "Voiron", "Échirolles"],
+    "40": ["Mont-de-Marsan", "Dax", "Biscarrosse", "Mimizan", "Capbreton"],
+    "44": ["Nantes", "Saint-Nazaire", "Rezé", "Saint-Herblain", "Pornic"],
+    "56": ["Vannes", "Lorient", "Auray", "Pontivy", "Carnac"],
+    "59": ["Lille", "Roubaix", "Tourcoing", "Dunkerque", "Valenciennes"],
+    "62": ["Calais", "Boulogne-sur-Mer", "Arras", "Lens", "Béthune"],
+    "64": ["Pau", "Bayonne", "Biarritz", "Anglet", "Saint-Jean-de-Luz"],
+    "66": ["Perpignan", "Argelès-sur-Mer", "Canet-en-Roussillon", "Saint-Cyprien", "Collioure"],
+    "67": ["Strasbourg", "Haguenau", "Schiltigheim", "Illkirch-Graffenstaden", "Sélestat"],
+    "68": ["Mulhouse", "Colmar", "Saint-Louis", "Guebwiller", "Thann"],
+    "69": ["Lyon", "Villeurbanne", "Vénissieux", "Vaulx-en-Velin", "Bron"],
+    "75": ["Paris"],
+    "76": ["Rouen", "Le Havre", "Dieppe", "Fécamp", "Étretat"],
+    "77": ["Meaux", "Melun", "Chelles", "Fontainebleau", "Provins"],
+    "78": ["Versailles", "Saint-Germain-en-Laye", "Mantes-la-Jolie", "Rambouillet"],
+    "83": ["Toulon", "Fréjus", "Saint-Raphaël", "Hyères", "Draguignan"],
+    "84": ["Avignon", "Orange", "Carpentras", "Cavaillon", "Apt"],
+    "85": ["La Roche-sur-Yon", "Les Sables-d'Olonne", "Challans", "Fontenay-le-Comte", "Saint-Gilles-Croix-de-Vie"],
+    "92": ["Boulogne-Billancourt", "Nanterre", "Courbevoie", "Colombes", "Issy-les-Moulineaux"],
+    "93": ["Saint-Denis", "Montreuil", "Bobigny", "Aubervilliers", "Pantin"],
+    "94": ["Créteil", "Vitry-sur-Seine", "Champigny-sur-Marne", "Ivry-sur-Seine", "Vincennes"],
+    "95": ["Cergy", "Argenteuil", "Sarcelles", "Enghien-les-Bains", "Pontoise"],
+}
+
+
 def get_department_code(name: str) -> str | None:
     """Return the department code for a given name.
 
