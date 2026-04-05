@@ -180,6 +180,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
 
     const _linkReasonLabel = (method) => {
         if (method === 'enseigne') return t('company.linkReasonEnseigne');
+        if (method === 'enseigne_weak') return t('company.linkReasonEnseigneWeak');
         if (method === 'phone') return t('company.linkReasonPhone');
         if (method === 'phone_weak') return t('company.linkReasonPhoneWeak');
         if (method === 'address') return t('company.linkReasonAddress');
@@ -239,6 +240,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
             : m.method === 'phone' ? t('company.methodLabelPhone')
             : m.method === 'phone_weak' ? t('company.methodLabelPhoneWeak')
             : m.method === 'enseigne' ? t('company.methodLabelEnseigne')
+            : m.method === 'enseigne_weak' ? t('company.methodLabelEnseigneWeak')
             : m.method === 'siren_website' ? t('company.methodLabelSirenWebsite')
             : m.method;
 

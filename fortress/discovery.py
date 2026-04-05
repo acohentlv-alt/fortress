@@ -215,10 +215,10 @@ async def _match_to_sirene(
     """Try to find a matching company in the SIRENE database.
 
     Matching order (strongest signal first, stops at first confirmed match):
-      1. Enseigne (trade name) match — dedicated trade name field
-      2. Phone match — unique identifier, no postal code needed
-      3. Address match (street + postal code) — high confidence
-      4. SIREN from website (validated) — same dept OR name overlap required
+      1. SIREN from website (validated) — strongest signal, company declared its own SIREN
+      2. Enseigne (trade name) match — dedicated trade name field
+      3. Phone match — unique identifier, no postal code needed
+      4. Address match (street + postal code) — high confidence
       5. Name search + scoring — last resort, always produces pending
     """
     if not maps_name or len(maps_name) < 2:
@@ -326,7 +326,56 @@ async def _match_to_sirene(
 
         return best, best_sc
 
-    # ── Step 1: Enseigne (trade name) match ──────────────────────────────
+    # ── Step 1: SIREN from website (validated) ────────────────────────────
+    # The SIREN from a company's own website is the strongest possible signal.
+    # Validate: same department OR name overlap required (to reject hosting SIRENs).
+    if extracted_siren:
+        siren_cur = await conn.execute(
+            """SELECT siren, denomination, enseigne, adresse, ville, departement
+               FROM companies
+               WHERE siren = %s AND siren NOT LIKE 'MAPS%%'
+               LIMIT 1""",
+            (extracted_siren,),
+        )
+        siren_row = await siren_cur.fetchone()
+        if siren_row:
+            sirene_dept = siren_row[5] or ""
+            sirene_denom = siren_row[1] or ""
+            sirene_enseigne = siren_row[2] or ""
+            maps_tokens = {t for t in _normalize_name(maps_name).split() if len(t) > 3}
+            sirene_tokens = {t for t in _normalize_name(f"{sirene_denom} {sirene_enseigne}").split() if len(t) > 3}
+
+            same_dept = (sirene_dept == departement) if departement else False
+            name_overlap = bool(maps_tokens & sirene_tokens)
+
+            if same_dept or name_overlap:
+                validated_by = "dept" if same_dept else "name"
+                log.info(
+                    "discovery.siren_website_validated",
+                    maps_name=maps_name,
+                    siren=extracted_siren,
+                    validated_by=validated_by,
+                )
+                return {
+                    "siren": siren_row[0],
+                    "denomination": sirene_denom,
+                    "enseigne": sirene_enseigne,
+                    "score": 0.95,
+                    "method": "siren_website",
+                    "adresse": siren_row[3] or "",
+                    "ville": siren_row[4] or "",
+                }
+            else:
+                log.warning(
+                    "discovery.siren_website_rejected",
+                    maps_name=maps_name,
+                    siren=extracted_siren,
+                    sirene_name=sirene_denom,
+                    sirene_dept=sirene_dept,
+                    expected_dept=departement,
+                )
+
+    # ── Step 2: Enseigne (trade name) match ──────────────────────────────
     # The enseigne field is the official trade name in SIRENE.
     # If it matches the Maps name well, it's the business — even if the
     # legal address is different (owner registered company elsewhere).
@@ -364,18 +413,45 @@ async def _match_to_sirene(
                         "method": "enseigne",
                         "adresse": row[7] or "",
                         "ville": row[9] or "",
+                        "code_postal": row[8] or "",
                     }
             if best_ens:
-                log.info(
-                    "maps_discovery.enseigne_match",
-                    maps_name=maps_name,
-                    siren=best_ens["siren"],
-                    enseigne=best_ens["enseigne"],
-                    score=best_ens["score"],
-                )
-                return best_ens
+                ens_cp = best_ens.get("code_postal", "")
+                postal_match = bool(maps_cp and ens_cp and maps_cp == ens_cp)
 
-    # ── Step 2: Phone match (unique identifier, no postal code) ──────────
+                if postal_match or best_ens_score >= 0.95:
+                    # Same postal code OR near-perfect name → confirmed
+                    log.info("maps_discovery.enseigne_match", maps_name=maps_name,
+                             siren=best_ens["siren"], enseigne=best_ens["enseigne"],
+                             score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp,
+                             postal_match=postal_match)
+                    best_ens.pop("code_postal", None)
+                    return best_ens
+                elif maps_cp and ens_cp and maps_cp[:2] == ens_cp[:2] and best_ens_score >= 0.85:
+                    # Same department, good score → confirmed
+                    log.info("maps_discovery.enseigne_match_nearby", maps_name=maps_name,
+                             siren=best_ens["siren"], enseigne=best_ens["enseigne"],
+                             score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp)
+                    best_ens.pop("code_postal", None)
+                    return best_ens
+                elif maps_cp and ens_cp and maps_cp != ens_cp:
+                    # Different postal code + score < 0.85 → downgrade to pending
+                    log.warning("maps_discovery.enseigne_match_downgraded", maps_name=maps_name,
+                                siren=best_ens["siren"], enseigne=best_ens["enseigne"],
+                                score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp,
+                                reason="postal_mismatch_weak_score")
+                    best_ens["method"] = "enseigne_weak"
+                    best_ens.pop("code_postal", None)
+                    return best_ens
+                else:
+                    # No postal data available → confirmed (benefit of the doubt)
+                    log.info("maps_discovery.enseigne_match_no_postal", maps_name=maps_name,
+                             siren=best_ens["siren"], enseigne=best_ens["enseigne"],
+                             score=best_ens["score"])
+                    best_ens.pop("code_postal", None)
+                    return best_ens
+
+    # ── Step 3: Phone match (unique identifier, no postal code) ──────────
     # A phone number is unique to one business — postal code check not needed.
     if maps_phone:
         norm_phone = re.sub(r'[\s\-\.]', '', maps_phone)
@@ -512,7 +588,7 @@ async def _match_to_sirene(
                         "ville": phone_row[4] or "",
                     }
 
-    # ── Step 3: Address-first fallback ────────────────────────────────────
+    # ── Step 4: Address-first fallback ────────────────────────────────────
     best_candidate: dict | None = None
     best_score = 0.0
     if maps_address and departement and normalize_address and _extract_street_key:
@@ -563,55 +639,6 @@ async def _match_to_sirene(
             method=best_candidate["method"],
         )
         return best_candidate
-
-    # ── Step 4: SIREN from website (validated) ────────────────────────────
-    # The SIREN from a website footer could be the hosting company's SIREN
-    # (O2Switch, OVH, Gandi). Validate: same department OR name overlap required.
-    if extracted_siren:
-        siren_cur = await conn.execute(
-            """SELECT siren, denomination, enseigne, adresse, ville, departement
-               FROM companies
-               WHERE siren = %s AND siren NOT LIKE 'MAPS%%'
-               LIMIT 1""",
-            (extracted_siren,),
-        )
-        siren_row = await siren_cur.fetchone()
-        if siren_row:
-            sirene_dept = siren_row[5] or ""
-            sirene_denom = siren_row[1] or ""
-            sirene_enseigne = siren_row[2] or ""
-            maps_tokens = {t for t in _normalize_name(maps_name).split() if len(t) > 3}
-            sirene_tokens = {t for t in _normalize_name(f"{sirene_denom} {sirene_enseigne}").split() if len(t) > 3}
-
-            same_dept = (sirene_dept == departement) if departement else False
-            name_overlap = bool(maps_tokens & sirene_tokens)
-
-            if same_dept or name_overlap:
-                validated_by = "dept" if same_dept else "name"
-                log.info(
-                    "discovery.siren_website_validated",
-                    maps_name=maps_name,
-                    siren=extracted_siren,
-                    validated_by=validated_by,
-                )
-                return {
-                    "siren": siren_row[0],
-                    "denomination": sirene_denom,
-                    "enseigne": sirene_enseigne,
-                    "score": 0.95,
-                    "method": "siren_website",
-                    "adresse": siren_row[3] or "",
-                    "ville": siren_row[4] or "",
-                }
-            else:
-                log.warning(
-                    "discovery.siren_website_rejected",
-                    maps_name=maps_name,
-                    siren=extracted_siren,
-                    sirene_name=sirene_denom,
-                    sirene_dept=sirene_dept,
-                    expected_dept=departement,
-                )
 
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
     # Each term needs 2 params: one for enseigne LIKE, one for denomination LIKE
