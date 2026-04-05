@@ -125,7 +125,7 @@ async def delete_job(batch_id: str, request: Request):
 
         # ── Step 1: Find all MAPS sirens in this batch ───────────────
         maps_rows = await (await conn.execute(
-            "SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s AND siren LIKE 'MAPS%'",
+            "SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s AND siren LIKE 'MAPS%%'",
             (batch_id,),
         )).fetchall()
         maps_sirens_in_batch = {r[0] for r in maps_rows} if maps_rows else set()
