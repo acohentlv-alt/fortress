@@ -33,6 +33,7 @@ import psycopg_pool
 import structlog
 
 from fortress.config.departments import DEPARTMENTS, DEPT_CITIES
+from fortress.config.sector_relevance import is_irrelevant_category
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
 from fortress.scraping.http import CurlClient
@@ -917,6 +918,14 @@ async def run(batch_id: str) -> None:
                 triage_counts: dict[str, int] = {"black": 0, "green": 0, "yellow": 0, "red": 0}
                 _current_search_query: str = ""  # Tracks which query is active
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
+                _sector_word: str = ""  # Sector word for relevance filtering
+
+                # Pre-compute sector word for relevance filter (strip dept code from first query)
+                if search_queries and dept_filter and re.match(r"^\d{2,3}$", dept_filter):
+                    _sw = re.sub(r'\b' + re.escape(dept_filter) + r'\b', '', search_queries[0]).strip()
+                    _sw = re.sub(r'\s{2,}', ' ', _sw).strip().rstrip(',').strip()
+                    if _sw:
+                        _sector_word = _sw
 
                 # ── Resume support: skip already-processed companies ──
                 async with pool.connection() as conn:
@@ -924,7 +933,8 @@ async def run(batch_id: str) -> None:
                         """SELECT sa.siren, co.denomination, co.adresse
                            FROM batch_log sa
                            LEFT JOIN companies co ON co.siren = sa.siren
-                           WHERE sa.batch_id = %s""",
+                           WHERE sa.batch_id = %s
+                           AND sa.action != 'relevance_filter'""",
                         (batch_id,),
                     )
                     existing_rows = await cur.fetchall()
@@ -992,6 +1002,32 @@ async def run(batch_id: str) -> None:
                             log.info("discovery.website_dedup_skip", name=maps_name, domain=website_domain)
                             return
                         seen_websites.add(website_domain)
+
+                    # ── Relevance filter: skip categories that don't match the sector ──
+                    maps_category = maps_result.get("category", "")
+                    if maps_category and _sector_word:
+                        if is_irrelevant_category(_sector_word, maps_category):
+                            log.info(
+                                "discovery.relevance_filtered",
+                                name=maps_name,
+                                category=maps_category,
+                                sector=_sector_word,
+                            )
+                            try:
+                                async with pool.connection() as flt_conn:
+                                    await log_audit(
+                                        flt_conn,
+                                        batch_id=batch_id,
+                                        siren=f"FILTERED_{maps_name[:20]}",
+                                        action="relevance_filter",
+                                        result="filtered",
+                                        detail=f"Catégorie '{maps_category}' non pertinente pour '{_sector_word}'",
+                                        search_query=_current_search_query or None,
+                                        workspace_id=batch_workspace_id,
+                                    )
+                            except Exception:
+                                pass
+                            return
 
                     # ── Level 3: SIREN extraction from website ────────────
                     extracted_siren = None

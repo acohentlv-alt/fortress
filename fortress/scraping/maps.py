@@ -993,6 +993,22 @@ class PlaywrightMapsScraper:
         except Exception:
             pass  # Non-critical — used for diagnostics only
 
+        # ── Category: business type text below the name ──────────────
+        try:
+            cat_el = await page.evaluate("""() => {
+                // Strategy 1: button with jsaction containing "category"
+                const btn = document.querySelector('button[jsaction*="category"]');
+                if (btn) return btn.textContent.trim();
+                // Strategy 2: span.DkEaL in the header area
+                const span = document.querySelector('span.DkEaL');
+                if (span) return span.textContent.trim();
+                return null;
+            }""")
+            if cat_el and len(cat_el) > 1:
+                result["category"] = cat_el
+        except Exception:
+            pass  # Non-critical — category is optional for relevance filtering
+
         # ── Strategy 1: data-item-id phone buttons (Maps 2024+) ──────
         phone_btn = await page.query_selector('button[data-item-id^="phone"]')
         if phone_btn:
@@ -1282,7 +1298,9 @@ class PlaywrightMapsScraper:
             has_rating=bool(result.get("rating")),
             has_reviews=bool(result.get("review_count")),
             has_maps_url=bool(result.get("maps_url")),
+            has_category=bool(result.get("category")),
             maps_name=result.get("maps_name"),
+            maps_category=result.get("category", ""),
         )
         return result
 
