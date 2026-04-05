@@ -75,7 +75,7 @@ async def get_stats(request: Request):
                 FILTER (WHERE co.departement IS NOT NULL)               AS departments_covered,
             (SELECT COUNT(*) FROM batch_data WHERE status != 'deleted' {jobs_clause})   AS total_jobs,
             (SELECT COUNT(*) FROM batch_data
-             WHERE status = 'completed' {jobs_clause})                  AS completed_jobs,
+             WHERE status IN ('completed', 'interrupted') {jobs_clause})  AS completed_jobs,
             (SELECT COUNT(*) FROM batch_data
              WHERE status IN ('in_progress', 'queued', 'triage')
                {jobs_clause})                                           AS running_jobs
@@ -396,11 +396,11 @@ async def get_analysis(request: Request):
         pipeline_counts, weekly_trend, recent_jobs = await asyncio.gather(
             _fetch_one_sem(f"""
                 SELECT
-                    COUNT(*) FILTER (WHERE status = 'completed')        AS completed_total,
+                    COUNT(*) FILTER (WHERE status IN ('completed', 'interrupted'))  AS completed_total,
                     COUNT(*) FILTER (WHERE status = 'failed')           AS failed_total,
                     COUNT(*) FILTER (WHERE status IN ('in_progress', 'queued', 'triage'))
                                                                         AS running_now,
-                    COUNT(*) FILTER (WHERE status = 'completed'
+                    COUNT(*) FILTER (WHERE status IN ('completed', 'interrupted')
                                     AND created_at >= NOW() - INTERVAL '7 days')
                                                                         AS completed_7d,
                     COUNT(*) FILTER (WHERE status = 'failed'
@@ -423,7 +423,7 @@ async def get_analysis(request: Request):
                     FROM batch_data sj
                     JOIN batch_tags qt ON UPPER(qt.batch_name) = UPPER(sj.batch_name)
                     LEFT JOIN contacts ct ON ct.siren = qt.siren
-                    WHERE sj.status = 'completed'
+                    WHERE sj.status IN ('completed', 'interrupted')
                       AND sj.created_at >= NOW() - INTERVAL '12 weeks' {batch_ws.replace('workspace_id', 'sj.workspace_id')} {tag_ws}
                     GROUP BY week, sj.batch_name
                 )

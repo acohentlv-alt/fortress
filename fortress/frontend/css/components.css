@@ -568,6 +568,11 @@
     color: var(--text-muted);
 }
 
+.badge-interrupted {
+    background: rgba(249, 115, 22, 0.15);
+    color: #F97316;
+}
+
 /* ── Buttons ───────────────────────────────────────────────────── */
 .btn {
     display: inline-flex;

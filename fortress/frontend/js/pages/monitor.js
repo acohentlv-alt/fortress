@@ -122,12 +122,12 @@ async function renderMonitorList(container) {
             </div>
         `}
 
-        ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).length > 0 ? `
+        ${jobsList.filter(j => (j.status === 'completed' || j.status === 'interrupted') && !j.batch_id.startsWith('MANUAL_')).length > 0 ? `
             <h2 style="font-size:var(--font-lg); font-weight:600; margin-top:var(--space-2xl); margin-bottom:var(--space-lg)">
                 ${t('monitor.recentCompleted')}
             </h2>
             <div class="job-list">
-                ${jobsList.filter(j => j.status === 'completed' && !j.batch_id.startsWith('MANUAL_')).slice(0, 5).map(j => `
+                ${jobsList.filter(j => (j.status === 'completed' || j.status === 'interrupted') && !j.batch_id.startsWith('MANUAL_')).slice(0, 5).map(j => `
                     <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
                         <div class="job-card-info">
                             <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
@@ -480,7 +480,7 @@ async function renderJobMonitor(container, batchId) {
                 if (job.status === 'triage') stage = null;
                 else if (qualified > 0) stage = 'inpi';
                 else stage = 'maps';
-            } else if (job.status === 'completed') {
+            } else if (job.status === 'completed' || job.status === 'interrupted') {
                 stage = 'save';
             }
             $.pipeline.innerHTML = renderPipelineStages(stage);
@@ -577,6 +577,16 @@ async function renderJobMonitor(container, batchId) {
                      <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid var(--danger); color:var(--text)">${t('monitor.completionPartialResults')}</a>
                  </div>
              `;
+        } else if (!isRunning && job.status === 'interrupted') {
+            $.completion.style.display = 'block';
+            $.completion.innerHTML = `
+                <div class="completion-card" style="border-left: 4px solid #F97316; background: color-mix(in srgb, var(--bg-surface) 90%, #F97316);">
+                    <div class="completion-icon" style="background:rgba(249,115,22,0.1); color:#F97316">⚠️</div>
+                    <div class="completion-title" style="color:#F97316">Batch interrompu</div>
+                    <div class="completion-subtitle">${job.shortfall_reason || 'Le processus s\'est arrêté de manière inattendue.'}</div>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid #F97316; color:var(--text)">Voir les résultats partiels</a>
+                </div>
+            `;
         }
 
         // ── Batch Summary ───────────────────────────────────────
@@ -595,7 +605,7 @@ async function renderJobMonitor(container, batchId) {
                     : t('monitor.footerAutoStaleRecent', { datetime: formatDateTime(job.updated_at) });
             }
         } else if (!isRunning) {
-            footerText = job.status === 'failed'
+            footerText = (job.status === 'failed' || job.status === 'interrupted')
                 ? t('monitor.footerFailed', { datetime: formatDateTime(job.updated_at) })
                 : t('monitor.footerDone', { datetime: formatDateTime(job.updated_at) });
         }

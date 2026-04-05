@@ -38,7 +38,8 @@ async def list_jobs(request: Request):
             sj.user_id,
             sj.worker_id,
             sj.mode,
-            sj.workspace_id
+            sj.workspace_id,
+            sj.shortfall_reason
         FROM batch_data sj
         WHERE sj.status != 'deleted'
         {ws_filter}
@@ -49,32 +50,50 @@ async def list_jobs(request: Request):
         tuple(ws_params) if ws_params else None,
     )
 
-    # Watchdog: auto-complete orphaned batches (in_progress but idle >10 min)
-    orphaned = [
-        r["batch_id"] for r in rows
+    # Watchdog: auto-resolve orphaned batches (in_progress but idle >10 min)
+    # completed if scraped >= batch_size, interrupted if scraped < batch_size
+    import datetime as _dt
+    orphaned_rows = [
+        r for r in rows
         if r.get("status") == "in_progress"
         and r.get("updated_at")
-        and (__import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ) - r["updated_at"]).total_seconds() > 600
+        and (_dt.datetime.now(_dt.timezone.utc) - r["updated_at"]).total_seconds() > 600
     ]
-    if orphaned:
+    if orphaned_rows:
         try:
             async with get_conn() as conn:
-                for bid in orphaned:
+                for r in orphaned_rows:
+                    bid = r["batch_id"]
+                    scraped = r.get("companies_scraped") or 0
+                    batch_size = r.get("batch_size") or 0
+                    if scraped >= batch_size and batch_size > 0:
+                        new_status = "completed"
+                        reason = None
+                    else:
+                        new_status = "interrupted"
+                        reason = (
+                            f"Le processus pipeline s'est arrêté de manière inattendue "
+                            f"après {scraped} entreprises sur {batch_size} demandées. "
+                            f"Relancez le batch pour continuer."
+                        )
                     await conn.execute(
-                        """UPDATE batch_data SET status = 'completed',
-                           shortfall_reason = COALESCE(shortfall_reason,
-                               'Le processus pipeline s''est arrêté. Relancez le batch pour continuer.'),
+                        """UPDATE batch_data SET status = %s,
+                           shortfall_reason = COALESCE(shortfall_reason, %s),
                            updated_at = NOW()
                            WHERE batch_id = %s AND status = 'in_progress'""",
-                        (bid,),
+                        (new_status, reason, bid),
                     )
                 await conn.commit()
             # Update in-memory rows
+            orphaned_ids = {r["batch_id"] for r in orphaned_rows}
             for r in rows:
-                if r["batch_id"] in orphaned:
-                    r["status"] = "completed"
+                if r["batch_id"] in orphaned_ids:
+                    scraped = r.get("companies_scraped") or 0
+                    batch_size = r.get("batch_size") or 0
+                    if scraped >= batch_size and batch_size > 0:
+                        r["status"] = "completed"
+                    else:
+                        r["status"] = "interrupted"
         except Exception:
             pass  # Non-fatal
 
@@ -311,27 +330,33 @@ async def get_job(batch_id: str, request: Request):
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
-    # Watchdog: if batch is in_progress but no update in 10+ minutes, mark as completed.
-    # The worker process likely crashed (Render restart, OOM, etc.).
+    # Watchdog: if batch is in_progress but no update in 10+ minutes, resolve status.
+    # completed if scraped >= batch_size, interrupted if scraped < batch_size.
     idle = job.get("idle_seconds") or 0
     if job["status"] == "in_progress" and idle > 600:
         scraped = job.get("companies_scraped") or 0
         batch_size = job.get("batch_size") or 0
-        shortfall = (
-            f"Le processus pipeline s'est arrêté après {scraped} entreprises "
-            f"(objectif : {batch_size}). Relancez le batch pour continuer."
-        ) if scraped < batch_size else None
+        if scraped >= batch_size and batch_size > 0:
+            new_status = "completed"
+            shortfall = None
+        else:
+            new_status = "interrupted"
+            shortfall = (
+                f"Le processus pipeline s'est arrêté de manière inattendue "
+                f"après {scraped} entreprises sur {batch_size} demandées. "
+                f"Relancez le batch pour continuer."
+            )
         try:
             async with get_conn() as conn:
                 await conn.execute(
-                    """UPDATE batch_data SET status = 'completed',
+                    """UPDATE batch_data SET status = %s,
                        shortfall_reason = COALESCE(shortfall_reason, %s),
                        updated_at = NOW()
                        WHERE batch_id = %s AND status = 'in_progress'""",
-                    (shortfall, batch_id),
+                    (new_status, shortfall, batch_id),
                 )
                 await conn.commit()
-            job = {**job, "status": "completed", "shortfall_reason": shortfall}
+            job = {**job, "status": new_status, "shortfall_reason": shortfall}
         except Exception:
             pass  # Non-fatal — just show stale data
 

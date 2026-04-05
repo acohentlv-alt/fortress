@@ -166,6 +166,42 @@ _INDUSTRY_WORDS = {
 }
 
 
+_FOREIGN_INDICATORS = frozenset({
+    "espagne", "spain", "españa", "espanya",
+    "italia", "italy", "italie",
+    "deutschland", "germany", "allemagne",
+    "belgique", "belgium", "belgie", "belgië",
+    "suisse", "switzerland", "schweiz", "svizzera",
+    "luxembourg", "luxemburg",
+    "andorra", "andorre",
+    "united kingdom", "royaume-uni",
+})
+
+
+def _is_in_france(address: str | None) -> bool:
+    """Reject addresses clearly outside France."""
+    if not address:
+        return True  # benefit of the doubt
+    lower = address.lower()
+    # Check for foreign country/city names
+    for indicator in _FOREIGN_INDICATORS:
+        if indicator in lower:
+            return False
+    # Validate postal code if present
+    m = re.search(r"\b(\d{5})\b", address)
+    if m:
+        cp = m.group(1)
+        dept = int(cp[:2])
+        # Metropolitan France: 01-95, Overseas: 971-976
+        if 1 <= dept <= 95:
+            return True
+        overseas = int(cp[:3])
+        if 971 <= overseas <= 976:
+            return True
+        return False  # invalid French postal code
+    return True  # no postal code found, keep it
+
+
 def _is_person_name(name: str) -> bool:
     """Detect if a name looks like a person name (e.g. 'LORENE PRIGENT').
 
@@ -970,6 +1006,11 @@ async def run(batch_id: str) -> None:
                             log.info("discovery.phone_dedup_skip", name=maps_name, phone=maps_phone)
                             return
                         seen_phones.add(clean_phone)
+
+                    # ── France country filter ────────────────────────────
+                    if not _is_in_france(maps_address):
+                        log.info("discovery.foreign_filtered", name=maps_name, address=maps_address)
+                        return
 
                     # ── SIRENE matching — all methods in one function ──────────────
                     candidate = None

@@ -68,7 +68,7 @@ export function statusBadge(status) {
         'triage': ['badge-info', '🔍 Triage'],
         'new': ['badge-muted', '🆕 Nouveau'],
         'paused': ['badge-accent', '⏸ Pause'],
-        'interrupted': ['badge-warning', '⏸️ Interrompu'],
+        'interrupted': ['badge-interrupted', '⚠️ Interrompu'],
         'failed': ['badge-danger', '❌ Échoué'],
     };
     const [cls, text] = map[status] || ['badge-muted', status];
