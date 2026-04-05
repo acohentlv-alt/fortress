@@ -455,8 +455,8 @@ async def _match_to_sirene(
                 ens_cp = best_ens.get("code_postal", "")
                 postal_match = bool(maps_cp and ens_cp and maps_cp == ens_cp)
 
-                if postal_match or best_ens_score >= 0.95:
-                    # Same postal code OR near-perfect name → confirmed
+                if postal_match:
+                    # Same postal code → confirmed
                     log.info("maps_discovery.enseigne_match", maps_name=maps_name,
                              siren=best_ens["siren"], enseigne=best_ens["enseigne"],
                              score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp,
