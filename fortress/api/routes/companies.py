@@ -1263,6 +1263,7 @@ async def _get_company_impl(siren: str, request=None):
                 reason_map = {
                     "address": "Même adresse détectée",
                     "fuzzy_name": "Nom similaire",
+                    "phone_weak": "Correspondance téléphone (nom différent)",
                 }
                 suggested_matches = [{
                     "siren": candidate["siren"],

@@ -437,6 +437,7 @@ function _renderPendingLinks(data, rootContainer) {
                         const reason = r.link_method === 'fuzzy_name' ? t('dashboard.reasonFuzzy')
                             : r.link_method === 'address' ? t('dashboard.reasonAddress')
                             : r.link_method === 'phone' ? t('dashboard.reasonPhone')
+                            : r.link_method === 'phone_weak' ? t('dashboard.reasonPhoneWeak')
                             : r.link_method === 'enseigne' ? t('dashboard.reasonEnseigne')
                             : r.link_method || '—';
                         const hints = [];

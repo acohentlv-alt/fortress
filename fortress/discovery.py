@@ -363,31 +363,127 @@ async def _match_to_sirene(
 
         for phone_val in filter(None, [norm_phone, alt_phone]):
             phone_row = await (await conn.execute(
-                """SELECT c.siren, co.denomination, co.enseigne, co.adresse, co.ville
+                """SELECT c.siren, co.denomination, co.enseigne, co.adresse, co.ville, co.code_postal
                    FROM contacts c
                    JOIN companies co ON co.siren = c.siren
                    WHERE c.phone = %s
+                     AND c.source != 'google_maps'
                      AND co.siren NOT LIKE 'MAPS%%'
                      AND co.statut = 'A'
                    LIMIT 1""",
                 (phone_val,),
             )).fetchone()
             if phone_row:
-                log.info(
-                    "maps_discovery.phone_match",
-                    maps_name=maps_name,
-                    siren=phone_row[0],
-                    phone=phone_val,
+                # Verify names are compatible — shared phone with unrelated
+                # names is likely legacy data or a recycled number.
+                sirene_denom = phone_row[1] or ""
+                sirene_enseigne = phone_row[2] or ""
+                best_score = max(
+                    _name_match_score(maps_name, sirene_denom),
+                    _name_match_score(maps_name, sirene_enseigne),
                 )
-                return {
-                    "siren": phone_row[0],
-                    "denomination": phone_row[1] or "",
-                    "enseigne": phone_row[2] or "",
-                    "score": 0.90,
-                    "method": "phone",
-                    "adresse": phone_row[3] or "",
-                    "ville": phone_row[4] or "",
-                }
+
+                # Industry-generic names need higher threshold
+                maps_generic = _is_industry_generic(maps_name)
+                sirene_generic = _is_industry_generic(sirene_denom) or _is_industry_generic(sirene_enseigne)
+                threshold = 0.80 if (maps_generic or sirene_generic) else 0.30
+
+                if best_score >= threshold:
+                    need_city_check = best_score < 0.90
+
+                    if need_city_check:
+                        # Mid-range score — verify cities are compatible
+                        sirene_ville = phone_row[4] or ""
+                        sirene_cp = phone_row[5] or ""
+                        city_ok = False
+                        city_reason = "no_data"
+
+                        if maps_city_tokens and sirene_ville:
+                            sirene_ville_tokens = {t for t in _normalize_name(sirene_ville).split() if len(t) > 3}
+                            if sirene_ville_tokens & maps_city_tokens:
+                                city_ok = True
+                                city_reason = "token_overlap"
+
+                        if not city_ok and maps_cp and sirene_cp:
+                            if maps_cp == sirene_cp:
+                                city_ok = True
+                                city_reason = "postal_code"
+
+                        if not city_ok and (not maps_city_tokens or not sirene_ville):
+                            # No city data — benefit of the doubt
+                            city_ok = True
+                            city_reason = "no_data"
+
+                        log.info(
+                            "maps_discovery.phone_city_check",
+                            maps_name=maps_name,
+                            siren=phone_row[0],
+                            maps_cp=maps_cp,
+                            sirene_cp=sirene_cp,
+                            sirene_ville=sirene_ville,
+                            city_match=city_ok,
+                            reason=city_reason,
+                            name_score=round(best_score, 2),
+                        )
+
+                        if not city_ok:
+                            # Cities don't match — downgrade to phone_weak
+                            log.warning(
+                                "maps_discovery.phone_match_city_mismatch",
+                                maps_name=maps_name,
+                                siren=phone_row[0],
+                                sirene_denom=sirene_denom,
+                                phone=phone_val,
+                                name_score=round(best_score, 2),
+                                maps_cp=maps_cp,
+                                sirene_ville=sirene_ville,
+                            )
+                            return {
+                                "siren": phone_row[0],
+                                "denomination": sirene_denom,
+                                "enseigne": sirene_enseigne,
+                                "score": round(best_score, 2),
+                                "method": "phone_weak",
+                                "adresse": phone_row[3] or "",
+                                "ville": phone_row[4] or "",
+                            }
+
+                    # Score >= 0.90 OR city check passed → confirmed
+                    log.info(
+                        "maps_discovery.phone_match",
+                        maps_name=maps_name,
+                        siren=phone_row[0],
+                        phone=phone_val,
+                        name_score=round(best_score, 2),
+                    )
+                    return {
+                        "siren": phone_row[0],
+                        "denomination": sirene_denom,
+                        "enseigne": sirene_enseigne,
+                        "score": 0.90,
+                        "method": "phone",
+                        "adresse": phone_row[3] or "",
+                        "ville": phone_row[4] or "",
+                    }
+                else:
+                    log.warning(
+                        "maps_discovery.phone_match_weak",
+                        maps_name=maps_name,
+                        siren=phone_row[0],
+                        sirene_denom=sirene_denom,
+                        phone=phone_val,
+                        name_score=round(best_score, 2),
+                        threshold=threshold,
+                    )
+                    return {
+                        "siren": phone_row[0],
+                        "denomination": sirene_denom,
+                        "enseigne": sirene_enseigne,
+                        "score": round(best_score, 2),
+                        "method": "phone_weak",
+                        "adresse": phone_row[3] or "",
+                        "ville": phone_row[4] or "",
+                    }
 
     # ── Step 3: Address-first fallback ────────────────────────────────────
     best_candidate: dict | None = None

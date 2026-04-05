@@ -181,6 +181,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
     const _linkReasonLabel = (method) => {
         if (method === 'enseigne') return t('company.linkReasonEnseigne');
         if (method === 'phone') return t('company.linkReasonPhone');
+        if (method === 'phone_weak') return t('company.linkReasonPhoneWeak');
         if (method === 'address') return t('company.linkReasonAddress');
         if (method === 'siren_website') return t('company.linkReasonSirenWebsite');
         if (method === 'fuzzy_name') return t('company.linkReasonFuzzy');
@@ -236,6 +237,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         const methodLabel = m.method === 'address' ? t('company.methodLabelAddress')
             : m.method === 'fuzzy_name' ? t('company.methodLabelFuzzy')
             : m.method === 'phone' ? t('company.methodLabelPhone')
+            : m.method === 'phone_weak' ? t('company.methodLabelPhoneWeak')
             : m.method === 'enseigne' ? t('company.methodLabelEnseigne')
             : m.method === 'siren_website' ? t('company.methodLabelSirenWebsite')
             : m.method;
