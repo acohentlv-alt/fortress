@@ -229,10 +229,22 @@ class PlaywrightMapsScraper:
         # NOTE: stylesheets MUST remain — Google Maps uses CSS z-index
         # to position the search box above the canvas. Without CSS,
         # the canvas intercepts all clicks.
-        _BLOCKED_TYPES = frozenset({"image", "media", "font"})
+        _BLOCKED_TYPES = frozenset({"image", "media", "font", "ping"})
+        _BLOCKED_URL_PARTS = (
+            "google-analytics.com",
+            "googletagmanager.com",
+            "doubleclick.net",
+            "googlesyndication.com",
+            "google.com/pagead",
+            "cbk0.google.com",           # Street View tiles
+            "streetviewpixels",           # Street View pixels
+        )
 
         async def _intercept(route):
+            url = route.request.url
             if route.request.resource_type in _BLOCKED_TYPES:
+                await route.abort()
+            elif any(p in url for p in _BLOCKED_URL_PARTS):
                 await route.abort()
             else:
                 await route.continue_()

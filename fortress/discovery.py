@@ -775,13 +775,32 @@ async def run(batch_id: str) -> None:
 
     # ── Start Google Maps scraper ─────────────────────────────────────
     maps_scraper = None
+    browser_lock_conn = None
     try:
+        # Acquire browser lock first — blocks until no other batch has a browser running
+        browser_lock_conn = await psycopg.AsyncConnection.connect(
+            settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
+        )
+        await browser_lock_conn.execute("SELECT pg_advisory_lock(42424243)")
+        log.info("discovery.browser_lock_acquired", batch_id=batch_id)
+
         from fortress.scraping.maps import PlaywrightMapsScraper
         maps_scraper = PlaywrightMapsScraper()
         await maps_scraper.start()
         log.info("discovery.browser_started")
     except Exception as exc:
         log.error("discovery.browser_failed", error=str(exc))
+        # Release browser lock if it was acquired
+        if browser_lock_conn is not None:
+            try:
+                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243)")
+            except Exception:
+                pass
+            try:
+                await browser_lock_conn.close()
+            except Exception:
+                pass
+            browser_lock_conn = None
         # Can't do Maps-first without Chrome — mark failed
         try:
             status_conn = await psycopg.AsyncConnection.connect(
@@ -1837,6 +1856,17 @@ async def run(batch_id: str) -> None:
                 await asyncio.wait_for(maps_scraper.close(), timeout=5)
             except (asyncio.TimeoutError, Exception):
                 log.warning("maps_scraper.close_timeout")
+        # Release browser lock
+        if browser_lock_conn is not None:
+            try:
+                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243)")
+                log.info("discovery.browser_lock_released", batch_id=batch_id)
+            except Exception:
+                pass
+            try:
+                await browser_lock_conn.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
