@@ -636,7 +636,7 @@ async def _match_to_sirene(
 
 
 # ---------------------------------------------------------------------------
-# Status update helpers (same pattern as runner.py)
+# Status update helpers
 # ---------------------------------------------------------------------------
 
 async def _update_job(

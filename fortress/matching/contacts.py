@@ -43,7 +43,7 @@ _PHONE_PATTERNS: list[re.Pattern[str]] = [
 _PHONE_NORMALISE_RE = re.compile(r"[\s.\-()]")  # also strip parentheses from +33(0) format
 
 # ---------------------------------------------------------------------------
-# Phone validation — shared with web_search.py (avoid circular import)
+# Phone validation
 # ---------------------------------------------------------------------------
 
 # Slightly broader than _PHONE_NORMALISE_RE: also strips parentheses.
@@ -965,7 +965,7 @@ def extract_mentions_legales(
 
 
 # ---------------------------------------------------------------------------
-# Best email / best phone selection (moved from processing/enricher.py)
+# Best email / best phone selection
 # Used by the Enrichir button in companies.py
 # ---------------------------------------------------------------------------
 
