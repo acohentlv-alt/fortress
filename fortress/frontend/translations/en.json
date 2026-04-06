@@ -521,7 +521,10 @@
     "batchInProgress": "Batch running",
     "gaugePhone": "📞 Phone",
     "gaugeEmail": "✉️ Email",
-    "gaugeWeb": "🌐 Web"
+    "gaugeWeb": "🌐 Web",
+    "queueWaiting": "Waiting — another batch is running",
+    "queueWaitingGeneric": "Waiting — starting soon...",
+    "queueEstimate": "Estimated wait: ~{{minutes}} min"
   },
   "job": {
     "title": "Batch details",

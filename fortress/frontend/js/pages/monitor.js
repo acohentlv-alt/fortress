@@ -216,6 +216,7 @@ async function renderJobMonitor(container, batchId) {
                 <h1 class="page-title" id="mon-title">${t('monitor.loading')}</h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)" id="mon-status-row"></div>
                 <div id="mon-current-query" style="margin-top:6px; font-size:13px; color:var(--accent, #4A90D9); display:none"></div>
+                <div id="mon-queue-info" style="display:none"></div>
             </div>
             <div style="display:flex; align-items:center; gap:var(--space-sm)">
                 <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="${t('monitor.stopBtnTitle')}">${t('monitor.stopBtn')}</button>
@@ -334,6 +335,7 @@ async function renderJobMonitor(container, batchId) {
         cancelBtn: document.getElementById('mon-cancel-btn'),
         summary: document.getElementById('mon-summary'),
         currentQuery: document.getElementById('mon-current-query'),
+        queueInfo: document.getElementById('mon-queue-info'),
     };
 
     // ── State tracking ──────────────────────────────────────────
@@ -442,6 +444,44 @@ async function renderJobMonitor(container, batchId) {
                 $.currentQuery.textContent = `Recherche : ${job.current_query}${waveText}...`;
             } else {
                 $.currentQuery.style.display = 'none';
+            }
+        }
+
+        // ── Queue info banner ──
+        const queueBanner = $.queueInfo;
+        if (queueBanner) {
+            if (job.status === 'queued' && job.queue_info) {
+                const qi = job.queue_info;
+                let html = '';
+
+                if (qi.blocking_batch) {
+                    const b = qi.blocking_batch;
+                    html += `<div style="padding:12px 16px; background:var(--bg-secondary); border-left:3px solid var(--warning, #f0ad4e); border-radius:var(--radius-sm); margin-top:var(--space-md)">`;
+                    html += `<div style="font-weight:600; color:var(--warning, #f0ad4e); font-size:var(--font-sm)">`;
+                    html += `⏳ ${t('monitor.queueWaiting')}`;
+                    html += `</div>`;
+                    html += `<div style="font-size:var(--font-sm); margin-top:4px; color:var(--text-secondary)">`;
+                    html += `${escapeHtml(b.batch_name)} — ${b.progress}/${b.target}`;
+                    if (b.current_query) html += ` (${escapeHtml(b.current_query)})`;
+                    html += `</div>`;
+                    if (qi.estimated_wait_minutes != null) {
+                        html += `<div style="font-size:var(--font-xs); margin-top:4px; color:var(--text-muted)">`;
+                        html += `${t('monitor.queueEstimate', {minutes: qi.estimated_wait_minutes})}`;
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                } else {
+                    html += `<div style="padding:12px 16px; background:var(--bg-secondary); border-left:3px solid var(--warning, #f0ad4e); border-radius:var(--radius-sm); margin-top:var(--space-md)">`;
+                    html += `<div style="font-weight:600; color:var(--warning, #f0ad4e); font-size:var(--font-sm)">`;
+                    html += `⏳ ${t('monitor.queueWaitingGeneric')}`;
+                    html += `</div></div>`;
+                }
+
+                queueBanner.innerHTML = html;
+                queueBanner.style.display = 'block';
+            } else {
+                queueBanner.style.display = 'none';
+                queueBanner.innerHTML = '';
             }
         }
 

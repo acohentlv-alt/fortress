@@ -384,6 +384,48 @@ async def get_job(batch_id: str, request: Request):
     """, (batch_id,))
     pending_links = (pending_row or {}).get("pending_links", 0)
 
+    # ── Queue info (only when batch is waiting) ──
+    if job.get("status") == "queued":
+        # Find the blocking batch (any in_progress batch)
+        blocking = await fetch_one(
+            """SELECT batch_id, batch_name, companies_scraped, batch_size,
+                      current_query, created_at, updated_at,
+                      EXTRACT(EPOCH FROM (NOW() - created_at))/60 as running_min
+               FROM batch_data
+               WHERE status = 'in_progress'
+               ORDER BY created_at ASC LIMIT 1"""
+        )
+
+        # Count batches queued before this one
+        queued_ahead = await fetch_one(
+            "SELECT COUNT(*) as cnt FROM batch_data WHERE status = 'queued' AND created_at < %s AND batch_id != %s",
+            (job["created_at"], batch_id),
+        )
+        position = (queued_ahead["cnt"] if queued_ahead else 0) + 1
+
+        queue_info = {"position": position, "blocking_batch": None, "estimated_wait_minutes": None}
+
+        if blocking:
+            scraped = blocking.get("companies_scraped") or 0
+            target = blocking.get("batch_size") or 50
+            running_min = blocking.get("running_min") or 0
+
+            queue_info["blocking_batch"] = {
+                "batch_id": blocking["batch_id"],
+                "batch_name": blocking.get("batch_name", ""),
+                "progress": scraped,
+                "target": target,
+                "current_query": blocking.get("current_query"),
+            }
+
+            # Estimate remaining time
+            if scraped > 0 and running_min > 0:
+                rate = running_min / scraped  # minutes per entity
+                remaining = (target - scraped) * rate
+                queue_info["estimated_wait_minutes"] = round(remaining)
+
+        job["queue_info"] = queue_info
+
     return {**job, "departments": depts, "pending_links": pending_links}
 
 
