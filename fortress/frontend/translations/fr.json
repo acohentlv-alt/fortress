@@ -111,7 +111,8 @@
     "users": "Utilisateurs",
     "logout": "Déconnexion",
     "version": "Fortress v1.0 · Zéro coût",
-    "pinMenu": "Fixer/réduire le menu"
+    "pinMenu": "Fixer/réduire le menu",
+    "legal": "Mentions légales"
   },
   "app": {
     "pageNotFound": "Page introuvable",

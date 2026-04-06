@@ -506,7 +506,7 @@ function _setupSidebarToggle() {
     }
 
     brandBtn.style.cursor = 'pointer';
-    brandBtn.title = 'Fixer/réduire le menu';
+    brandBtn.title = t('sidebar.pinMenu');
 
     // Click to pin/unpin
     let _suppressHover = false;

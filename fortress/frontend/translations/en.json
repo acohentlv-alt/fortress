@@ -111,7 +111,8 @@
     "users": "Users",
     "logout": "Logout",
     "version": "Fortress v1.0 · Zero cost",
-    "pinMenu": "Pin/collapse menu"
+    "pinMenu": "Pin/collapse menu",
+    "legal": "Legal notices"
   },
   "app": {
     "pageNotFound": "Page not found",

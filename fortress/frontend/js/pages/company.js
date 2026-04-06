@@ -711,9 +711,18 @@ export async function renderCompany(container, siren) {
             </div>
 
             <!-- Right: Financial + Activité (merged "Chiffres Clés") -->
+            ${(() => {
+                // Check if this is a pending MAPS entity (no confirmed SIRENE link)
+                const isPendingMaps = co.siren?.startsWith('MAPS') && data.link_confidence !== 'confirmed';
+                return `
             <div style="display:flex; flex-direction:column; gap:var(--space-xl)">
                 <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">${t('company.sectionFinancials')}</h3>
+                    ${isPendingMaps ? `
+                    <div style="padding:var(--space-md); background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:var(--radius-sm); color:var(--text-secondary); font-size:var(--font-sm); margin-bottom:var(--space-sm)">
+                        Données SIRENE disponibles après validation du lien ci-dessus.
+                    </div>
+                    ` : ''}
                     ${detailRow(t('company.labelRevenue'),
                         co.chiffre_affaires
                             ? `<span style="font-weight:700; color:var(--success)">${formatCurrency(co.chiffre_affaires)}</span>`
@@ -741,6 +750,8 @@ export async function renderCompany(container, siren) {
                 </div>
                 ` : ''}
             </div>
+            `;
+            })()}
         </div>
 
         <!-- Enrichment History (full-width) -->

@@ -1166,6 +1166,19 @@ async def _get_company_impl(siren: str, request=None):
             if company_ws is not None and company_ws != user.workspace_id:
                 return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
 
+    # Safety net: suppress SIRENE-specific fields for MAPS entities without confirmed link
+    if siren.startswith("MAPS") and company.get("link_confidence") != "confirmed":
+        sirene_fields = [
+            "naf_code", "naf_libelle", "forme_juridique",
+            "tranche_effectif", "effectif_exact",
+            "date_creation", "siret_siege",
+            "chiffre_affaires", "resultat_net", "annee_ca", "tranche_ca",
+            "date_fondation", "type_etablissement",
+        ]
+        company = dict(company)  # Make mutable copy
+        for field in sirene_fields:
+            company[field] = None
+
     # All contacts from different sources
     contacts = await fetch_all("""
         SELECT
