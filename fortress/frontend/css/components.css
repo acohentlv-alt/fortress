@@ -69,6 +69,7 @@
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     overflow: hidden;
+    padding-bottom: 2px;
     margin-bottom: var(--space-2xl);
     width: fit-content;
 }
@@ -91,8 +92,10 @@
 }
 
 .view-toggle-btn.active {
-    background: var(--accent);
-    color: white;
+    background: transparent;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
 }
 
 /* ── Department Cards Grid ─────────────────────────────────────── */
@@ -932,12 +935,11 @@
 }
 
 .company-detail-siren {
-    font-size: var(--font-base);
-    color: var(--text-muted);
-    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
-    gap: var(--space-md);
+    gap: var(--space-sm);
     flex-wrap: wrap;
     max-width: 100%;
 }
@@ -1204,6 +1206,7 @@
 .data-table tbody tr:hover,
 .contacts-row:hover {
     border-left: 3px solid var(--accent);
+    background: var(--bg-hover);
 }
 
 /* ── Monitor / Activity Log ────────────────────────────────────── */
@@ -2560,7 +2563,7 @@
 .analysis-trend-bar {
     width: 100%;
     min-width: 30px;
-    max-width: 40px;
+    max-width: 44px;
     min-height: 4px;
     border-radius: 6px 6px 0 0;
     transition: height 0.8s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3173,9 +3176,6 @@
     cursor: pointer;
     transition: background 0.15s;
 }
-.contacts-row:hover {
-    background: var(--bg-hover);
-}
 
 /* ── Responsive grid classes ──────────────────────────── */
 
@@ -3340,10 +3340,57 @@
     letter-spacing: 0.08em;
 }
 
-/* ── Step 11: Tabs/view-toggle — bottom indicator for active ── */
-.view-toggle-btn.active {
-    background: transparent;
-    color: var(--accent);
-    border-bottom: 2px solid var(--accent);
-    border-radius: 0;
+/* ── Step 11: Tabs/view-toggle — consolidated into main rule above ── */
+
+/* ── Source Tooltip ─────────────────────────────────────────────── */
+.source-tooltip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-style: italic;
+    font-weight: 600;
+    cursor: help;
+    position: relative;
+    vertical-align: middle;
+    margin-left: 4px;
+    line-height: 1;
+}
+
+.source-tooltip:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.source-tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    font-size: var(--font-xs);
+    font-style: normal;
+    font-weight: 400;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.source-tooltip:hover::after {
+    opacity: 1;
 }

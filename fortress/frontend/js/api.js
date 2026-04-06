@@ -198,6 +198,10 @@ export async function getJobQueries(batchId) {
     return await request(`/jobs/${encodeURIComponent(batchId)}/queries`);
 }
 
+export async function getExpansionSuggestions(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/expansion-suggestions`);
+}
+
 // ── Companies ────────────────────────────────────────────────────
 export async function searchCompanies(query, {
     limit = 50, offset = 0, sortBy = '', order = '', department = '', sector = '',

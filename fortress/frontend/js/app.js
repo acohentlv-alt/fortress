@@ -74,7 +74,7 @@ const routes = [
     { pattern: /^#\/job\/(.+)$/, handler: renderJob, nav: 'none' },
     { pattern: /^#\/company\/(.+)$/, handler: renderCompany, nav: 'none' },
     { pattern: /^#\/search/, handler: renderSearch, nav: 'search' },
-    { pattern: /^#\/new-batch$/, handler: renderNewBatch, nav: 'new-batch' },
+    { pattern: /^#\/new-batch/, handler: renderNewBatch, nav: 'new-batch' },
     { pattern: /^#\/open-query$/, handler: renderOpenQuery, nav: 'query' },
     { pattern: /^#\/monitor\/(.+)$/, handler: renderMonitor, nav: 'monitor' },
     { pattern: /^#\/monitor$/, handler: renderMonitor, nav: 'monitor' },

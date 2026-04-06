@@ -328,4 +328,30 @@ export async function renderNewBatch(container) {
             btn.innerHTML = t('newBatch.launch');
         }
     });
+
+    // ── Pre-fill from expansion suggestion (sessionStorage) ──────
+    const prefillRaw = sessionStorage.getItem('fortress_expansion_prefill');
+    if (prefillRaw) {
+        sessionStorage.removeItem('fortress_expansion_prefill');
+        try {
+            const prefill = JSON.parse(prefillRaw);
+            if (prefill.queries && Array.isArray(prefill.queries)) {
+                const firstInput = queriesContainer.querySelector('.search-query-input');
+                if (firstInput && prefill.queries[0]) {
+                    firstInput.value = prefill.queries[0];
+                }
+                for (let i = 1; i < prefill.queries.length; i++) {
+                    const newRow = createQueryRow(prefill.queries[i]);
+                    queriesContainer.appendChild(newRow);
+                }
+                updateRemoveButtons();
+            }
+            if (prefill.size) {
+                document.getElementById('batch-size').value = prefill.size;
+            }
+            updateSummary();
+        } catch {
+            // Bad JSON — ignore
+        }
+    }
 }

@@ -966,6 +966,8 @@ async def run(batch_id: str) -> None:
                 seen_sirens: set[str] = set()    # Level 4: SIREN dedup within batch
                 seen_phones: set[str] = set()    # Level 5: phone dedup within batch
                 triage_counts: dict[str, int] = {"black": 0, "green": 0, "yellow": 0, "red": 0}
+                _query_dedup_count: int = 0
+                _query_filtered_count: int = 0
                 _current_search_query: str = ""  # Tracks which query is active
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
                 _sector_word: str = ""  # Sector word for relevance filtering
@@ -1025,7 +1027,7 @@ async def run(batch_id: str) -> None:
                 # already-saved businesses are retained.
 
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
-                    nonlocal companies_discovered, qualified
+                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
@@ -1041,6 +1043,7 @@ async def run(batch_id: str) -> None:
                     addr_key = (maps_address or "").lower().strip()
                     dedup_key = f"{name_key}|{addr_key}"
                     if dedup_key in seen_names or not name_key:
+                        _query_dedup_count += 1
                         return
                     seen_names.add(dedup_key)
 
@@ -1051,6 +1054,7 @@ async def run(batch_id: str) -> None:
                         website_domain = _d.split('/')[0].split('?')[0]
                         if website_domain in seen_websites:
                             log.info("discovery.website_dedup_skip", name=maps_name, domain=website_domain)
+                            _query_dedup_count += 1
                             return
                         seen_websites.add(website_domain)
 
@@ -1078,6 +1082,7 @@ async def run(batch_id: str) -> None:
                                     )
                             except Exception:
                                 pass
+                            _query_filtered_count += 1
                             return
 
                     # ── Name-based pre-filter: skip obviously wrong businesses ──
@@ -1088,6 +1093,7 @@ async def run(batch_id: str) -> None:
                                 name=maps_name,
                                 sector=_sector_word,
                             )
+                            _query_filtered_count += 1
                             return
 
                     # ── Level 3: SIREN extraction from website ────────────
@@ -1112,6 +1118,7 @@ async def run(batch_id: str) -> None:
                     if extracted_siren:
                         if extracted_siren in seen_sirens:
                             log.info("discovery.siren_dedup_skip", name=maps_name, siren=extracted_siren)
+                            _query_dedup_count += 1
                             return
                         seen_sirens.add(extracted_siren)
 
@@ -1120,12 +1127,14 @@ async def run(batch_id: str) -> None:
                         clean_phone = re.sub(r'\D', '', maps_phone)
                         if clean_phone in seen_phones:
                             log.info("discovery.phone_dedup_skip", name=maps_name, phone=maps_phone)
+                            _query_dedup_count += 1
                             return
                         seen_phones.add(clean_phone)
 
                     # ── France country filter ────────────────────────────
                     if not _is_in_france(maps_address):
                         log.info("discovery.foreign_filtered", name=maps_name, address=maps_address)
+                        _query_filtered_count += 1
                         return
 
                     # ── SIRENE matching — all methods in one function ──────────────
@@ -1813,6 +1822,8 @@ async def run(batch_id: str) -> None:
                     # search_all calls _persist_result for each business
                     _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
                     _max_cards = _remaining * 3 if _remaining > 0 else 0
+                    _query_dedup_count = 0
+                    _query_filtered_count = 0
                     _pre_query_discovered = companies_discovered
                     _query_start = time.monotonic()
                     results = await maps_scraper.search_all(
@@ -1834,6 +1845,8 @@ async def run(batch_id: str) -> None:
                         "query": search_query,
                         "cards_found": len(results),
                         "new_companies": companies_discovered - _pre_query_discovered,
+                        "filtered_count": _query_filtered_count,
+                        "dedup_count": _query_dedup_count,
                         "is_expansion": False,
                         "duration_sec": round(time.monotonic() - _query_start, 1),
                     })
@@ -1979,6 +1992,8 @@ async def run(batch_id: str) -> None:
 
                             _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
                             _max_cards = _remaining * 3 if _remaining > 0 else 0
+                            _query_dedup_count = 0
+                            _query_filtered_count = 0
                             _pre_query_discovered = companies_discovered
                             _query_start = time.monotonic()
                             results = await maps_scraper.search_all(
@@ -2001,6 +2016,8 @@ async def run(batch_id: str) -> None:
                                 "query": exp_query,
                                 "cards_found": len(results),
                                 "new_companies": companies_discovered - _pre_query_discovered,
+                                "filtered_count": _query_filtered_count,
+                                "dedup_count": _query_dedup_count,
                                 "is_expansion": True,
                                 "duration_sec": round(time.monotonic() - _query_start, 1),
                             })

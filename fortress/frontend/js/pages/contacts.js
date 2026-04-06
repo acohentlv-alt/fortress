@@ -8,7 +8,7 @@
  */
 
 import { getContactsList, bulkExportCSV, extractApiError, checkHealth } from '../api.js';
-import { escapeHtml, showToast, showConfirmModal } from '../components.js';
+import { escapeHtml, showToast, showConfirmModal, sourceLabel } from '../components.js';
 import { DEPARTMENTS } from '../constants.js';
 import { showAddEntityModal } from '../components/add-entity-modal.js';
 import { t } from '../i18n.js';
@@ -255,17 +255,17 @@ export async function renderContacts(container) {
                                 </td>
                                 <td class="contacts-td">
                                     ${r.phone
-                                        ? `<a href="tel:${r.phone}" style="color:var(--success); font-weight:600; white-space:nowrap" onclick="event.stopPropagation()">${escapeHtml(r.phone)}</a>`
+                                        ? `<a href="tel:${r.phone}" style="color:var(--success); font-weight:600; white-space:nowrap" onclick="event.stopPropagation()">${escapeHtml(r.phone)}</a>${r.phone_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(r.phone_source))}">i</span>` : ''}`
                                         : '<span style="color:var(--text-disabled)">—</span>'}
                                 </td>
                                 <td class="contacts-td" style="max-width:200px; overflow:hidden; text-overflow:ellipsis">
                                     ${r.email
-                                        ? `<a href="mailto:${r.email}" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.email)}</a>`
+                                        ? `<a href="mailto:${r.email}" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.email)}</a>${r.email_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(r.email_source))}">i</span>` : ''}`
                                         : '<span style="color:var(--text-disabled)">—</span>'}
                                 </td>
                                 <td class="contacts-td" style="max-width:160px; overflow:hidden; text-overflow:ellipsis">
                                     ${r.website
-                                        ? `<a href="${r.website.startsWith('http') ? r.website : 'https://' + r.website}" target="_blank" rel="noopener" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 25))}</a>`
+                                        ? `<a href="${r.website.startsWith('http') ? r.website : 'https://' + r.website}" target="_blank" rel="noopener" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(r.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 25))}</a>${r.website_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(r.website_source))}">i</span>` : ''}`
                                         : '<span style="color:var(--text-disabled)">—</span>'}
                                 </td>
                                 <td class="contacts-td" style="white-space:nowrap">

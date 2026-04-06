@@ -1,6 +1,7 @@
 /**
  * Reusable UI component helpers for Fortress.
  */
+import { t } from './i18n.js';
 
 // ── Format Helpers ───────────────────────────────────────────────
 export function formatSiren(siren) {
@@ -132,13 +133,13 @@ export function contactIndicators(contact) {
     return `
         <div class="company-card-contacts">
             <span class="contact-indicator ${contact.phone ? 'has-data' : 'no-data'}" title="Téléphone">
-                📞 ${phoneDisplay}
+                📞 ${phoneDisplay}${contact.phone_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(contact.phone_source))}">i</span>` : ''}
             </span>
             <span class="contact-indicator ${contact.email ? 'has-data' : 'no-data'}" title="Email">
-                ✉️ ${emailDisplay}
+                ✉️ ${emailDisplay}${contact.email_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(contact.email_source))}">i</span>` : ''}
             </span>
             <span class="contact-indicator ${contact.website ? 'has-data' : 'no-data'}" title="Site web">
-                🌐 ${webDisplay}
+                🌐 ${webDisplay}${contact.website_source ? ` <span class="source-tooltip" data-tooltip="${escapeHtml(sourceLabel(contact.website_source))}">i</span>` : ''}
             </span>
         </div>
         ${contact.rating ? `<div style="margin-top:var(--space-xs)">${renderStarRating(contact.rating, contact.review_count)}</div>` : ''}
@@ -357,6 +358,27 @@ export function renderStarRating(rating, reviewCount) {
             <span class="star-rating-count">(${count} avis)</span>
         </span>
     `;
+}
+
+// ── Source Label ─────────────────────────────────────────────────
+export function sourceLabel(src) {
+    if (!src) return null;
+    const map = {
+        google_maps:           '🗺️ Google Maps',
+        website_crawl:         '🌐 Site web',
+        mentions_legales:      '📜 Mentions legales',
+        recherche_entreprises: '🏛️ Recherche Entreprises',
+        google_cse:            '🔍 Google Search',
+        synthesized:           '🔗 Synthese',
+        inpi:                  '📋 INPI',
+        sirene:                '🏛️ Registre national',
+        manual_edit:           '✏️ Saisie manuelle',
+        manual:                '✏️ Saisie manuelle',
+        upload:                '📤 Import CSV',
+        directory_search:      '📖 Annuaire',
+        pages_jaunes:          '📒 Pages Jaunes',
+    };
+    return map[src] || src;
 }
 
 // ── Triage Bar ───────────────────────────────────────────────────

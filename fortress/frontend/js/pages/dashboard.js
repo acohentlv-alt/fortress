@@ -1248,7 +1248,7 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData, departments = [
         : null;
 
     const recentSection = `
-        <div class="card analysis-panel" style="margin-bottom:var(--space-xl)">
+        <div class="card analysis-panel">
             <h3 class="analysis-panel-title">${t('dashboard.analysisRecentTitle')}</h3>
             <div style="display:flex; flex-direction:column; gap:var(--space-md)">
                 <div>
@@ -1282,7 +1282,7 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData, departments = [
 
     // ── Section 4: Top recherches ────────────────────────────────
     const topSearchesSection = topSearches.length > 0 ? `
-        <div class="card analysis-panel" style="margin-bottom:var(--space-xl)">
+        <div class="card analysis-panel">
             <h3 class="analysis-panel-title">${t('dashboard.analysisTopSearches')}</h3>
             <div>
                 ${topSearches.map((s, i) => `
@@ -1392,7 +1392,7 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData, departments = [
                             <div class="analysis-trend-bar-group" title="${tw.week}: ${qVal}%, ${tw.companies || 0} entreprises">
                                 <div style="position:relative; display:flex; flex-direction:column; align-items:center">
                                     <span style="font-size:10px; color:var(--text-muted); margin-bottom:2px; line-height:1">${qVal}%</span>
-                                    <div class="analysis-trend-bar" style="height:${height}%; background:linear-gradient(to top, ${color}, ${lighterColor}); max-width:40px; border-radius:6px 6px 0 0"></div>
+                                    <div class="analysis-trend-bar" style="height:${height}%; background:linear-gradient(to top, ${color}, ${lighterColor}); max-width:44px; border-radius:6px 6px 0 0"></div>
                                 </div>
                                 <span class="analysis-trend-label">${weekLabel}</span>
                             </div>

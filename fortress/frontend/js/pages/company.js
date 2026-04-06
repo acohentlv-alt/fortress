@@ -17,7 +17,7 @@ import { getCompany, enrichCompany, updateCompany, getCompanyEnrichHistory,
          extractApiError, getCachedUser, getSuggestedMatches } from '../api.js';
 import {
     breadcrumb, formatSiren, formatSiret, formatDate,
-    statutBadge, formeJuridiqueBadge, escapeHtml, showToast,
+    statutBadge, formeJuridiqueBadge, escapeHtml, showToast, sourceLabel,
 } from '../components.js';
 import { t, getLang } from '../i18n.js';
 
@@ -565,7 +565,7 @@ export async function renderCompany(container, siren) {
                     ${linkedCo && linkedCo.denomination !== co.denomination ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-secondary); margin-left:var(--space-md)">— ${escapeHtml(linkedCo.denomination)}</span>` : ''}
                 </div>
                 <!-- Badge row 1: Identity -->
-                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); margin-top:var(--space-xs)">
                     ${co.siren && co.siren.startsWith('MAPS') && linkedCo
                         ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>
                           <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS\u00a0${escapeHtml(co.siren)}</span>`
@@ -577,7 +577,7 @@ export async function renderCompany(container, siren) {
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
                 </div>
                 <!-- Badge row 2: Activity -->
-                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:var(--space-xs)">
+                <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); margin-top:var(--space-xs)">
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
                     </span>` : ''}
@@ -1348,29 +1348,6 @@ function _renderAlertBanner(alerts, siren) {
     `;
 }
 
-/**
- * Translate a contact source code (from DB) to a human-readable French label.
- * e.g. 'google_maps' → '🗺️ Google Maps'
- */
-function sourceLabel(src) {
-    if (!src) return null;
-    const map = {
-        google_maps:           `🗺️ Google Maps`,
-        website_crawl:         `🌐 ${t('company.srcWebsiteCrawl')}`,
-        mentions_legales:      `📜 ${t('company.srcMentionsLegales')}`,
-        recherche_entreprises: `🏛️ ${t('company.srcRechercheEntreprises')}`,
-        google_cse:            `🔍 Google Search`,
-        synthesized:           `🔗 ${t('company.srcSynthesized')}`,
-        inpi:                  `📋 INPI`,
-        sirene:                `🏛️ ${t('company.sourceRegistre')}`,
-        manual_edit:           `✏️ ${t('company.srcManualEdit')}`,
-        manual:                `✏️ ${t('company.srcManualEdit')}`,
-        upload:                `📤 ${t('company.srcUpload')}`,
-        directory_search:      `📖 ${t('company.srcDirectory')}`,
-        pages_jaunes:          `📒 ${t('company.srcPagesJaunes')}`,
-    };
-    return map[src] || src;
-}
 
 /** Show an alternate value from a different source (muted sub-row) */
 function altValueRow(alt) {

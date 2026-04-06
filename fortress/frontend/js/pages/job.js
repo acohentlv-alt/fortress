@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getJobSummary, getJobQueries, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getJobSummary, getJobQueries, getExpansionSuggestions, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
@@ -198,6 +198,9 @@ export async function renderJob(container, batchId) {
             </div>
         ` : ''}
 
+        <!-- Smart Expansion Suggestions -->
+        <div id="expansion-card-container"></div>
+
         <!-- Query History -->
         <div class="card" id="queries-card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; align-items:center; justify-content:space-between; cursor:pointer" id="queries-toggle">
@@ -299,9 +302,18 @@ export async function renderJob(container, batchId) {
                         panel.innerHTML = `<span style="color:var(--text-muted); font-size:var(--font-sm)">Aucune donnée de recherche disponible pour ce batch.</span>`;
                         return;
                     }
+                    const totalCards = queries.reduce((s, q) => s + (q.cards_found || 0), 0);
+                    const totalFiltered = queries.reduce((s, q) => s + (q.filtered_count || 0), 0);
+                    const totalDedup = queries.reduce((s, q) => s + (q.dedup_count || 0), 0);
                     const totalNew = queries.reduce((s, q) => s + (q.new_companies || 0), 0);
-                    const headerHtml = `<div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md); font-weight:600">
-                        ${queries.length} recherche${queries.length > 1 ? 's' : ''} effectuée${queries.length > 1 ? 's' : ''} — ${totalNew} entreprise${totalNew > 1 ? 's' : ''} trouvée${totalNew > 1 ? 's' : ''}
+                    const funnelParts = [];
+                    funnelParts.push(`<span style="color:var(--text-primary); font-weight:600">${totalCards} résultat${totalCards > 1 ? 's' : ''}</span>`);
+                    if (totalFiltered > 0) funnelParts.push(`<span style="color:var(--warning)">−${totalFiltered} filtrés</span>`);
+                    if (totalDedup > 0) funnelParts.push(`<span style="color:var(--accent)">−${totalDedup} doublons</span>`);
+                    funnelParts.push(`<span style="color:var(--success); font-weight:600">= ${totalNew} nouvelle${totalNew > 1 ? 's' : ''} entreprise${totalNew > 1 ? 's' : ''}</span>`);
+                    const headerHtml = `<div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md)">
+                        <div style="font-weight:600; margin-bottom:var(--space-xs)">${queries.length} recherche${queries.length > 1 ? 's' : ''} effectuée${queries.length > 1 ? 's' : ''}</div>
+                        <div style="display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap">${funnelParts.join('<span style="color:var(--text-muted); margin:0 2px">→</span>')}</div>
                     </div>`;
                     const rowsHtml = queries.map(q => {
                         const newColor = q.is_expansion
@@ -312,10 +324,18 @@ export async function renderJob(container, batchId) {
                         const expansionBadge = q.is_expansion
                             ? `<span style="font-size:11px; padding:1px 6px; border-radius:3px; background:rgba(74,144,217,0.15); color:var(--accent); margin-left:6px; vertical-align:middle">expansion</span>`
                             : '';
+                        const filteredBadge = (q.filtered_count > 0)
+                            ? `<span style="color:var(--warning); min-width:60px; text-align:right">−${q.filtered_count} filtrés</span>`
+                            : '';
+                        const dedupBadge = (q.dedup_count > 0)
+                            ? `<span style="color:var(--accent); min-width:60px; text-align:right">−${q.dedup_count} doublons</span>`
+                            : '';
                         return `<div style="display:flex; align-items:center; gap:var(--space-md); padding:6px 0; border-bottom:1px solid var(--border-subtle); font-size:var(--font-sm)">
                             <span style="flex:1; color:var(--text-primary)">${escapeHtml(q.query)}${expansionBadge}</span>
+                            <span style="color:var(--text-muted); min-width:80px; text-align:right">${q.cards_found} carte${q.cards_found > 1 ? 's' : ''}</span>
+                            ${filteredBadge}
+                            ${dedupBadge}
                             <span style="${newColor}; font-weight:600; min-width:80px; text-align:right">+${q.new_companies} entreprise${q.new_companies > 1 ? 's' : ''}</span>
-                            <span style="color:var(--text-muted); min-width:90px; text-align:right">${q.cards_found} résultat${q.cards_found > 1 ? 's' : ''}</span>
                             <span style="color:var(--text-muted); min-width:60px; text-align:right">${q.duration_sec}s</span>
                         </div>`;
                     }).join('');
@@ -379,6 +399,71 @@ export async function renderJob(container, batchId) {
                 if (f.city) params.set('city', f.city);
             }
             window.location.hash = `#/new-batch?${params.toString()}`;
+        });
+    }
+
+    // ── Smart Expansion Suggestions ─────────────────────
+    if (job.status === 'completed' || job.status === 'interrupted' || job.status === 'failed') {
+        getExpansionSuggestions(batchId).then(data => {
+            const expansionContainer = document.getElementById('expansion-card-container');
+            if (!expansionContainer) return;  // DOM guard
+            if (!data || !data.suggestions || data.suggestions.length === 0) return;
+
+            const sectorWord = data.sector_word || '';
+            const deptCode = data.dept_code || '';
+
+            const suggestionsHtml = data.suggestions.map(s => {
+                const freshness = s.exhaustion_score <= 0.0
+                    ? '<span style="color:var(--success); font-weight:600">Inexplore</span>'
+                    : s.exhaustion_score <= 0.4
+                        ? '<span style="color:var(--success)">Bon potentiel</span>'
+                        : '<span style="color:var(--warning)">Partiellement explore</span>';
+                const memoryNote = s.queries_in_memory > 0
+                    ? `<span style="color:var(--text-muted); font-size:var(--font-xs)">${s.queries_in_memory} recherche${s.queries_in_memory > 1 ? 's' : ''} precedente${s.queries_in_memory > 1 ? 's' : ''}</span>`
+                    : '<span style="color:var(--text-muted); font-size:var(--font-xs)">Aucune recherche</span>';
+
+                return `
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:var(--space-md); background:var(--bg-elevated); border-radius:var(--radius-sm); border:1px solid var(--border-subtle)">
+                        <div style="flex:1">
+                            <div style="font-weight:600; color:var(--text-primary)">${escapeHtml(s.dept_name)} (${escapeHtml(s.dept_code)})</div>
+                            <div style="display:flex; gap:var(--space-md); margin-top:2px">${freshness} ${memoryNote}</div>
+                        </div>
+                        <button class="btn btn-primary expansion-launch-btn" data-dept="${escapeHtml(s.dept_code)}" data-sector="${escapeHtml(sectorWord)}" style="padding:var(--space-sm) var(--space-lg); font-size:var(--font-sm)">
+                            Lancer
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            expansionContainer.innerHTML = `
+                <div class="card" style="margin-bottom:var(--space-xl); border-left:3px solid var(--accent)">
+                    <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm)">
+                        Expansion geographique
+                    </h3>
+                    <p style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-lg)">
+                        Continuer la recherche <strong>${escapeHtml(sectorWord)}</strong> dans les departements voisins du ${escapeHtml(deptCode)}
+                    </p>
+                    <div style="display:flex; flex-direction:column; gap:var(--space-sm)">
+                        ${suggestionsHtml}
+                    </div>
+                </div>
+            `;
+
+            // Wire up launch buttons
+            expansionContainer.querySelectorAll('.expansion-launch-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const dept = btn.dataset.dept;
+                    const sector = btn.dataset.sector;
+                    const prefill = {
+                        queries: [`${sector} ${dept}`],
+                        size: 20,
+                    };
+                    sessionStorage.setItem('fortress_expansion_prefill', JSON.stringify(prefill));
+                    window.location.hash = '#/new-batch';
+                });
+            });
+        }).catch(() => {
+            // Best-effort; swallow errors
         });
     }
 
