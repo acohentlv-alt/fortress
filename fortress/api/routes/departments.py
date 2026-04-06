@@ -7,6 +7,7 @@ NOT the full 16M+ sirene import table.
 from fastapi import APIRouter, Request
 
 from fortress.api.db import fetch_all
+from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
 
@@ -56,6 +57,7 @@ async def list_departments(request: Request):
         ws_params = ()
 
     rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT qt2.siren FROM batch_tags qt2')}
         SELECT
             co.departement,
             COUNT(DISTINCT co.siren) AS company_count,
@@ -64,7 +66,7 @@ async def list_departments(request: Request):
             COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN co.siren END) AS with_website
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN contacts ct ON co.siren = ct.siren
+        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
         WHERE co.departement IS NOT NULL {ws_filter}
         GROUP BY co.departement
         ORDER BY co.departement
@@ -95,13 +97,14 @@ async def get_department_detail(dept: str, request: Request):
         ws_params = (dept,)
 
     rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT qt2.siren FROM batch_tags qt2')}
         SELECT DISTINCT ON (co.siren)
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.ville, co.code_postal,
             ct.phone, ct.email, ct.website
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
         WHERE co.departement = %s {ws_filter}
         ORDER BY co.siren
     """, ws_params)

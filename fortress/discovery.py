@@ -1550,6 +1550,27 @@ async def run(batch_id: str) -> None:
                         workspace_id=batch_workspace_id,
                     )
 
+                # ── Build pre-dedup name set (for skipping cards before page visit) ──
+                import unicodedata as _ud
+                _known_names: set[str] = set()
+                for entry in seen_names:
+                    name_part = entry.split("|")[0].strip()
+                    if name_part:
+                        _nfkd = _ud.normalize("NFKD", name_part)
+                        _known_names.add("".join(c for c in _nfkd if not _ud.combining(c)))
+
+                def _should_skip_card(card_label: str) -> bool:
+                    """Return True if this card name is already known in the workspace."""
+                    label_lower = card_label.lower().strip()
+                    nfkd = _ud.normalize("NFKD", label_lower)
+                    clean = "".join(c for c in nfkd if not _ud.combining(c))
+                    return clean in _known_names
+
+                log.info(
+                    "discovery.pre_dedup_ready",
+                    known_names=len(_known_names),
+                )
+
                 # ── Cross-batch SIREN dedup (workspace-scoped via linked_siren) ──
                 if dept_filter:
                     async with pool.connection() as conn:
@@ -1696,6 +1717,7 @@ async def run(batch_id: str) -> None:
                         dept_code=dept_filter,
                         max_results=_max_cards,
                         sector_word=_sector_word,
+                        should_skip=_should_skip_card,
                     )
 
                     log.info(
@@ -1795,6 +1817,7 @@ async def run(batch_id: str) -> None:
                                 dept_code=dept_filter,
                                 max_results=_max_cards,
                                 sector_word=_sector_word,
+                                should_skip=_should_skip_card,
                             )
 
                             expansion_used.append(exp_query)

@@ -207,7 +207,7 @@ def is_irrelevant_category(
 SECTOR_NAME_BLACKLIST: dict[str, frozenset[str]] = {
     "camping": frozenset({
         "parking", "stationnement", "aire de stationnement",
-        "restaurant", "pizzeria", "brasserie", "kebab", "snack",
+        "restaurant", "pizzeria", "brasserie", "kebab",
         "pharmacie", "garage", "carrosserie",
         "coiffeur", "coiffure", "pressing",
         "dentiste", "medecin", "opticien",

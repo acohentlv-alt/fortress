@@ -9,6 +9,7 @@ import time
 from fastapi import APIRouter, Request
 
 from fortress.api.db import fetch_all, fetch_one
+from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -57,15 +58,7 @@ async def get_stats(request: Request):
         WITH tagged AS (
             SELECT DISTINCT qt.siren FROM batch_tags qt {tags_clause}
         ),
-        contact_stats AS (
-            SELECT siren,
-                MAX(phone)   AS phone,
-                MAX(email)   AS email,
-                MAX(website) AS website
-            FROM contacts
-            WHERE siren IN (SELECT siren FROM tagged)
-            GROUP BY siren
-        )
+        {merged_contacts_cte('SELECT siren FROM tagged')}
         SELECT
             COUNT(*)                                                    AS total_companies,
             COUNT(*) FILTER (WHERE cs.phone IS NOT NULL)                AS with_phone,
@@ -81,7 +74,7 @@ async def get_stats(request: Request):
                {jobs_clause})                                           AS running_jobs
         FROM tagged t
         JOIN companies co ON co.siren = t.siren
-        LEFT JOIN contact_stats cs ON cs.siren = t.siren
+        LEFT JOIN merged_contacts cs ON cs.siren = t.siren
     """, stats_params if stats_params else None)
     result = stats or {}
     _set_cache(cache_key, result)
@@ -207,7 +200,8 @@ async def get_data_bank(request: Request):
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
 
     # Global totals
-    totals = await fetch_one("""
+    totals = await fetch_one(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
         SELECT
             COUNT(DISTINCT qt.siren) AS total_enriched,
             COUNT(DISTINCT ct.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
@@ -216,7 +210,7 @@ async def get_data_bank(request: Request):
             COUNT(DISTINCT u.id) AS total_users,
             COUNT(DISTINCT sj.batch_id) AS total_batches
         FROM batch_tags qt
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        LEFT JOIN merged_contacts ct ON ct.siren = qt.siren
         LEFT JOIN batch_data sj ON UPPER(sj.batch_name) = UPPER(qt.batch_name)
         LEFT JOIN users u ON u.id = sj.user_id
     """)
@@ -258,7 +252,8 @@ async def get_data_bank(request: Request):
     """)
 
     # Per-workspace breakdown for admin dedup view
-    by_workspace = await fetch_all("""
+    by_workspace = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
         SELECT
             w.name AS workspace_name,
             COUNT(DISTINCT qt.siren) AS total_companies,
@@ -266,7 +261,7 @@ async def get_data_bank(request: Request):
             COUNT(DISTINCT ct.siren) FILTER (WHERE ct.email IS NOT NULL) AS with_email
         FROM workspaces w
         LEFT JOIN batch_tags qt ON qt.workspace_id = w.id
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        LEFT JOIN merged_contacts ct ON ct.siren = qt.siren
         GROUP BY w.id, w.name
         ORDER BY total_companies DESC
     """)
@@ -331,17 +326,17 @@ async def get_analysis(request: Request):
             WITH tagged AS (
                 SELECT DISTINCT qt.siren FROM batch_tags qt {scope_clause}
             ),
+            {merged_contacts_cte('SELECT siren FROM tagged')},
             enriched AS (
                 SELECT
                     t.siren,
-                    MAX(ct.phone)            AS phone,
-                    MAX(ct.email)            AS email,
-                    MAX(ct.website)          AS website,
-                    MAX(ct.social_linkedin)  AS linkedin,
-                    MAX(ct.social_facebook)  AS facebook
+                    mc.phone,
+                    mc.email,
+                    mc.website,
+                    mc.social_linkedin  AS linkedin,
+                    mc.social_facebook  AS facebook
                 FROM tagged t
-                LEFT JOIN contacts ct ON ct.siren = t.siren
-                GROUP BY t.siren
+                LEFT JOIN merged_contacts mc ON mc.siren = t.siren
             )
             SELECT
                 COUNT(*)                                                              AS total,
@@ -412,17 +407,24 @@ async def get_analysis(request: Request):
                 WHERE status != 'deleted' {batch_ws}
             """, batch_ws_params if batch_ws_params else None),
             _fetch_all_sem(f"""
-                WITH weekly_jobs AS (
+                WITH {merged_contacts_cte(f"""
+                    SELECT DISTINCT qt.siren FROM batch_tags qt
+                    JOIN batch_data sj ON UPPER(qt.batch_name) = UPPER(sj.batch_name)
+                    WHERE sj.status IN ('completed', 'interrupted')
+                      AND sj.created_at >= NOW() - INTERVAL '12 weeks'
+                      {batch_ws.replace('workspace_id', 'sj.workspace_id')} {tag_ws}
+                """)},
+                weekly_jobs AS (
                     SELECT
                         DATE_TRUNC('week', sj.created_at) AS week,
                         sj.batch_name,
                         COUNT(DISTINCT qt.siren) AS companies,
-                        COUNT(DISTINCT CASE WHEN ct.phone IS NOT NULL THEN qt.siren END) AS with_phone,
-                        COUNT(DISTINCT CASE WHEN ct.email IS NOT NULL THEN qt.siren END) AS with_email,
-                        COUNT(DISTINCT CASE WHEN ct.website IS NOT NULL THEN qt.siren END) AS with_website
+                        COUNT(DISTINCT CASE WHEN mc.phone IS NOT NULL THEN qt.siren END) AS with_phone,
+                        COUNT(DISTINCT CASE WHEN mc.email IS NOT NULL THEN qt.siren END) AS with_email,
+                        COUNT(DISTINCT CASE WHEN mc.website IS NOT NULL THEN qt.siren END) AS with_website
                     FROM batch_data sj
                     JOIN batch_tags qt ON UPPER(qt.batch_name) = UPPER(sj.batch_name)
-                    LEFT JOIN contacts ct ON ct.siren = qt.siren
+                    LEFT JOIN merged_contacts mc ON mc.siren = qt.siren
                     WHERE sj.status IN ('completed', 'interrupted')
                       AND sj.created_at >= NOW() - INTERVAL '12 weeks' {batch_ws.replace('workspace_id', 'sj.workspace_id')} {tag_ws}
                     GROUP BY week, sj.batch_name
@@ -440,7 +442,7 @@ async def get_analysis(request: Request):
                 FROM weekly_jobs
                 GROUP BY week
                 ORDER BY week ASC
-            """, batch_ws_params + tag_ws_params if (batch_ws_params or tag_ws_params) else None),
+            """, (batch_ws_params + tag_ws_params) * 2 if (batch_ws_params or tag_ws_params) else None),
             _fetch_all_sem(f"""
                 SELECT
                     sj.batch_id, sj.batch_name,
@@ -460,20 +462,19 @@ async def get_analysis(request: Request):
     async def _group_searches():
         top_searches, recent_searches, week_row = await asyncio.gather(
             _fetch_all_sem(f"""
+                WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags' + (' WHERE workspace_id = %s' if tag_ws_params else ''))}
                 SELECT sj.batch_name, COUNT(*) AS company_count,
-                    ROUND(100.0 * COUNT(CASE WHEN c.phone IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS phone_rate,
-                    ROUND(100.0 * COUNT(CASE WHEN c.email IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS email_rate
+                    ROUND(100.0 * COUNT(CASE WHEN mc.phone IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS phone_rate,
+                    ROUND(100.0 * COUNT(CASE WHEN mc.email IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0)) AS email_rate
                 FROM batch_tags bt
                 JOIN batch_data sj ON sj.batch_id = bt.batch_id
                 JOIN companies co ON co.siren = bt.siren
-                LEFT JOIN LATERAL (
-                    SELECT MAX(phone) AS phone, MAX(email) AS email FROM contacts WHERE siren = bt.siren
-                ) c ON true
+                LEFT JOIN merged_contacts mc ON mc.siren = bt.siren
                 WHERE 1=1 {'AND bt.workspace_id = %s' if tag_ws_params else ''}
                 GROUP BY sj.batch_name
                 ORDER BY company_count DESC
                 LIMIT 5
-            """, tag_ws_params if tag_ws_params else None),
+            """, (tag_ws_params + tag_ws_params) if tag_ws_params else None),
             _fetch_all_sem(f"""
                 SELECT DISTINCT sj.batch_name, sj.created_at
                 FROM batch_data sj
@@ -714,16 +715,17 @@ async def get_batch_analysis(request: Request):
 
     # ── Bulk query 3: hit rates per batch_name (upper) ───────────────────
     bulk_hits_rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags WHERE UPPER(batch_name) = ANY(%s)' + (' AND workspace_id = %s' if qt_ws_params else ''))}
         SELECT UPPER(qt.batch_name) AS batch_name_upper,
                COUNT(DISTINCT qt.siren) AS tagged,
-               COUNT(DISTINCT qt.siren) FILTER (WHERE ct.phone IS NOT NULL) AS with_phone,
-               COUNT(DISTINCT qt.siren) FILTER (WHERE ct.email IS NOT NULL) AS with_email,
-               COUNT(DISTINCT qt.siren) FILTER (WHERE ct.website IS NOT NULL) AS with_website
+               COUNT(DISTINCT qt.siren) FILTER (WHERE mc.phone IS NOT NULL) AS with_phone,
+               COUNT(DISTINCT qt.siren) FILTER (WHERE mc.email IS NOT NULL) AS with_email,
+               COUNT(DISTINCT qt.siren) FILTER (WHERE mc.website IS NOT NULL) AS with_website
         FROM batch_tags qt
-        LEFT JOIN contacts ct ON ct.siren = qt.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = qt.siren
         WHERE UPPER(qt.batch_name) = ANY(%s) {qt_ws}
         GROUP BY UPPER(qt.batch_name)
-    """, (batch_names_upper,) + qt_ws_params)
+    """, (batch_names_upper,) + qt_ws_params + (batch_names_upper,) + qt_ws_params)
 
     # Shape: { batch_name_upper -> {tagged, with_phone, with_email, with_website} }
     bulk_hits: dict = {row["batch_name_upper"]: row for row in (bulk_hits_rows or [])}
@@ -989,21 +991,18 @@ async def get_all_data(
     total = (total_row or {}).get("total", 0) or 0
 
     all_params = tuple(params + [limit, offset])
+    # Performance note: merged_contacts CTE uses ARRAY_AGG with source priority
+    # to pick the best value per field across all contact rows. The subquery
+    # scopes it to enriched companies only (those with at least one contact).
     rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM contacts')}
         SELECT
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.forme_juridique, co.ville, co.departement,
             ct.phone, ct.email, ct.website,
             qt.batch_name
         FROM companies co
-        LEFT JOIN LATERAL (
-            SELECT phone, email, website FROM contacts c2
-            WHERE c2.siren = co.siren
-            ORDER BY (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                      CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-            LIMIT 1
-        ) ct ON true
+        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
         LEFT JOIN LATERAL (
             SELECT batch_name FROM batch_tags bt
             WHERE bt.siren = co.siren
@@ -1046,14 +1045,15 @@ async def get_stats_by_sector(request: Request):
         extra_params = ()
 
     rows = await fetch_all(f"""
-        WITH sector_data AS (
-            SELECT 
+        WITH {merged_contacts_cte('SELECT DISTINCT qt2.siren FROM batch_tags qt2' + (' WHERE qt2.workspace_id = %s' if scope_params else ''))},
+        sector_data AS (
+            SELECT
                 qt.siren,
                 UPPER(SPLIT_PART(qt.batch_name, ' ', 1)) AS normalized_sector,
                 SPLIT_PART(qt.batch_name, ' ', 2) AS normalized_dept,
-                ct.phone, ct.email, ct.website
+                mc.phone, mc.email, mc.website
             FROM batch_tags qt
-            LEFT JOIN contacts ct ON ct.siren = qt.siren
+            LEFT JOIN merged_contacts mc ON mc.siren = qt.siren
             {scope_clause}
         )
         SELECT
@@ -1076,7 +1076,7 @@ async def get_stats_by_sector(request: Request):
         FROM sector_data
         GROUP BY normalized_sector
         ORDER BY companies DESC
-    """, scope_params + extra_params if (scope_params or extra_params) else None)
+    """, scope_params + scope_params + extra_params if (scope_params or extra_params) else None)
     return rows
 
 
@@ -1099,6 +1099,7 @@ async def get_pending_links(request: Request):
         ws_params = ()
 
     rows = await fetch_all(f"""
+        WITH {merged_contacts_cte("SELECT DISTINCT siren FROM companies WHERE link_confidence = 'pending'")}
         SELECT DISTINCT ON (co.siren)
             co.siren,
             co.denomination,
@@ -1112,16 +1113,11 @@ async def get_pending_links(request: Request):
             co.departement,
             co.ville,
             ct.phone,
-            ct.maps_address,
+            ct.address AS maps_address,
             bt.batch_name
         FROM companies co
         LEFT JOIN companies target ON target.siren = co.linked_siren
-        LEFT JOIN LATERAL (
-            SELECT phone,
-                   address AS maps_address
-            FROM contacts WHERE siren = co.siren
-            ORDER BY (phone IS NOT NULL)::int DESC LIMIT 1
-        ) ct ON true
+        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
         LEFT JOIN LATERAL (
             SELECT batch_name FROM batch_tags WHERE siren = co.siren
             ORDER BY tagged_at DESC LIMIT 1

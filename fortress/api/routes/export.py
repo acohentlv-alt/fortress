@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from fortress.api.db import fetch_all, fetch_one
+from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -61,35 +62,22 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
     if not job:
         return []
 
-    return await fetch_all("""
-        WITH best_contact AS (
-            SELECT DISTINCT ON (c2.siren)
-                c2.siren,
-                c2.phone, c2.email, c2.website,
-                c2.address, c2.maps_url,
-                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.source AS contact_source
-            FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s)
-            ORDER BY c2.siren,
-                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
+    return await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s')}
         SELECT
             co.siren, co.siret_siege, co.denomination,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.statut, co.date_creation,
             co.tranche_effectif,
-            bc.phone, bc.email, bc.website,
-            bc.address, bc.maps_url,
-            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source,
+            mc.phone, mc.email, mc.website,
+            mc.address, mc.maps_url,
+            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+            mc.rating, mc.review_count, mc.contact_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
         LEFT JOIN (
             SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
             FROM company_notes
@@ -113,35 +101,22 @@ async def export_master_csv(request: Request):
     if not user or user.role != 'admin':
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
-    rows = await fetch_all("""
-        WITH best_contact AS (
-            SELECT DISTINCT ON (c2.siren)
-                c2.siren,
-                c2.phone, c2.email, c2.website,
-                c2.address, c2.maps_url,
-                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.source AS contact_source
-            FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_tags)
-            ORDER BY c2.siren,
-                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
+    rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
         SELECT
             co.siren, co.siret_siege, co.denomination,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.statut, co.date_creation,
             co.tranche_effectif,
-            bc.phone, bc.email, bc.website,
-            bc.address, bc.maps_url,
-            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source,
+            mc.phone, mc.email, mc.website,
+            mc.address, mc.maps_url,
+            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+            mc.rating, mc.review_count, mc.contact_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
         LEFT JOIN (
             SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
             FROM company_notes
@@ -179,35 +154,22 @@ async def export_master_xlsx(request: Request):
     if not user or user.role != 'admin':
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
-    rows = await fetch_all("""
-        WITH best_contact AS (
-            SELECT DISTINCT ON (c2.siren)
-                c2.siren,
-                c2.phone, c2.email, c2.website,
-                c2.address, c2.maps_url,
-                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.source AS contact_source
-            FROM contacts c2
-            WHERE c2.siren IN (SELECT DISTINCT siren FROM batch_tags)
-            ORDER BY c2.siren,
-                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
+    rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
         SELECT
             co.siren, co.siret_siege, co.denomination,
             co.naf_code, co.naf_libelle, co.forme_juridique,
             co.adresse, co.code_postal, co.ville,
             co.departement, co.statut, co.date_creation,
             co.tranche_effectif,
-            bc.phone, bc.email, bc.website,
-            bc.address, bc.maps_url,
-            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.contact_source,
+            mc.phone, mc.email, mc.website,
+            mc.address, mc.maps_url,
+            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+            mc.rating, mc.review_count, mc.contact_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
         LEFT JOIN (
             SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
             FROM company_notes
@@ -322,41 +284,28 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
         # Scope: only export SIRENs that belong to the user's workspace via batch_tags
-        rows = await fetch_all("""
+        rows = await fetch_all(f"""
             WITH workspace_sirens AS (
                 SELECT DISTINCT bt.siren
                 FROM batch_tags bt
                 JOIN batch_data bd ON bd.batch_id = bt.batch_id
                 WHERE bd.workspace_id = %s AND bt.siren = ANY(%s)
             ),
-            best_contact AS (
-                SELECT DISTINCT ON (c2.siren)
-                    c2.siren,
-                    c2.phone, c2.email, c2.website,
-                    c2.address, c2.maps_url,
-                    c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                    c2.rating, c2.review_count, c2.source AS contact_source
-                FROM contacts c2
-                WHERE c2.siren IN (SELECT siren FROM workspace_sirens)
-                ORDER BY c2.siren,
-                    (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                     CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                     CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-            )
+            {merged_contacts_cte('SELECT siren FROM workspace_sirens')}
             SELECT
                 co.siren, co.siret_siege, co.denomination,
                 co.naf_code, co.naf_libelle, co.forme_juridique,
                 co.adresse, co.code_postal, co.ville,
                 co.departement, co.statut, co.date_creation,
                 co.tranche_effectif,
-                bc.phone, bc.email, bc.website,
-                bc.address, bc.maps_url,
-                bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-                bc.rating, bc.review_count, bc.contact_source,
+                mc.phone, mc.email, mc.website,
+                mc.address, mc.maps_url,
+                mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+                mc.rating, mc.review_count, mc.contact_source,
                 cn.notes
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
-            LEFT JOIN best_contact bc ON bc.siren = co.siren
+            LEFT JOIN merged_contacts mc ON mc.siren = co.siren
             LEFT JOIN (
                 SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
                 FROM company_notes
@@ -365,34 +314,21 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             ORDER BY co.denomination
         """, (user.workspace_id, body.sirens))
     else:
-        rows = await fetch_all("""
-            WITH best_contact AS (
-                SELECT DISTINCT ON (c2.siren)
-                    c2.siren,
-                    c2.phone, c2.email, c2.website,
-                    c2.address, c2.maps_url,
-                    c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                    c2.rating, c2.review_count, c2.source AS contact_source
-                FROM contacts c2
-                WHERE c2.siren = ANY(%s)
-                ORDER BY c2.siren,
-                    (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                     CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                     CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-            )
+        rows = await fetch_all(f"""
+            WITH {merged_contacts_cte('SELECT UNNEST(%s::text[])')}
             SELECT
                 co.siren, co.siret_siege, co.denomination,
                 co.naf_code, co.naf_libelle, co.forme_juridique,
                 co.adresse, co.code_postal, co.ville,
                 co.departement, co.statut, co.date_creation,
                 co.tranche_effectif,
-                bc.phone, bc.email, bc.website,
-                bc.address, bc.maps_url,
-                bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-                bc.rating, bc.review_count, bc.contact_source,
+                mc.phone, mc.email, mc.website,
+                mc.address, mc.maps_url,
+                mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+                mc.rating, mc.review_count, mc.contact_source,
                 cn.notes
             FROM companies co
-            LEFT JOIN best_contact bc ON bc.siren = co.siren
+            LEFT JOIN merged_contacts mc ON mc.siren = co.siren
             LEFT JOIN (
                 SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
                 FROM company_notes

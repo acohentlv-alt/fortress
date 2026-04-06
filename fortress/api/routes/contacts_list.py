@@ -17,6 +17,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one
+from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts_list"])
 
@@ -114,15 +115,15 @@ async def list_contacts(
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
-    # Shared FROM + JOIN clause (used by both count and page queries)
+    # CTE + FROM clause (used by both count and page queries).
+    # merged_contacts is aliased as ct so WHERE references (ct.phone, ct.email,
+    # ct.website) from the search filter still resolve correctly.
+    cte_block = merged_contacts_cte("SELECT DISTINCT qt2.siren FROM batch_tags qt2")
+
     from_clause = """
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN LATERAL (
-            SELECT * FROM contacts c WHERE c.siren = co.siren
-            ORDER BY (c.phone IS NOT NULL)::int DESC
-            LIMIT 1
-        ) ct ON true
+        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
         LEFT JOIN LATERAL (
             SELECT * FROM officers off2 WHERE off2.siren = co.siren
             ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
@@ -134,6 +135,7 @@ async def list_contacts(
         # Smart count — cap at 1001 to avoid full scan
         count_params = list(params) + [_COUNT_CAP]
         count_row = await fetch_one(f"""
+            WITH {cte_block}
             SELECT COUNT(*) AS total FROM (
                 SELECT DISTINCT co.siren
                 {from_clause}
@@ -147,10 +149,11 @@ async def list_contacts(
         # Fetch page
         page_params = list(params) + [limit, offset]
         rows = await fetch_all(f"""
+            WITH {cte_block}
             SELECT DISTINCT ON (co.siren)
                 co.siren, co.denomination, co.departement, co.naf_code,
                 co.ville, co.naf_libelle,
-                ct.phone, ct.email, ct.website, ct.source AS contact_source,
+                ct.phone, ct.email, ct.website, ct.contact_source,
                 ct.social_linkedin, ct.rating, ct.review_count,
                 o.nom AS dirigeant_nom, o.prenom AS dirigeant_prenom,
                 o.role AS dirigeant_role, o.email_direct, o.ligne_directe

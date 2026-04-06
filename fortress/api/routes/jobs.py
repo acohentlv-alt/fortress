@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
 from fortress.api.routes.dashboard import _invalidate_cache
+from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -522,9 +523,9 @@ async def get_job_companies(
     """, tuple([qid] + search_params))
     total = (count_row or {}).get("total", 0)
 
-    # Fetch companies with best contact per SIREN — scoped to this batch.
-    # Uses DISTINCT ON instead of LATERAL JOIN to avoid O(N) nested sorts.
-    # DISTINCT ON (siren) picks one row per siren, ordered by completeness.
+    # Fetch companies with merged contact per SIREN — scoped to this batch.
+    # Uses merged_contacts CTE (ARRAY_AGG with source priority) to pick the
+    # best value per field across all contact rows for a given SIREN.
     params_fetch = search_params + [page_size, offset]
     rows = await fetch_all(f"""
         WITH audit_query AS (
@@ -533,35 +534,23 @@ async def get_job_companies(
             WHERE batch_id = %s
             ORDER BY siren, timestamp ASC
         ),
-        best_contact AS (
-            SELECT DISTINCT ON (c2.siren)
-                c2.siren,
-                c2.phone, c2.email, c2.email_type, c2.website,
-                c2.social_linkedin, c2.social_facebook, c2.social_twitter,
-                c2.rating, c2.review_count, c2.maps_url, c2.source AS contact_source
-            FROM contacts c2
-            WHERE c2.siren IN (SELECT siren FROM audit_query)
-            ORDER BY c2.siren,
-                (CASE WHEN c2.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c2.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
+        {merged_contacts_cte('SELECT siren FROM audit_query')}
         SELECT
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.forme_juridique, co.adresse, co.code_postal, co.ville,
             co.departement, co.region, co.statut, co.date_creation,
             co.tranche_effectif, co.fortress_id,
             co.linked_siren, co.link_confidence, co.link_method,
-            bc.phone, bc.email, bc.email_type, bc.website,
-            bc.social_linkedin, bc.social_facebook, bc.social_twitter,
-            bc.rating, bc.review_count, bc.maps_url, bc.contact_source,
-            CASE WHEN bc.phone IS NOT NULL THEN 1 ELSE 0 END +
-            CASE WHEN bc.email IS NOT NULL THEN 1 ELSE 0 END +
-            CASE WHEN bc.website IS NOT NULL THEN 1 ELSE 0 END AS completude,
+            mc.phone, mc.email, mc.email_type, mc.website,
+            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+            mc.rating, mc.review_count, mc.maps_url, mc.contact_source,
+            CASE WHEN mc.phone IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN mc.email IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN mc.website IS NOT NULL THEN 1 ELSE 0 END AS completude,
             aq.search_query
         FROM audit_query aq
         JOIN companies co ON co.siren = aq.siren
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}
         LIMIT %s OFFSET %s
@@ -592,30 +581,20 @@ async def get_job_quality(batch_id: str, request: Request):
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
-    stats = await fetch_one("""
+    stats = await fetch_one(f"""
         WITH batch_sirens AS (
             SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s
         ),
-        best_contact AS (
-            SELECT DISTINCT ON (c.siren)
-                c.siren, c.phone, c.email, c.website,
-                c.social_linkedin, c.social_facebook
-            FROM contacts c
-            WHERE c.siren IN (SELECT siren FROM batch_sirens)
-            ORDER BY c.siren,
-                (CASE WHEN c.phone IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c.email IS NOT NULL THEN 1 ELSE 0 END +
-                 CASE WHEN c.website IS NOT NULL THEN 1 ELSE 0 END) DESC
-        )
+        {merged_contacts_cte('SELECT siren FROM batch_sirens')}
         SELECT
             COUNT(DISTINCT co.siren) AS total,
-            COUNT(DISTINCT CASE WHEN bc.phone IS NOT NULL THEN co.siren END) AS with_phone,
-            COUNT(DISTINCT CASE WHEN bc.email IS NOT NULL THEN co.siren END) AS with_email,
-            COUNT(DISTINCT CASE WHEN bc.website IS NOT NULL THEN co.siren END) AS with_website,
-            COUNT(DISTINCT CASE WHEN (bc.social_linkedin IS NOT NULL OR bc.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
+            COUNT(DISTINCT CASE WHEN mc.phone IS NOT NULL THEN co.siren END) AS with_phone,
+            COUNT(DISTINCT CASE WHEN mc.email IS NOT NULL THEN co.siren END) AS with_email,
+            COUNT(DISTINCT CASE WHEN mc.website IS NOT NULL THEN co.siren END) AS with_website,
+            COUNT(DISTINCT CASE WHEN (mc.social_linkedin IS NOT NULL OR mc.social_facebook IS NOT NULL) THEN co.siren END) AS with_social
         FROM batch_sirens sa
         JOIN companies co ON co.siren = sa.siren
-        LEFT JOIN best_contact bc ON bc.siren = co.siren
+        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
     """, (batch_id,))
 
     if not stats or not stats["total"]:

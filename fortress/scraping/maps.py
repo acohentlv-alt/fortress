@@ -364,6 +364,7 @@ class PlaywrightMapsScraper:
         dept_code: str | None = None,
         max_results: int = 0,
         sector_word: str = "",
+        should_skip: Any = None,
     ) -> list[dict[str, Any]]:
         """Search Google Maps with a generic query and extract ALL results.
 
@@ -391,7 +392,7 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 return await asyncio.wait_for(
-                    self._do_search_all(query, on_result, max_results=max_results, dept_code=dept_code, sector_word=sector_word),
+                    self._do_search_all(query, on_result, max_results=max_results, dept_code=dept_code, sector_word=sector_word, should_skip=should_skip),
                     timeout=600.0,  # 10 min max per search_all query
                 )
             except asyncio.TimeoutError:
@@ -454,6 +455,7 @@ class PlaywrightMapsScraper:
         *,
         dept_code: str | None = None,
         sector_word: str = "",
+        should_skip: Any = None,
     ) -> list[dict[str, Any]]:
         """Internal: perform generic Maps search and extract all results.
 
@@ -698,6 +700,14 @@ class PlaywrightMapsScraper:
                             sector=sector_word,
                         )
                         continue
+
+                # ── Pre-dedup: skip cards already in workspace ──
+                if should_skip and card_label and should_skip(card_label):
+                    log.debug(
+                        "maps_discovery.pre_dedup_skip",
+                        name=card_label,
+                    )
+                    continue
 
                 # Check if we've collected enough results
                 if max_results > 0 and len(results) >= max_results:
