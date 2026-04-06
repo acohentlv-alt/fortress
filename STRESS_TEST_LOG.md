@@ -209,3 +209,37 @@
 
 ---
 
+## Batch 4: agriculture 66 (dept 66)
+
+**Batch ID:** AGRICULTURE_66_W417_BATCH_001
+**Status:** completed
+**Duration:** 10.4 min
+**Entities:** 50/50 scraped, 50 qualified
+
+
+### Data Quality (50 entities)
+| Metric | Count | Rate |
+|--------|-------|------|
+| Phone | 69 | 138% |
+| Email | 12 | 24% |
+| Website | 56 | 112% |
+| SIREN matched | 16 | 32% |
+| Officers found | 6 | 12% |
+
+### SIREN Match Methods
+- fuzzy_name: 6
+- siren_website: 5
+- address: 2
+- enseigne: 2
+- enseigne_weak: 1
+
+### Per-Query Breakdown
+- **agriculture 66**: 1 new / 1 cards / 16.7s
+- **agriculture Pyrenees-Orientales**: 49 new / 52 cards / 593.0s [expansion]
+
+### Running Totals
+- **Total entities in workspace:** 242 / 1000
+- **Query memory rows:** 15
+
+---
+
