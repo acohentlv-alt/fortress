@@ -919,6 +919,7 @@ async def run(batch_id: str) -> None:
                 _current_search_query: str = ""  # Tracks which query is active
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
                 _sector_word: str = ""  # Sector word for relevance filtering
+                _query_stats: list[dict] = []  # Tracks per-query results for queries_json
 
                 # Pre-compute sector word for relevance filter (strip dept code from first query)
                 if search_queries and dept_filter and re.match(r"^\d{2,3}$", dept_filter):
@@ -1420,6 +1421,47 @@ async def run(batch_id: str) -> None:
                     elif maps_website and crawl_result:
                         log.warning("discovery.crawl_no_pages", siren=siren, website=maps_website)
 
+                    # ── Audit: website crawl result ──
+                    if maps_website:
+                        if crawl_result and crawl_result.pages_crawled > 0:
+                            _crawl_had_data = any([
+                                crawl_result.best_email, crawl_result.best_phone,
+                                crawl_result.all_socials.get("linkedin"),
+                                crawl_result.all_socials.get("facebook"),
+                            ])
+                            _crawl_status = "success" if _crawl_had_data else "no_data"
+                        elif crawl_result:
+                            _crawl_status = "no_data"
+                        else:
+                            _crawl_status = "failed"
+                        try:
+                            async with pool.connection() as _crawl_log_conn:
+                                await log_audit(
+                                    _crawl_log_conn,
+                                    batch_id=batch_id,
+                                    siren=siren,
+                                    action="website_crawl",
+                                    result=_crawl_status,
+                                    source_url=maps_website,
+                                    workspace_id=batch_workspace_id,
+                                )
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            async with pool.connection() as _crawl_log_conn:
+                                await log_audit(
+                                    _crawl_log_conn,
+                                    batch_id=batch_id,
+                                    siren=siren,
+                                    action="website_crawl",
+                                    result="skipped",
+                                    detail="Pas de site web trouvé sur Google Maps",
+                                    workspace_id=batch_workspace_id,
+                                )
+                        except Exception:
+                            pass
+
                     # Heartbeat before INPI — website crawl can be slow, keep updated_at fresh
                     await _update_job_safe(
                         conn_holder, batch_id,
@@ -1463,6 +1505,7 @@ async def run(batch_id: str) -> None:
                                         conn, batch_id=batch_id, siren=siren,
                                         action="officers_found", result="success",
                                         detail=f"{len(dirigeants)} dirigeant(s) — Registre National (API)",
+                                        workspace_id=batch_workspace_id,
                                     )
 
                                 if re_company_data:
@@ -1481,6 +1524,13 @@ async def run(batch_id: str) -> None:
                                         await conn.execute(
                                             f"UPDATE companies SET {', '.join(parts)} WHERE siren = %s",
                                             tuple(vals),
+                                        )
+                                        _fin_fields = [k for k in ("chiffre_affaires", "resultat_net", "tranche_effectif") if k in re_company_data]
+                                        await log_audit(
+                                            conn, batch_id=batch_id, siren=siren,
+                                            action="financial_data", result="success",
+                                            detail=f"Données financières: {', '.join(_fin_fields)}",
+                                            workspace_id=batch_workspace_id,
                                         )
                         except Exception as exc:
                             log.warning("discovery.inpi_failed", siren=siren, error=str(exc))
@@ -1693,6 +1743,7 @@ async def run(batch_id: str) -> None:
                         conn_holder, batch_id,
                         wave_current=q_idx,
                         wave_total=total_queries,
+                        current_query=search_query,
                         triage_black=triage_counts["black"],
                         triage_green=triage_counts["green"],
                         triage_yellow=triage_counts["yellow"],
@@ -1712,6 +1763,8 @@ async def run(batch_id: str) -> None:
                     # search_all calls _persist_result for each business
                     _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
                     _max_cards = _remaining * 3 if _remaining > 0 else 0
+                    _pre_query_discovered = companies_discovered
+                    _query_start = time.monotonic()
                     results = await maps_scraper.search_all(
                         clean_query, on_result=_persist_result,
                         dept_code=dept_filter,
@@ -1727,6 +1780,13 @@ async def run(batch_id: str) -> None:
                         total_saved=companies_discovered,
                         total_qualified=qualified,
                     )
+                    _query_stats.append({
+                        "query": search_query,
+                        "cards_found": len(results),
+                        "new_companies": companies_discovered - _pre_query_discovered,
+                        "is_expansion": False,
+                        "duration_sec": round(time.monotonic() - _query_start, 1),
+                    })
 
                     # Small delay between searches to avoid detection
                     if q_idx < total_queries:
@@ -1798,6 +1858,7 @@ async def run(batch_id: str) -> None:
                                 conn_holder, batch_id,
                                 wave_current=total_queries + eq_idx,
                                 wave_total=total_queries + len(expansion_queries),
+                                current_query=exp_query,
                             )
 
                             # Clean the expansion query
@@ -1812,6 +1873,8 @@ async def run(batch_id: str) -> None:
 
                             _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
                             _max_cards = _remaining * 3 if _remaining > 0 else 0
+                            _pre_query_discovered = companies_discovered
+                            _query_start = time.monotonic()
                             results = await maps_scraper.search_all(
                                 clean_exp, on_result=_persist_result,
                                 dept_code=dept_filter,
@@ -1828,6 +1891,13 @@ async def run(batch_id: str) -> None:
                                 results=len(results),
                                 total_saved=companies_discovered,
                             )
+                            _query_stats.append({
+                                "query": exp_query,
+                                "cards_found": len(results),
+                                "new_companies": companies_discovered - _pre_query_discovered,
+                                "is_expansion": True,
+                                "duration_sec": round(time.monotonic() - _query_start, 1),
+                            })
 
                             # Delay between expansion queries
                             if eq_idx < len(expansion_queries) and companies_discovered < batch_size:
@@ -1887,6 +1957,8 @@ async def run(batch_id: str) -> None:
                             companies_scraped=companies_discovered,
                             companies_qualified=qualified,
                             shortfall_reason=shortfall_msg,
+                            current_query=None,
+                            queries_json=json.dumps(_query_stats),
                             triage_black=triage_counts["black"],
                             triage_green=triage_counts["green"],
                             triage_yellow=triage_counts["yellow"],
