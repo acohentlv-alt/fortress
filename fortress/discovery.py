@@ -114,29 +114,79 @@ def _name_match_score(name_a: str, name_b: str) -> float:
 
 
 def _expand_queries(
-    sector_word: str, dept_code: str, original_queries: list[str]
+    sector_word: str, dept_code: str, original_queries: list[str],
+    memory: list[dict] | None = None,
 ) -> list[str]:
-    """Generate up to 5 expansion queries for a sector + department."""
-    original_lower = {q.lower().strip() for q in original_queries}
-    candidates: list[str] = []
+    """Generate up to 5 expansion queries for a sector + department.
 
-    # 1. Department name query
+    Uses query memory to skip exhausted queries (cards_found=0 in all past
+    runs) and prioritize productive ones. Never-tried queries come first.
+    """
+    original_lower = {q.lower().strip() for q in original_queries}
+
+    # ── Generate ALL candidates ──
+    all_candidates: list[str] = []
+
+    # Department name query
     dept_name = DEPARTMENTS.get(dept_code)
     if dept_name:
         q = f"{sector_word} {dept_name}"
         if q.lower() not in original_lower:
-            candidates.append(q)
+            all_candidates.append(q)
 
-    # 2. City queries from DEPT_CITIES
+    # City queries from DEPT_CITIES
     cities = DEPT_CITIES.get(dept_code, [])
     for city in cities:
         q = f"{sector_word} {city}"
         if q.lower() not in original_lower:
-            candidates.append(q)
-        if len(candidates) >= 5:
-            break
+            all_candidates.append(q)
 
-    return candidates[:5]
+    if not all_candidates:
+        return []
+
+    # ── No memory? Return first 5 candidates (original behavior) ──
+    if not memory:
+        return all_candidates[:5]
+
+    # ── Build memory lookup: query_text -> best result ──
+    mem_lookup: dict[str, dict] = {}
+    for m in memory:
+        key = m["query_text"].lower().strip()
+        if key not in mem_lookup:
+            mem_lookup[key] = {"cards_found": m["cards_found"], "new_companies": m["new_companies"]}
+        else:
+            if m["cards_found"] > mem_lookup[key]["cards_found"]:
+                mem_lookup[key] = {"cards_found": m["cards_found"], "new_companies": m["new_companies"]}
+
+    # ── Classify candidates ──
+    never_tried: list[str] = []
+    productive: list[tuple[int, str]] = []
+    exhausted: list[str] = []
+
+    for q in all_candidates:
+        key = q.lower().strip()
+        if key not in mem_lookup:
+            never_tried.append(q)
+        elif mem_lookup[key]["cards_found"] > 0:
+            productive.append((mem_lookup[key]["new_companies"], q))
+        else:
+            exhausted.append(q)
+
+    # ── Sort productive by new_companies desc ──
+    productive.sort(key=lambda x: x[0], reverse=True)
+
+    # ── Priority: never-tried first, then productive, skip exhausted ──
+    result: list[str] = []
+    for q in never_tried:
+        result.append(q)
+        if len(result) >= 5:
+            return result
+    for _, q in productive:
+        result.append(q)
+        if len(result) >= 5:
+            return result
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1787,6 +1837,28 @@ async def run(batch_id: str) -> None:
                         "is_expansion": False,
                         "duration_sec": round(time.monotonic() - _query_start, 1),
                     })
+                    # ── Record query in memory ──
+                    try:
+                        async with pool.connection() as qm_conn:
+                            await qm_conn.execute(
+                                """INSERT INTO query_memory
+                                   (workspace_id, sector_word, dept_code, query_text,
+                                    is_expansion, cards_found, new_companies, batch_id)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                                (
+                                    batch_workspace_id,
+                                    _sector_word or "",
+                                    dept_filter or "",
+                                    search_query,
+                                    False,
+                                    len(results),
+                                    companies_discovered - _pre_query_discovered,
+                                    batch_id,
+                                ),
+                            )
+                            await qm_conn.commit()
+                    except Exception:
+                        pass  # Memory is best-effort
 
                     # Small delay between searches to avoid detection
                     if q_idx < total_queries:
@@ -1808,8 +1880,42 @@ async def run(batch_id: str) -> None:
                     sector_word = re.sub(r'\s{2,}', ' ', sector_word).strip().rstrip(',').strip()
 
                     if sector_word:  # Skip if query was just the dept code
+                        # ── Load query memory for this sector+dept ──
+                        _query_memory: list[dict] = []
+                        try:
+                            async with pool.connection() as qm_conn:
+                                if batch_workspace_id is not None:
+                                    qm_cur = await qm_conn.execute(
+                                        """SELECT query_text, cards_found, new_companies
+                                           FROM query_memory
+                                           WHERE workspace_id = %s
+                                             AND sector_word = %s
+                                             AND dept_code = %s
+                                             AND is_expansion = true""",
+                                        (batch_workspace_id, sector_word, dept_filter),
+                                    )
+                                else:
+                                    qm_cur = await qm_conn.execute(
+                                        """SELECT query_text, cards_found, new_companies
+                                           FROM query_memory
+                                           WHERE workspace_id IS NULL
+                                             AND sector_word = %s
+                                             AND dept_code = %s
+                                             AND is_expansion = true""",
+                                        (sector_word, dept_filter),
+                                    )
+                                for qm_row in await qm_cur.fetchall():
+                                    _query_memory.append({
+                                        "query_text": qm_row[0],
+                                        "cards_found": qm_row[1],
+                                        "new_companies": qm_row[2],
+                                    })
+                        except Exception:
+                            pass  # Memory is best-effort
+
                         expansion_queries = _expand_queries(
-                            sector_word, dept_filter, search_queries
+                            sector_word, dept_filter, search_queries,
+                            memory=_query_memory,
                         )
                         if expansion_queries:
                             log.info(
@@ -1898,6 +2004,28 @@ async def run(batch_id: str) -> None:
                                 "is_expansion": True,
                                 "duration_sec": round(time.monotonic() - _query_start, 1),
                             })
+                            # ── Record expansion query in memory ──
+                            try:
+                                async with pool.connection() as qm_conn:
+                                    await qm_conn.execute(
+                                        """INSERT INTO query_memory
+                                           (workspace_id, sector_word, dept_code, query_text,
+                                            is_expansion, cards_found, new_companies, batch_id)
+                                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                                        (
+                                            batch_workspace_id,
+                                            _sector_word or "",
+                                            dept_filter or "",
+                                            exp_query,
+                                            True,
+                                            len(results),
+                                            companies_discovered - _pre_query_discovered,
+                                            batch_id,
+                                        ),
+                                    )
+                                    await qm_conn.commit()
+                            except Exception:
+                                pass  # Memory is best-effort
 
                             # Delay between expansion queries
                             if eq_idx < len(expansion_queries) and companies_discovered < batch_size:

@@ -197,6 +197,10 @@ async def lifespan(app: FastAPI):
                 await conn.execute(
                     "DELETE FROM contacts WHERE siren = 'MAPS00005' AND source = 'website_crawl'"
                 )
+                # MAPS00405: remove bad phone extracted from tracking ID
+                await conn.execute(
+                    "DELETE FROM contacts WHERE siren = 'MAPS00405' AND phone = '0105136289' AND source = 'website_crawl'"
+                )
                 logger.info("✅ Data fix: restored PAROT VI + MEDINA contacts")
 
                 # ── Entity linking columns ────────────────────────────
@@ -325,6 +329,26 @@ async def lifespan(app: FastAPI):
 
                 # Clean up entries older than 30 days
                 await conn.execute("DELETE FROM system_log WHERE created_at < NOW() - INTERVAL '30 days'")
+
+                # ── Query Memory table ────────────────────────────────
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS query_memory (
+                        id SERIAL PRIMARY KEY,
+                        workspace_id INTEGER,
+                        sector_word TEXT NOT NULL,
+                        dept_code TEXT NOT NULL,
+                        query_text TEXT NOT NULL,
+                        is_expansion BOOLEAN NOT NULL DEFAULT true,
+                        cards_found INTEGER NOT NULL DEFAULT 0,
+                        new_companies INTEGER NOT NULL DEFAULT 0,
+                        batch_id TEXT,
+                        executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_query_memory_lookup
+                    ON query_memory(workspace_id, sector_word, dept_code)
+                """)
 
                 # ── RGPD opposition table ────────────────────────────────
                 await conn.execute("""
