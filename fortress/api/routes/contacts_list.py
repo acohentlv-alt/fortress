@@ -154,6 +154,7 @@ async def list_contacts(
                 co.siren, co.denomination, co.departement, co.naf_code,
                 co.ville, co.naf_libelle,
                 ct.phone, ct.email, ct.website, ct.contact_source,
+                ct.phone_source, ct.email_source, ct.website_source,
                 ct.social_linkedin, ct.rating, ct.review_count,
                 o.nom AS dirigeant_nom, o.prenom AS dirigeant_prenom,
                 o.role AS dirigeant_role, o.email_direct, o.ligne_directe

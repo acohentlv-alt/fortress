@@ -546,6 +546,7 @@ async def get_job_companies(
             mc.phone, mc.email, mc.email_type, mc.website,
             mc.social_linkedin, mc.social_facebook, mc.social_twitter,
             mc.rating, mc.review_count, mc.maps_url, mc.contact_source,
+            mc.phone_source, mc.email_source, mc.website_source,
             CASE WHEN mc.phone IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN mc.email IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN mc.website IS NOT NULL THEN 1 ELSE 0 END AS completude,

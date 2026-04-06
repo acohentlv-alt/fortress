@@ -46,6 +46,9 @@ _CSV_COLUMNS = [
     ("Note Google", "rating"),
     ("Avis Google", "review_count"),
     ("Source", "contact_source"),
+    ("Source tel", "phone_source"),
+    ("Source email", "email_source"),
+    ("Source site", "website_source"),
     ("Notes", "notes"),
 ]
 
@@ -74,6 +77,7 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
             mc.address, mc.maps_url,
             mc.social_linkedin, mc.social_facebook, mc.social_twitter,
             mc.rating, mc.review_count, mc.contact_source,
+            mc.phone_source, mc.email_source, mc.website_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
@@ -113,6 +117,7 @@ async def export_master_csv(request: Request):
             mc.address, mc.maps_url,
             mc.social_linkedin, mc.social_facebook, mc.social_twitter,
             mc.rating, mc.review_count, mc.contact_source,
+            mc.phone_source, mc.email_source, mc.website_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
@@ -166,6 +171,7 @@ async def export_master_xlsx(request: Request):
             mc.address, mc.maps_url,
             mc.social_linkedin, mc.social_facebook, mc.social_twitter,
             mc.rating, mc.review_count, mc.contact_source,
+            mc.phone_source, mc.email_source, mc.website_source,
             cn.notes
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
@@ -302,6 +308,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
                 mc.address, mc.maps_url,
                 mc.social_linkedin, mc.social_facebook, mc.social_twitter,
                 mc.rating, mc.review_count, mc.contact_source,
+                mc.phone_source, mc.email_source, mc.website_source,
                 cn.notes
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
@@ -326,6 +333,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
                 mc.address, mc.maps_url,
                 mc.social_linkedin, mc.social_facebook, mc.social_twitter,
                 mc.rating, mc.review_count, mc.contact_source,
+                mc.phone_source, mc.email_source, mc.website_source,
                 cn.notes
             FROM companies co
             LEFT JOIN merged_contacts mc ON mc.siren = co.siren

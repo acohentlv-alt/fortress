@@ -66,6 +66,16 @@ def _pick_best(field: str, priority_case: str | None = None, col_alias: str = "c
     )
 
 
+def _pick_best_source(field: str, priority_case: str | None = None, col_alias: str = "c") -> str:
+    """Return the source that provided the best value for a field."""
+    pcase = priority_case or _source_priority_case(col_alias)
+    return (
+        f"(ARRAY_AGG({col_alias}.source ORDER BY {pcase}, "
+        f"{col_alias}.collected_at DESC) "
+        f"FILTER (WHERE {col_alias}.{field} IS NOT NULL))[1]"
+    )
+
+
 def merged_contacts_cte(siren_subquery: str) -> str:
     """Return a 'merged_contacts' CTE that merges all contact rows per SIREN.
 
@@ -103,6 +113,9 @@ def merged_contacts_cte(siren_subquery: str) -> str:
         {_pick_best('rating', priority_case=maps_case)} AS rating,
         {_pick_best('review_count', priority_case=maps_case)} AS review_count,
         {_pick_best('maps_url', priority_case=maps_case)} AS maps_url,
+        {_pick_best_source('phone', priority_case=phone_case)} AS phone_source,
+        {_pick_best_source('email')} AS email_source,
+        {_pick_best_source('website')} AS website_source,
         (ARRAY_AGG(c.source ORDER BY {std}, c.collected_at DESC))[1] AS contact_source
     FROM contacts c
     WHERE c.siren IN ({siren_subquery})
