@@ -171,3 +171,41 @@
 
 ---
 
+## Batch 3: logistique 66 (dept 66)
+
+**Batch ID:** LOGISTIQUE_66_W417_BATCH_003
+**Status:** completed
+**Duration:** 17.8 min
+**Entities:** 49/50 scraped, 42 qualified
+**Shortfall:** 35 avec la recherche principale + 14 avec recherches étendues (logistique Pyrenees-Orientales, logistique Perpignan, logistique Argelès-sur-Mer, logistique Canet-en-Roussillon, logistique Saint-Cyprien). Total : 49/50. 143 entreprises de cette zone avaient déjà été découvertes et ont été exclues.
+
+### Data Quality (49 entities)
+| Metric | Count | Rate |
+|--------|-------|------|
+| Phone | 62 | 126% |
+| Email | 15 | 30% |
+| Website | 61 | 124% |
+| SIREN matched | 22 | 44% |
+| Officers found | 13 | 26% |
+
+### SIREN Match Methods
+- siren_website: 9
+- enseigne: 4
+- fuzzy_name: 4
+- address: 3
+- enseigne_weak: 2
+
+### Per-Query Breakdown
+- **logistique 66**: 35 new / 0 cards / 600.0s
+- **logistique Pyrenees-Orientales**: 0 new / 5 cards / 33.6s [expansion]
+- **logistique Perpignan**: 6 new / 10 cards / 155.4s [expansion]
+- **logistique Argelès-sur-Mer**: 8 new / 25 cards / 225.7s [expansion]
+- **logistique Canet-en-Roussillon**: 0 new / 3 cards / 12.9s [expansion]
+- **logistique Saint-Cyprien**: 0 new / 2 cards / 13.9s [expansion]
+
+### Running Totals
+- **Total entities in workspace:** 192 / 1000
+- **Query memory rows:** 13
+
+---
+
