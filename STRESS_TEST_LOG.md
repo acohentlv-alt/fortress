@@ -136,3 +136,38 @@
 
 ---
 
+## Batch 2: transport 66 (dept 66)
+
+**Batch ID:** TRANSPORT_66_W417_BATCH_001
+**Status:** completed
+**Duration:** 14.7 min
+**Entities:** 50/50 scraped, 44 qualified
+
+
+### Data Quality (49 entities)
+| Metric | Count | Rate |
+|--------|-------|------|
+| Phone | 60 | 122% |
+| Email | 10 | 20% |
+| Website | 50 | 102% |
+| SIREN matched | 27 | 55% |
+| Officers found | 21 | 42% |
+
+### SIREN Match Methods
+- address: 12
+- siren_website: 11
+- enseigne: 2
+- fuzzy_name: 2
+
+### Per-Query Breakdown
+- **transport 66**: 41 new / 0 cards / 600.0s
+- **transport Pyrenees-Orientales**: 7 new / 27 cards / 180.5s [expansion]
+- **transport Perpignan**: 1 new / 6 cards / 53.0s [expansion]
+- **transport Argelès-sur-Mer**: 1 new / 2 cards / 26.3s [expansion]
+
+### Running Totals
+- **Total entities in workspace:** 99 / 1000
+- **Query memory rows:** 6
+
+---
+
