@@ -877,12 +877,25 @@ a:hover { color: var(--accent); }
     margin-bottom: var(--space-xs);
     font-weight: 500;
 }
-.bug-report-file-row {
+.bug-report-screenshot-preview {
     margin-top: var(--space-md);
+    margin-bottom: var(--space-sm);
 }
-.bug-report-file-row input[type="file"] {
+.bug-report-screenshot-preview img {
+    max-width: 100%;
+    max-height: 150px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    display: block;
+}
+.bug-report-screenshot-preview label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
     font-size: var(--font-sm);
     color: var(--text-secondary);
+    cursor: pointer;
 }
 .bug-report-actions {
     display: flex;

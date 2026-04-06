@@ -165,10 +165,10 @@ function _showLoginPage() {
         _setupLogout();
         _setupRunningJobs();
         _wireBugReportButton();
-        // Show admin section for admin users only
+        // Show admin section for admin and head users
         const adminSection = document.getElementById('nav-section-admin');
         const adminNav = document.getElementById('nav-admin');
-        if (user.role === 'admin') {
+        if (user.role === 'admin' || user.role === 'head') {
             if (adminSection) adminSection.style.display = '';
             if (adminNav) adminNav.style.display = '';
         }
@@ -307,24 +307,46 @@ function _wireBugReportButton() {
     if (btn) btn.onclick = _openBugReportModal;
 }
 
-function _openBugReportModal() {
+async function _openBugReportModal() {
     if (document.querySelector('.bug-report-overlay')) return;
 
     const user = getCachedUser();
     if (!user) return;
 
+    // Capture screenshot BEFORE adding modal overlay to DOM
+    let screenshotBlob = null;
+    let screenshotDataUrl = null;
+    try {
+        if (typeof html2canvas !== 'undefined') {
+            const canvas = await html2canvas(document.body, { scale: 0.5, useCORS: true, logging: false });
+            screenshotDataUrl = canvas.toDataURL('image/png');
+            screenshotBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        }
+    } catch (err) {
+        // Fallback: proceed without screenshot
+        screenshotBlob = null;
+        screenshotDataUrl = null;
+    }
+
     const overlay = document.createElement('div');
     overlay.className = 'bug-report-overlay';
+
+    const previewHtml = screenshotDataUrl ? `
+        <div class="bug-report-screenshot-preview">
+            <img src="${screenshotDataUrl}" alt="Capture d'écran" />
+            <label>
+                <input type="checkbox" id="bug-include-screenshot" checked />
+                Inclure la capture d'écran
+            </label>
+        </div>
+    ` : '';
 
     overlay.innerHTML = `
         <div class="bug-report-modal">
             <h3>Signaler un bug</h3>
             <label for="bug-desc">Décrivez le problème *</label>
             <textarea id="bug-desc" placeholder="Que s'est-il passé ? Qu'attendiez-vous ?"></textarea>
-            <div class="bug-report-file-row">
-                <label for="bug-file">Capture d'écran (optionnel, max 5 Mo)</label>
-                <input type="file" id="bug-file" accept=".png,.jpg,.jpeg,.gif" />
-            </div>
+            ${previewHtml}
             <div class="bug-report-actions">
                 <button class="btn btn-ghost" id="bug-cancel">Annuler</button>
                 <button class="btn btn-primary" id="bug-send">Envoyer</button>
@@ -347,16 +369,12 @@ function _openBugReportModal() {
 
     document.getElementById('bug-send').addEventListener('click', async () => {
         const desc = document.getElementById('bug-desc').value.trim();
-        const fileInput = document.getElementById('bug-file');
         const statusEl = document.getElementById('bug-status');
         const sendBtn = document.getElementById('bug-send');
+        const includeScreenshot = document.getElementById('bug-include-screenshot');
 
         if (!desc) {
             statusEl.innerHTML = '<span style="color:var(--danger)">Veuillez décrire le problème.</span>';
-            return;
-        }
-        if (fileInput.files.length > 0 && fileInput.files[0].size > 5 * 1024 * 1024) {
-            statusEl.innerHTML = '<span style="color:var(--danger)">Le fichier dépasse 5 Mo.</span>';
             return;
         }
 
@@ -378,8 +396,8 @@ function _openBugReportModal() {
         const formData = new FormData();
         formData.append('description', desc);
         formData.append('context', JSON.stringify(context));
-        if (fileInput.files.length > 0) {
-            formData.append('screenshot', fileInput.files[0]);
+        if (screenshotBlob && (!includeScreenshot || includeScreenshot.checked)) {
+            formData.append('screenshot', new File([screenshotBlob], 'screenshot.png', { type: 'image/png' }));
         }
 
         try {
@@ -447,10 +465,10 @@ async function initApp() {
     // Hide "Requête Libre" for ALL users (placeholder, not launched)
     const queryNav = document.getElementById('nav-query');
     if (queryNav) queryNav.style.display = 'none';
-    // Show admin section for admin users only
+    // Show admin section for admin and head users
     const adminSection = document.getElementById('nav-section-admin');
     const adminNav = document.getElementById('nav-admin');
-    if (user.role === 'admin') {
+    if (user.role === 'admin' || user.role === 'head') {
         if (adminSection) adminSection.style.display = '';
         if (adminNav) adminNav.style.display = '';
     }

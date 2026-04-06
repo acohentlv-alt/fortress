@@ -130,7 +130,9 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS match_confidence VARCHAR(10)")
                 await conn.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS siren_from_website VARCHAR(9)")
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS shortfall_reason TEXT")
-                
+                await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS current_query TEXT")
+                await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS queries_json JSONB")
+
                 # Index for Enrichment History timeline rendering performance
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_log_siren_time ON batch_log (siren, timestamp DESC)")
 

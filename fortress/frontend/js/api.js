@@ -194,6 +194,10 @@ export async function getJobSummary(batchId) {
     return res.json();
 }
 
+export async function getJobQueries(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/queries`);
+}
+
 // ── Companies ────────────────────────────────────────────────────
 export async function searchCompanies(query, {
     limit = 50, offset = 0, sortBy = '', order = '', department = '', sector = '',
@@ -565,4 +569,12 @@ export async function getCurrentUser() {
         _currentUser = null;
         return null;
     }
+}
+
+export async function getBugReports() {
+    return await request('/bug-report');
+}
+
+export async function deleteBugReport(id) {
+    return await request(`/bug-report/${id}`, { method: 'DELETE' });
 }

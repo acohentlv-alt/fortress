@@ -215,6 +215,7 @@ async function renderJobMonitor(container, batchId) {
             <div>
                 <h1 class="page-title" id="mon-title">${t('monitor.loading')}</h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)" id="mon-status-row"></div>
+                <div id="mon-current-query" style="margin-top:6px; font-size:13px; color:var(--accent, #4A90D9); display:none"></div>
             </div>
             <div style="display:flex; align-items:center; gap:var(--space-sm)">
                 <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="${t('monitor.stopBtnTitle')}">${t('monitor.stopBtn')}</button>
@@ -332,6 +333,7 @@ async function renderJobMonitor(container, batchId) {
         completion: document.getElementById('mon-completion'),
         cancelBtn: document.getElementById('mon-cancel-btn'),
         summary: document.getElementById('mon-summary'),
+        currentQuery: document.getElementById('mon-current-query'),
     };
 
     // ── State tracking ──────────────────────────────────────────
@@ -428,6 +430,19 @@ async function renderJobMonitor(container, batchId) {
         // Show/hide cancel button
         if ($.cancelBtn) {
             $.cancelBtn.style.display = isRunning ? '' : 'none';
+        }
+
+        // ── Current Query Indicator ─────────────────────────────
+        if ($.currentQuery) {
+            if (isRunning && job.current_query) {
+                const waveText = (job.wave_current && job.wave_total)
+                    ? ` (${job.wave_current}/${job.wave_total})`
+                    : '';
+                $.currentQuery.style.display = 'block';
+                $.currentQuery.textContent = `Recherche : ${job.current_query}${waveText}...`;
+            } else {
+                $.currentQuery.style.display = 'none';
+            }
         }
 
         // ── Progress Ring — only update if pct changed ──────────

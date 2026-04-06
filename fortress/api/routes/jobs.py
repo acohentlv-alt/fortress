@@ -40,7 +40,8 @@ async def list_jobs(request: Request):
             sj.worker_id,
             sj.mode,
             sj.workspace_id,
-            sj.shortfall_reason
+            sj.shortfall_reason,
+            sj.current_query
         FROM batch_data sj
         WHERE sj.status != 'deleted'
         {ws_filter}
@@ -324,6 +325,7 @@ async def get_job(batch_id: str, request: Request):
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.mode,
             sj.shortfall_reason,
+            sj.current_query,
             EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds
         FROM batch_data sj
         WHERE sj.batch_id = %s {ws_filter}
@@ -650,4 +652,33 @@ async def get_job_quality(batch_id: str, request: Request):
         "officers_pct": round(100 * with_officers / total),
         "financials_pct": round(100 * with_financials / total),
         "sources": sources,
+    }
+
+
+@router.get("/{batch_id}/queries")
+async def get_job_queries(batch_id: str, request: Request):
+    """Return the query execution history for a batch."""
+    user = getattr(request.state, "user", None)
+    if user and not user.is_admin:
+        ws_filter = "AND sj.workspace_id = %s"
+        ws_params: tuple = (user.workspace_id,)
+    else:
+        ws_filter = ""
+        ws_params = ()
+
+    job = await fetch_one(
+        f"SELECT queries_json, current_query FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        (batch_id,) + ws_params,
+    )
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job introuvable"})
+
+    import json as _json
+    queries = job.get("queries_json") or []
+    if isinstance(queries, str):
+        queries = _json.loads(queries)
+
+    return {
+        "queries": queries,
+        "current_query": job.get("current_query"),
     }

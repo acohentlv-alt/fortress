@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getJobSummary, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getJobSummary, getJobQueries, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
@@ -198,6 +198,19 @@ export async function renderJob(container, batchId) {
             </div>
         ` : ''}
 
+        <!-- Query History -->
+        <div class="card" id="queries-card" style="margin-bottom:var(--space-xl)">
+            <div style="display:flex; align-items:center; justify-content:space-between; cursor:pointer" id="queries-toggle">
+                <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">
+                    Détail des recherches
+                </h3>
+                <span id="queries-chevron" style="color:var(--text-muted); font-size:14px; transition:transform 0.2s">▼</span>
+            </div>
+            <div id="queries-panel" style="display:none; margin-top:var(--space-lg)">
+                <div class="loading"><div class="spinner"></div></div>
+            </div>
+        </div>
+
         <!-- Companies -->
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
             <h2 style="font-size:var(--font-lg); font-weight:600">${t('job.companiesLabel')}</h2>
@@ -262,6 +275,54 @@ export async function renderJob(container, batchId) {
                         <span style="color:${color}">${data.success}/${data.total} (${data.rate}%)</span>
                     </div>`;
                 }).join('');
+            }
+        });
+    }
+
+    // Query history toggle
+    const queriesToggle = document.getElementById('queries-toggle');
+    let queriesLoaded = false;
+    if (queriesToggle) {
+        queriesToggle.addEventListener('click', async () => {
+            const panel = document.getElementById('queries-panel');
+            const chevron = document.getElementById('queries-chevron');
+            if (!panel) return;
+            const visible = panel.style.display !== 'none';
+            panel.style.display = visible ? 'none' : 'block';
+            if (chevron) chevron.style.transform = visible ? '' : 'rotate(180deg)';
+            if (!visible && !queriesLoaded) {
+                queriesLoaded = true;
+                try {
+                    const data = await getJobQueries(batchId);
+                    const queries = (data && data.queries) || [];
+                    if (queries.length === 0) {
+                        panel.innerHTML = `<span style="color:var(--text-muted); font-size:var(--font-sm)">Aucune donnée de recherche disponible pour ce batch.</span>`;
+                        return;
+                    }
+                    const totalNew = queries.reduce((s, q) => s + (q.new_companies || 0), 0);
+                    const headerHtml = `<div style="font-size:var(--font-sm); color:var(--text-secondary); margin-bottom:var(--space-md); font-weight:600">
+                        ${queries.length} recherche${queries.length > 1 ? 's' : ''} effectuée${queries.length > 1 ? 's' : ''} — ${totalNew} entreprise${totalNew > 1 ? 's' : ''} trouvée${totalNew > 1 ? 's' : ''}
+                    </div>`;
+                    const rowsHtml = queries.map(q => {
+                        const newColor = q.is_expansion
+                            ? 'color:var(--accent)'
+                            : q.new_companies > 0
+                                ? 'color:var(--success)'
+                                : 'color:var(--text-muted)';
+                        const expansionBadge = q.is_expansion
+                            ? `<span style="font-size:11px; padding:1px 6px; border-radius:3px; background:rgba(74,144,217,0.15); color:var(--accent); margin-left:6px; vertical-align:middle">expansion</span>`
+                            : '';
+                        return `<div style="display:flex; align-items:center; gap:var(--space-md); padding:6px 0; border-bottom:1px solid var(--border-subtle); font-size:var(--font-sm)">
+                            <span style="flex:1; color:var(--text-primary)">${escapeHtml(q.query)}${expansionBadge}</span>
+                            <span style="${newColor}; font-weight:600; min-width:80px; text-align:right">+${q.new_companies} entreprise${q.new_companies > 1 ? 's' : ''}</span>
+                            <span style="color:var(--text-muted); min-width:90px; text-align:right">${q.cards_found} résultat${q.cards_found > 1 ? 's' : ''}</span>
+                            <span style="color:var(--text-muted); min-width:60px; text-align:right">${q.duration_sec}s</span>
+                        </div>`;
+                    }).join('');
+                    panel.innerHTML = headerHtml + `<div>${rowsHtml}</div>`;
+                } catch (err) {
+                    panel.innerHTML = `<span style="color:var(--danger); font-size:var(--font-sm)">Erreur lors du chargement de l'historique des recherches.</span>`;
+                }
             }
         });
     }

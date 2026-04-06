@@ -22,6 +22,8 @@ import {
     getOppositions,
     submitOpposition,
     confirmOppositionDeletion,
+    getBugReports,
+    deleteBugReport,
 } from '../api.js';
 import { escapeHtml, showToast, showConfirmModal, formatDateTime } from '../components.js';
 import { isStale } from '../app.js';
@@ -78,16 +80,20 @@ function _focusStyle(el) {
 
 export async function renderAdmin(container, gen) {
     const currentUser = getCachedUser();
-    if (!currentUser || currentUser.role !== 'admin') {
+    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'head')) {
         container.innerHTML = `
             <div class="empty-state" style="margin-top:var(--space-2xl)">
                 <div class="empty-state-icon">🔒</div>
-                <div class="empty-state-text">Accès réservé aux administrateurs</div>
+                <div class="empty-state-text">Accès réservé aux administrateurs et responsables</div>
                 <a href="#/" class="btn btn-primary" style="margin-top:var(--space-lg)">Retour au Dashboard</a>
             </div>
         `;
         return;
     }
+
+    const pageSubtitle = currentUser.role === 'head'
+        ? 'Rapports de bugs de votre espace de travail.'
+        : 'Gestion des utilisateurs, des espaces de travail et conformité RGPD.';
 
     container.innerHTML = `
         <style>
@@ -98,13 +104,14 @@ export async function renderAdmin(container, gen) {
         </style>
 
         <h1 class="page-title">Administration</h1>
-        <p class="page-subtitle">Gestion des utilisateurs, des espaces de travail et conformité RGPD.</p>
+        <p class="page-subtitle">${pageSubtitle}</p>
 
         <div class="admin-tabs">
             <button class="admin-tab active" data-tab="workspaces">Espaces de travail</button>
             <button class="admin-tab" data-tab="users">Utilisateurs</button>
             <button class="admin-tab" data-tab="logs">Journaux</button>
             <button class="admin-tab" data-tab="rgpd">RGPD</button>
+            <button class="admin-tab" data-tab="bugs">Bugs</button>
         </div>
 
         <!-- TAB: Espaces de travail -->
@@ -187,6 +194,18 @@ export async function renderAdmin(container, gen) {
                     <div class="loading"><div class="spinner"></div></div>
                 </div>
                 <div id="syslog-pagination" style="margin-top:var(--space-lg)"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Bugs -->
+        <div id="tab-bugs" class="admin-tab-content" style="display:none">
+            <div class="card">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">Rapports de bugs</h3>
+                </div>
+                <div id="bugs-table-container">
+                    <div class="loading"><div class="spinner"></div></div>
+                </div>
             </div>
         </div>
 
@@ -354,6 +373,21 @@ export async function renderAdmin(container, gen) {
             if (target) { target.style.display = 'block'; target.classList.add('active'); }
         });
     });
+
+    // For head users: hide all tabs except Bugs and auto-activate it
+    if (currentUser.role === 'head') {
+        container.querySelectorAll('.admin-tab').forEach(btn => {
+            if (btn.dataset.tab !== 'bugs') btn.style.display = 'none';
+        });
+        ['tab-workspaces', 'tab-users', 'tab-logs', 'tab-rgpd'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        const bugsTab = container.querySelector('[data-tab="bugs"]');
+        if (bugsTab) { bugsTab.classList.add('active'); }
+        const bugsContent = document.getElementById('tab-bugs');
+        if (bugsContent) bugsContent.style.display = 'block';
+    }
 
     const wsFormArea = container.querySelector('#ws-form-area');
     const wsTableContainer = container.querySelector('#ws-table-container');
@@ -1202,11 +1236,117 @@ export async function renderAdmin(container, gen) {
         });
     }
 
+    // ── Bug Reports Tab ─────────────────────────────────────────────
+
+    const bugsTableContainer = container.querySelector('#bugs-table-container');
+
+    async function loadBugReports() {
+        if (!bugsTableContainer) return;
+        bugsTableContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+        try {
+            const data = await getBugReports();
+            if (!data || !data._ok) {
+                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
+                return;
+            }
+            const reports = data.reports || [];
+            if (reports.length === 0) {
+                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🐛</div><div class="empty-state-text">Aucun rapport de bug.</div></div>`;
+                return;
+            }
+
+            bugsTableContainer.innerHTML = `
+                <div style="overflow-x:auto">
+                    <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                        <thead>
+                            <tr>
+                                <th class="contacts-th">Date</th>
+                                <th class="contacts-th">Utilisateur</th>
+                                <th class="contacts-th">Espace</th>
+                                <th class="contacts-th">Page</th>
+                                <th class="contacts-th">Description</th>
+                                <th class="contacts-th" style="text-align:center">📷</th>
+                                ${currentUser.role === 'admin' ? '<th class="contacts-th"></th>' : ''}
+                            </tr>
+                        </thead>
+                        <tbody id="bugs-tbody">
+                            ${reports.map(r => `
+                                <tr class="contacts-row bug-report-row" data-bug-id="${r.id}" style="cursor:pointer">
+                                    <td class="contacts-td" style="color:var(--text-muted); white-space:nowrap">${r.created_at ? formatDateTime(r.created_at) : '—'}</td>
+                                    <td class="contacts-td" style="font-weight:600; color:var(--text-primary)">${escapeHtml(r.username || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary)">${r.workspace_id != null ? r.workspace_id : '<span style="color:var(--text-muted)">admin</span>'}</td>
+                                    <td class="contacts-td" style="color:var(--text-muted); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(r.page_url || '')}">${escapeHtml(r.page_url || '—')}</td>
+                                    <td class="contacts-td" style="color:var(--text-secondary); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml((r.description || '').substring(0, 80))}</td>
+                                    <td class="contacts-td" style="text-align:center">${r.has_screenshot ? '📷' : ''}</td>
+                                    ${currentUser.role === 'admin' ? `
+                                    <td class="contacts-td">
+                                        <button class="action-btn action-btn-reject btn-delete-bug"
+                                                data-bug-id="${r.id}"
+                                                title="Supprimer ce rapport"
+                                                style="font-size:14px">
+                                            🗑️
+                                        </button>
+                                    </td>` : ''}
+                                </tr>
+                                <tr class="bug-detail-row" id="bug-detail-${r.id}" style="display:none">
+                                    <td colspan="${currentUser.role === 'admin' ? 7 : 6}" style="padding:var(--space-md) var(--space-lg); background:var(--bg-secondary)">
+                                        <div style="font-size:var(--font-sm); color:var(--text-secondary); white-space:pre-wrap; margin-bottom:var(--space-sm)">${escapeHtml(r.description || '')}</div>
+                                        ${r.has_screenshot ? `<img src="/api/bug-report/${r.id}/screenshot" alt="Capture d'écran" style="max-width:100%; max-height:300px; border-radius:var(--radius-sm); border:1px solid var(--border-default); display:block; margin-top:var(--space-sm)">` : ''}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            // Wire row click to expand/collapse detail
+            bugsTableContainer.querySelectorAll('.bug-report-row').forEach(row => {
+                row.addEventListener('click', (e) => {
+                    if (e.target.closest('.btn-delete-bug')) return;
+                    const bugId = row.dataset.bugId;
+                    const detailRow = document.getElementById(`bug-detail-${bugId}`);
+                    if (detailRow) {
+                        detailRow.style.display = detailRow.style.display === 'none' ? 'table-row' : 'none';
+                    }
+                });
+            });
+
+            // Wire delete buttons (admin only)
+            bugsTableContainer.querySelectorAll('.btn-delete-bug').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const bugId = parseInt(btn.dataset.bugId, 10);
+                    showConfirmModal({
+                        title: 'Supprimer le rapport de bug',
+                        body: '<p>Voulez-vous vraiment supprimer ce rapport de bug ? Cette action est irréversible.</p>',
+                        confirmLabel: 'Supprimer',
+                        danger: true,
+                        onConfirm: async () => {
+                            const result = await deleteBugReport(bugId);
+                            if (!result || !result._ok) {
+                                showToast(extractApiError(result), 'error');
+                                return;
+                            }
+                            showToast('Rapport supprimé.', 'success');
+                            loadBugReports();
+                        },
+                    });
+                });
+            });
+        } catch (err) {
+            bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger les rapports.</div></div>`;
+        }
+    }
+
     // Load everything
-    await loadWorkspaces();
-    if (isStale(gen)) return;
-    await loadUsers();
-    loadLog();
-    loadSyslog();
-    loadOppositionHistory();
+    if (currentUser.role === 'admin') {
+        await loadWorkspaces();
+        if (isStale(gen)) return;
+        await loadUsers();
+        loadLog();
+        loadSyslog();
+        loadOppositionHistory();
+    }
+    loadBugReports();
 }

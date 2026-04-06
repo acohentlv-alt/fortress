@@ -12,9 +12,9 @@ from email.mime.text import MIMEText
 from email import encoders
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
-from fortress.api.db import execute
+from fortress.api.db import execute, fetch_all, fetch_one
 from fortress.api.routes.activity import log_activity
 from fortress.config.settings import settings
 
@@ -166,3 +166,88 @@ async def submit_bug_report(
         pass
 
     return {"ok": True, "message": "Rapport envoyé. Merci !"}
+
+
+@router.get("")
+async def list_bug_reports(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "Authentification requise."})
+    if user.role == "user":
+        return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs et responsables."})
+
+    if user.role == "admin":
+        rows = await fetch_all("""
+            SELECT id, username, role, workspace_id, description, context, page_url,
+                   (screenshot_data IS NOT NULL) AS has_screenshot, created_at
+            FROM bug_reports
+            ORDER BY created_at DESC
+        """)
+    else:
+        # head: only own workspace
+        rows = await fetch_all("""
+            SELECT id, username, role, workspace_id, description, context, page_url,
+                   (screenshot_data IS NOT NULL) AS has_screenshot, created_at
+            FROM bug_reports
+            WHERE workspace_id = %s
+            ORDER BY created_at DESC
+        """, (user.workspace_id,))
+
+    reports = []
+    for row in rows:
+        reports.append({
+            "id": row["id"],
+            "username": row["username"],
+            "role": row["role"],
+            "workspace_id": row["workspace_id"],
+            "description": row["description"],
+            "context": row["context"],
+            "page_url": row["page_url"],
+            "has_screenshot": bool(row["has_screenshot"]),
+            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        })
+
+    return {"reports": reports}
+
+
+@router.get("/{bug_id}/screenshot")
+async def get_bug_screenshot(bug_id: int, request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "Authentification requise."})
+    if user.role == "user":
+        return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs et responsables."})
+
+    row = await fetch_one("""
+        SELECT screenshot_data, workspace_id FROM bug_reports WHERE id = %s
+    """, (bug_id,))
+
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Rapport introuvable."})
+
+    # Head users restricted to their own workspace
+    if user.role == "head" and row["workspace_id"] != user.workspace_id:
+        return JSONResponse(status_code=403, content={"error": "Accès refusé."})
+
+    screenshot_b64 = row["screenshot_data"]
+    if not screenshot_b64:
+        return JSONResponse(status_code=404, content={"error": "Aucune capture d'écran pour ce rapport."})
+
+    image_bytes = base64.b64decode(screenshot_b64)
+    return Response(content=image_bytes, media_type="image/png")
+
+
+@router.delete("/{bug_id}")
+async def delete_bug_report(bug_id: int, request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        return JSONResponse(status_code=401, content={"error": "Authentification requise."})
+    if user.role != "admin":
+        return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs."})
+
+    row = await fetch_one("SELECT id FROM bug_reports WHERE id = %s", (bug_id,))
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Rapport introuvable."})
+
+    await execute("DELETE FROM bug_reports WHERE id = %s", (bug_id,))
+    return {"ok": True}
