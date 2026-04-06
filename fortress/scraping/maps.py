@@ -29,12 +29,14 @@ Usage (from discovery.py):
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import re
 from typing import Any
 
 import structlog
 
+from fortress.config.sector_relevance import is_irrelevant_name
 from fortress.config.settings import settings
 
 log = structlog.get_logger(__name__)
@@ -360,6 +362,8 @@ class PlaywrightMapsScraper:
         *,
         on_result: Any = None,
         dept_code: str | None = None,
+        max_results: int = 0,
+        sector_word: str = "",
     ) -> list[dict[str, Any]]:
         """Search Google Maps with a generic query and extract ALL results.
 
@@ -371,7 +375,8 @@ class PlaywrightMapsScraper:
                        "transport logistique 66".
             on_result: Optional async callback(result_dict) called after
                        each business is extracted. Enables real-time DB
-                       persistence.
+                       persistence. If the callback returns False, the
+                       scraper stops extracting more cards (early stop).
 
         Returns:
             List of dicts, each with: maps_name, phone, website, address,
@@ -386,7 +391,7 @@ class PlaywrightMapsScraper:
         async with self._lock:
             try:
                 return await asyncio.wait_for(
-                    self._do_search_all(query, on_result, dept_code=dept_code),
+                    self._do_search_all(query, on_result, max_results=max_results, dept_code=dept_code, sector_word=sector_word),
                     timeout=600.0,  # 10 min max per search_all query
                 )
             except asyncio.TimeoutError:
@@ -448,6 +453,7 @@ class PlaywrightMapsScraper:
         max_results: int = 0,
         *,
         dept_code: str | None = None,
+        sector_word: str = "",
     ) -> list[dict[str, Any]]:
         """Internal: perform generic Maps search and extract all results.
 
@@ -577,6 +583,16 @@ class PlaywrightMapsScraper:
                 current_results = await page.query_selector_all('a.hfpxzc')
                 current_count = len(current_results)
 
+                # Stop scrolling if we have enough cards
+                if max_results > 0 and current_count >= max_results:
+                    log.info(
+                        "maps_discovery.scroll_enough",
+                        loaded=current_count,
+                        max_results=max_results,
+                        query=query,
+                    )
+                    break
+
                 log.debug(
                     "maps_discovery.scroll",
                     round=scroll_round + 1,
@@ -618,12 +634,39 @@ class PlaywrightMapsScraper:
         # We collect all hrefs upfront so we can navigate to each one
         # directly, getting a FULL fresh page load per business.
         all_cards = await page.query_selector_all('a.hfpxzc')
-        card_data: list[tuple[str, str]] = []  # (href, label)
+        card_data: list[tuple[str, str, str]] = []  # (href, label, category)
         for card in all_cards:
             href = await card.get_attribute("href") or ""
             label = (await card.get_attribute("aria-label")) or ""
+            # Extract category from card's W4Efsd spans
+            card_cat = ""
+            try:
+                card_cat = await page.evaluate("""(cardEl) => {
+                    const container = cardEl.closest('[jsaction]')?.parentElement || cardEl.parentElement;
+                    if (!container) return '';
+                    const label = cardEl.getAttribute('aria-label') || '';
+                    const spans = container.querySelectorAll('.W4Efsd span');
+                    for (const sp of spans) {
+                        const t = sp.textContent.trim();
+                        if (!t || t.length < 3 || t.length > 50) continue;
+                        if (/^[0-9,.(]/.test(t)) continue;
+                        if (/[\\u20AA\\u20AC$]/.test(t)) continue;
+                        if (t === '\\u00b7' || t.startsWith('\\u00b7')) continue;
+                        if (t === label || label.startsWith(t)) continue;
+                        let cat = t;
+                        while (cat.endsWith('\\u00b7') || cat.endsWith(' ')) cat = cat.slice(0, -1);
+                        if (cat) return cat;
+                    }
+                    return '';
+                }""", card) or ""
+            except Exception:
+                pass
             if href:
-                card_data.append((href, label))
+                card_data.append((href, label, card_cat))
+
+        # Truncate to max_results to avoid processing excess cards
+        if max_results > 0 and len(card_data) > max_results:
+            card_data = card_data[:max_results]
 
         total_cards = len(card_data)
         log.info(
@@ -636,7 +679,7 @@ class PlaywrightMapsScraper:
         search_url = page.url
 
         # ── Step 6: Navigate to each business → extract → go back ──────
-        for idx, (card_href, card_label) in enumerate(card_data):
+        for idx, (card_href, card_label, card_category) in enumerate(card_data):
             try:
                 # ── FIX C: Skip "Sponsorisé" results ──────────────────
                 if "sponsoris" in card_label.lower() or "\ue5d4" in card_label:
@@ -645,6 +688,16 @@ class PlaywrightMapsScraper:
                         name=card_label,
                     )
                     continue
+
+                # ── Name-based pre-filter (before expensive page nav) ──
+                if sector_word and card_label:
+                    if is_irrelevant_name(sector_word, card_label):
+                        log.info(
+                            "maps_discovery.name_filtered",
+                            name=card_label,
+                            sector=sector_word,
+                        )
+                        continue
 
                 # Check if we've collected enough results
                 if max_results > 0 and len(results) >= max_results:
@@ -675,6 +728,10 @@ class PlaywrightMapsScraper:
                 data = await self._extract_from_page(card_label, "", "discovery")
                 data["search_query"] = query
 
+                # Card category from list view is more reliable than detail page
+                if card_category:
+                    data["category"] = card_category
+
                 extracted_name = data.get("maps_name") or card_label
 
                 # Dedup check: name + address
@@ -700,7 +757,16 @@ class PlaywrightMapsScraper:
                     # Real-time callback for per-entity persistence
                     if on_result:
                         try:
-                            await on_result(data)
+                            cb_result = await on_result(data)
+                            if cb_result is False:
+                                log.info(
+                                    "maps_discovery.early_stop",
+                                    reason="callback_signal",
+                                    extracted=len(results),
+                                    total_cards=len(card_data),
+                                    query=query,
+                                )
+                                break
                         except Exception as cb_exc:
                             log.warning(
                                 "maps_discovery.on_result_error",
@@ -994,20 +1060,80 @@ class PlaywrightMapsScraper:
             pass  # Non-critical — used for diagnostics only
 
         # ── Category: business type text below the name ──────────────
+        category = None
+
+        # Strategy 1: JSON-LD structured data (most reliable — web standard)
         try:
-            cat_el = await page.evaluate("""() => {
-                // Strategy 1: button with jsaction containing "category"
-                const btn = document.querySelector('button[jsaction*="category"]');
-                if (btn) return btn.textContent.trim();
-                // Strategy 2: span.DkEaL in the header area
-                const span = document.querySelector('span.DkEaL');
-                if (span) return span.textContent.trim();
-                return null;
-            }""")
-            if cat_el and len(cat_el) > 1:
-                result["category"] = cat_el
+            _cat_html = await page.content()
+            ld_matches = re.findall(
+                r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                _cat_html, re.DOTALL,
+            )
+            for ld_raw in ld_matches:
+                try:
+                    ld = json.loads(ld_raw)
+                    if isinstance(ld, dict):
+                        cat = ld.get("@type") or ld.get("additionalType") or ""
+                        if cat and cat not in ("LocalBusiness", "Place", "Organization", "WebPage"):
+                            category = cat
+                            break
+                except (json.JSONDecodeError, TypeError):
+                    pass
         except Exception:
-            pass  # Non-critical — category is optional for relevance filtering
+            pass
+
+        # Strategy 2: DOM walking from h1 (structural, class-independent)
+        if not category:
+            try:
+                category = await page.evaluate("""() => {
+                    const h1 = document.querySelector('h1.DUwDvf') || document.querySelector('h1');
+                    if (!h1) return null;
+                    const container = h1.closest('[role="main"]') || h1.parentElement?.parentElement;
+                    if (!container) return null;
+                    const candidates = container.querySelectorAll('button[jsaction], span.fontBodyMedium');
+                    for (const el of candidates) {
+                        const text = el.textContent.trim();
+                        // Strip Material Icons unicode chars (private use area)
+                        const clean = text.replace(/[\\uE000-\\uF8FF]/g, '').trim();
+                        if (clean && clean.length > 1 && clean.length < 60
+                            && !clean.includes('toile') && !clean.includes('avis')
+                            && !/^\\d/.test(clean) && !clean.includes('Itin')
+                            && !clean.includes('Voir') && !clean.includes('photo')
+                            && !clean.includes('Envoyer') && !clean.includes('Partager')
+                            && !clean.includes('Sauvegarder') && !clean.includes('Plus d')
+                            && !clean.includes('Revendiq') && !clean.includes('Suggest')
+                            && !clean.includes('sentation') && !clean.includes('Fermer')
+                            && clean !== h1.textContent.trim()) {
+                            return clean;
+                        }
+                    }
+                    return null;
+                }""")
+            except Exception:
+                pass
+
+        # Strategy 3: button with jsaction containing "category"
+        if not category:
+            try:
+                category = await page.evaluate("""() => {
+                    const btn = document.querySelector('button[jsaction*="category"]');
+                    return btn ? btn.textContent.trim() : null;
+                }""")
+            except Exception:
+                pass
+
+        # Strategy 4: span.DkEaL (fragile class — last resort)
+        if not category:
+            try:
+                category = await page.evaluate("""() => {
+                    const span = document.querySelector('span.DkEaL');
+                    return span ? span.textContent.trim() : null;
+                }""")
+            except Exception:
+                pass
+
+        if category and len(category) > 1:
+            result["category"] = category
 
         # ── Strategy 1: data-item-id phone buttons (Maps 2024+) ──────
         phone_btn = await page.query_selector('button[data-item-id^="phone"]')

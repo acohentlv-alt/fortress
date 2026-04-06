@@ -33,7 +33,7 @@ import psycopg_pool
 import structlog
 
 from fortress.config.departments import DEPARTMENTS, DEPT_CITIES
-from fortress.config.sector_relevance import is_irrelevant_category
+from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
 from fortress.scraping.http import CurlClient
@@ -973,12 +973,12 @@ async def run(batch_id: str) -> None:
                 # all queries finish). If Chrome crashes mid-batch,
                 # already-saved businesses are retained.
 
-                async def _persist_result(maps_result: dict[str, Any]) -> None:
+                async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
                     nonlocal companies_discovered, qualified
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
-                        return
+                        return False  # Signal scraper to stop extracting cards
 
                     maps_name = maps_result.get("maps_name", "")
                     maps_address = maps_result.get("address")
@@ -1027,6 +1027,16 @@ async def run(batch_id: str) -> None:
                                     )
                             except Exception:
                                 pass
+                            return
+
+                    # ── Name-based pre-filter: skip obviously wrong businesses ──
+                    if _sector_word and maps_name:
+                        if is_irrelevant_name(_sector_word, maps_name):
+                            log.info(
+                                "discovery.name_filtered",
+                                name=maps_name,
+                                sector=_sector_word,
+                            )
                             return
 
                     # ── Level 3: SIREN extraction from website ────────────
@@ -1145,6 +1155,18 @@ async def run(batch_id: str) -> None:
                                 )
                             companies_discovered += 1
                             qualified += 1
+                            # Write "completed" immediately if we just hit the target
+                            if batch_size > 0 and companies_discovered >= batch_size:
+                                try:
+                                    await _update_job_safe(
+                                        conn_holder, batch_id,
+                                        status="completed",
+                                        companies_scraped=companies_discovered,
+                                        companies_qualified=qualified,
+                                        total_companies=companies_discovered,
+                                    )
+                                except Exception:
+                                    pass  # Best effort -- line ~1814 is the safety net
                             return
                         else:
                             triage_bucket = "YELLOW"
@@ -1161,6 +1183,18 @@ async def run(batch_id: str) -> None:
 
                     companies_discovered += 1
                     idx = companies_discovered
+                    # Write "completed" immediately if we just hit the target
+                    if batch_size > 0 and companies_discovered >= batch_size:
+                        try:
+                            await _update_job_safe(
+                                conn_holder, batch_id,
+                                status="completed",
+                                companies_scraped=companies_discovered,
+                                companies_qualified=qualified,
+                                total_companies=companies_discovered,
+                            )
+                        except Exception:
+                            pass  # Best effort -- line ~1814 is the safety net
 
                     # ALWAYS create a MAPS entity — never use matched SIREN as entity ID
                     async with pool.connection() as id_conn:
@@ -1655,9 +1689,13 @@ async def run(batch_id: str) -> None:
                             clean_query = search_query
 
                     # search_all calls _persist_result for each business
+                    _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
+                    _max_cards = _remaining * 3 if _remaining > 0 else 0
                     results = await maps_scraper.search_all(
                         clean_query, on_result=_persist_result,
                         dept_code=dept_filter,
+                        max_results=_max_cards,
+                        sector_word=_sector_word,
                     )
 
                     log.info(
@@ -1750,9 +1788,13 @@ async def run(batch_id: str) -> None:
 
                             _current_search_query = exp_query
 
+                            _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
+                            _max_cards = _remaining * 3 if _remaining > 0 else 0
                             results = await maps_scraper.search_all(
                                 clean_exp, on_result=_persist_result,
                                 dept_code=dept_filter,
+                                max_results=_max_cards,
+                                sector_word=_sector_word,
                             )
 
                             expansion_used.append(exp_query)
