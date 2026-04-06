@@ -102,3 +102,37 @@
 
 ---
 
+## Batch 1: camping 66 (dept 66)
+
+**Batch ID:** CAMPING_66_W417_BATCH_001
+**Status:** completed
+**Duration:** 14.6 min
+**Entities:** 50/50 scraped, 50 qualified
+
+
+### Data Quality (50 entities)
+| Metric | Count | Rate |
+|--------|-------|------|
+| Phone | 94 | 188% |
+| Email | 25 | 50% |
+| Website | 95 | 190% |
+| SIREN matched | 34 | 68% |
+| Officers found | 24 | 48% |
+
+### SIREN Match Methods
+- siren_website: 23
+- enseigne: 4
+- fuzzy_name: 4
+- address: 2
+- enseigne_weak: 1
+
+### Per-Query Breakdown
+- **camping 66**: 37 new / 0 cards / 600.0s
+- **camping Pyrenees-Orientales**: 13 new / 30 cards / 266.7s [expansion]
+
+### Running Totals
+- **Total entities in workspace:** 50 / 1000
+- **Query memory rows:** 2
+
+---
+
