@@ -101,6 +101,11 @@
     --sidebar-width: 240px;
     --sidebar-collapsed: 72px;
     --header-height: 56px;
+
+    /* Supplemental tokens (used by components) */
+    --bg-tertiary: #162D4A;
+    --radius-md: 12px;
+    --bg-card: var(--bg-elevated);
 }
 
 /* ── Reset & Base ──────────────────────────────────────────────── */
@@ -167,6 +172,7 @@ a:hover { color: var(--accent); }
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     overflow-x: hidden;
     white-space: nowrap;
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
 .sidebar-brand {
@@ -231,6 +237,16 @@ a:hover { color: var(--accent); }
     text-transform: uppercase;
     letter-spacing: 0.08em;
     padding: var(--space-md) var(--space-lg) var(--space-sm);
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-subtle);
+    margin-left: var(--space-sm);
 }
 
 .nav-item {
@@ -258,11 +274,15 @@ a:hover { color: var(--accent); }
 .nav-item:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
+    transform: translateX(2px);
+    transition: all var(--transition-fast);
 }
 
 .nav-item.active {
     background: var(--accent-subtle);
     color: var(--accent-hover);
+    border-left: 3px solid var(--accent);
+    padding-left: calc(var(--space-sm) - 3px);
 }
 
 .nav-item-icon {
@@ -316,6 +336,28 @@ a:hover { color: var(--accent); }
     cursor: pointer;
     text-decoration: underline;
     padding: 0 calc(var(--space-lg) + var(--space-sm));
+}
+
+.sidebar-lang-toggle {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    color: var(--text-secondary);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 700;
+    cursor: pointer;
+    z-index: 9999;
+    position: relative;
+}
+
+.sidebar-legal-link {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-decoration: none;
+    opacity: 0.5;
+    display: block;
+    margin-top: 4px;
 }
 
 /* ── Sidebar Toggle Button (bottom of footer) ────────────────── */
@@ -460,7 +502,7 @@ a:hover { color: var(--accent); }
 .header {
     height: var(--header-height);
     background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
     display: flex;
     align-items: center;
     padding: 0 var(--space-xl);
@@ -531,8 +573,8 @@ a:hover { color: var(--accent); }
 
 .page-title {
     font-size: var(--font-2xl);
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-weight: 800;
+    letter-spacing: -0.03em;
     margin-bottom: var(--space-xs);
 }
 

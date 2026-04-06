@@ -9,6 +9,7 @@
     border-radius: var(--radius);
     padding: var(--space-xl);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .card:hover {
@@ -44,8 +45,9 @@
 
 .stat-card-value {
     font-size: var(--font-2xl);
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .stat-card-label {
@@ -180,6 +182,7 @@
     stroke-width: 4;
     stroke-linecap: round;
     transition: stroke-dashoffset var(--transition-slow);
+    filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.3));
 }
 
 .gauge-value {
@@ -220,6 +223,7 @@
 .job-card:hover {
     border-color: var(--accent);
     box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
 }
 
 .job-card-info {
@@ -436,7 +440,12 @@
     font-family: var(--font-family);
     font-size: var(--font-base);
     outline: none;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    transition: all var(--transition-fast);
+}
+
+.form-input:hover,
+.form-select:hover {
+    border-color: var(--border-strong);
 }
 
 .form-input:focus,
@@ -536,6 +545,7 @@
     border-radius: var(--radius-full);
     letter-spacing: 0.02em;
     white-space: nowrap;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .badge-success {
@@ -588,6 +598,15 @@
     transition: all var(--transition-fast);
     white-space: nowrap;
     text-decoration: none;
+}
+
+.btn:active {
+    transform: scale(0.97);
+}
+
+.btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 .btn-primary {
@@ -647,6 +666,7 @@
 .company-card:hover {
     border-color: var(--accent);
     box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
 }
 
 .card-remove-btn {
@@ -865,6 +885,7 @@
     height: 100%;
     border-radius: var(--radius-full);
     transition: width var(--transition-slow);
+    background-image: linear-gradient(90deg, transparent, rgba(255,255,255,0.1));
 }
 
 .completude-bar-fill.high {
@@ -1023,6 +1044,7 @@
     border-radius: var(--radius-full);
     transition: width var(--transition-slow);
     position: relative;
+    background-image: linear-gradient(90deg, transparent, rgba(255,255,255,0.1));
 }
 
 .progress-bar-fill.animated::after {
@@ -1155,6 +1177,10 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
     border-bottom: 1px solid var(--border-default);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-elevated);
 }
 
 .data-table td {
@@ -1166,6 +1192,18 @@
 
 .data-table tr:hover td {
     background: var(--bg-hover);
+}
+
+/* Zebra striping */
+.data-table tbody tr:nth-child(even),
+.contacts-row:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* Left accent on hover */
+.data-table tbody tr:hover,
+.contacts-row:hover {
+    border-left: 3px solid var(--accent);
 }
 
 /* ── Monitor / Activity Log ────────────────────────────────────── */
@@ -1671,7 +1709,11 @@
     background-repeat: no-repeat;
     background-position: right 12px center;
     cursor: pointer;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    transition: all var(--transition-fast);
+}
+
+.sort-select:hover {
+    border-color: var(--border-strong);
 }
 
 .sort-select:focus {
@@ -1718,8 +1760,9 @@
 
 .stat-card-glass .stat-card-value {
     font-size: var(--font-2xl);
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .stat-card-glass .stat-card-label {
@@ -1757,6 +1800,7 @@
     stroke-width: 6;
     stroke-linecap: round;
     transition: stroke-dashoffset var(--duration-counter) var(--ease-out-expo);
+    filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.3));
 }
 
 .progress-ring-text {
@@ -2036,9 +2080,11 @@
 
 .monitor-metric-value {
     font-size: var(--font-xl);
-    font-weight: 700;
+    font-weight: 800;
     color: var(--text-primary);
     line-height: 1.2;
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .monitor-metric-label {
@@ -2101,7 +2147,7 @@
 }
 
 .modal-content {
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-lg);
     padding: var(--space-2xl);
@@ -2231,6 +2277,7 @@
     background: var(--accent);
     border-radius: 4px;
     transition: width 0.5s ease;
+    background-image: linear-gradient(90deg, transparent, rgba(255,255,255,0.1));
 }
 
 .analysis-total-count {
@@ -2243,6 +2290,8 @@
     font-size: 2.5rem;
     font-weight: 800;
     color: var(--text-primary);
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .analysis-total-label {
@@ -2277,6 +2326,8 @@
     font-size: 2rem;
     font-weight: 800;
     color: var(--text-primary);
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .analysis-gap-highlight.critical .analysis-gap-number {
@@ -2477,6 +2528,8 @@
     font-size: 1.75rem;
     font-weight: 800;
     color: var(--text-primary);
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 
 .analysis-stat-label {
@@ -2597,6 +2650,10 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     border-bottom: 1px solid var(--border-subtle);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-elevated);
 }
 
 .analysis-table td {
@@ -3099,6 +3156,10 @@
     font-size: var(--font-xs);
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--bg-elevated);
 }
 
 .contacts-td {
@@ -3232,10 +3293,12 @@
 }
 .analytics-hero-number {
     font-size: 2.5rem;
-    font-weight: 700;
+    font-weight: 800;
     color: var(--text-primary);
     line-height: 1;
     margin-bottom: var(--space-xs);
+    letter-spacing: -0.03em;
+    text-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
 }
 .analytics-hero-label {
     font-size: var(--font-sm);
@@ -3266,4 +3329,21 @@
     color: var(--text-muted);
     min-width: 2rem;
     text-align: center;
+}
+
+/* ── Step 9: Typography — consistent uppercase label tracking ── */
+.data-table th,
+.detail-section-title,
+.contacts-th,
+.filter-label,
+.form-label {
+    letter-spacing: 0.08em;
+}
+
+/* ── Step 11: Tabs/view-toggle — bottom indicator for active ── */
+.view-toggle-btn.active {
+    background: transparent;
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
 }
