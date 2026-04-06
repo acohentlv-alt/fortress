@@ -31,6 +31,31 @@ def _source_priority_case(col_alias: str = "c") -> str:
     END"""
 
 
+def _phone_priority_case(col_alias: str = "c") -> str:
+    """Phone-specific source priority: Google Maps > website_crawl.
+
+    Google Maps phones are the business's publicly listed number.
+    Website crawl can pick up wrong numbers (tracking IDs, web agency footers).
+    """
+    return f"""CASE {col_alias}.source
+        WHEN 'manual_edit' THEN 0
+        WHEN 'upload' THEN 1
+        WHEN 'google_maps' THEN 2
+        WHEN 'google_cse' THEN 2
+        WHEN 'website_crawl' THEN 3
+        WHEN 'mentions_legales' THEN 3
+        WHEN 'recherche_entreprises' THEN 4
+        WHEN 'sirene' THEN 5
+        WHEN 'google_search' THEN 5
+        WHEN 'directory_search' THEN 5
+        WHEN 'pages_jaunes' THEN 5
+        WHEN 'inpi' THEN 5
+        WHEN 'annuaire_entreprises' THEN 5
+        WHEN 'synthesized' THEN 6
+        ELSE 99
+    END"""
+
+
 def _pick_best(field: str, priority_case: str | None = None, col_alias: str = "c") -> str:
     """Generate ARRAY_AGG expression to pick best non-null value for a field."""
     pcase = priority_case or _source_priority_case(col_alias)
@@ -54,6 +79,7 @@ def merged_contacts_cte(siren_subquery: str) -> str:
             merged_contacts AS (SELECT ... FROM contacts c WHERE c.siren IN (...) GROUP BY c.siren)
     """
     std = _source_priority_case()
+    phone_case = _phone_priority_case()
 
     addr_case = """CASE c.source
         WHEN 'manual_edit' THEN 0
@@ -66,7 +92,7 @@ def merged_contacts_cte(siren_subquery: str) -> str:
     return f"""merged_contacts AS (
     SELECT
         c.siren,
-        {_pick_best('phone')} AS phone,
+        {_pick_best('phone', priority_case=phone_case)} AS phone,
         {_pick_best('email')} AS email,
         {_pick_best('email_type')} AS email_type,
         {_pick_best('website')} AS website,

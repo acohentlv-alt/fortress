@@ -31,13 +31,13 @@ log = structlog.get_logger("fortress.matching.contacts")
 # Also: 0800 123 456, 3XXX short numbers (excluded — not useful)
 _PHONE_PATTERNS: list[re.Pattern[str]] = [
     # International with (0): +33 (0)4.68.68.19.33 — very common on French corporate sites
-    re.compile(r"\+33\s?\(0\)\s?[1-9](?:[\s.\-]?\d{2}){4}"),
+    re.compile(r"(?<![+\d])\+33\s?\(0\)\s?[1-9](?:[\s.\-]?\d{2}){4}(?!\d)"),
     # International: +33 X XX XX XX XX (with optional separators)
-    re.compile(r"\+33\s?[1-9](?:[\s.\-]?\d{2}){4}"),
+    re.compile(r"(?<![+\d])\+33\s?[1-9](?:[\s.\-]?\d{2}){4}(?!\d)"),
     # National: 0X XX XX XX XX (land + mobile)
-    re.compile(r"0[1-9](?:[\s.\-]?\d{2}){4}"),
+    re.compile(r"(?<!\d)0[1-9](?:[\s.\-]?\d{2}){4}(?!\d)"),
     # Free-phone: 0800 / 0806 / 0809 XXX XXX
-    re.compile(r"08(?:0[0-9]|[1-9]\d)[\s.\-]?\d{3}[\s.\-]?\d{3}"),
+    re.compile(r"(?<!\d)08(?:0[0-9]|[1-9]\d)[\s.\-]?\d{3}[\s.\-]?\d{3}(?!\d)"),
 ]
 
 _PHONE_NORMALISE_RE = re.compile(r"[\s.\-()]")  # also strip parentheses from +33(0) format

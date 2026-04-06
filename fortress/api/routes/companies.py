@@ -1396,15 +1396,32 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         "annuaire_entreprises": 5,
     }
 
+    _PHONE_SOURCE_PRIORITY: dict[str, int] = {
+        "manual_edit": 0,
+        "upload": 1,
+        "google_maps": 2,
+        "google_cse": 2,
+        "website_crawl": 3,
+        "mentions_legales": 3,
+        "recherche_entreprises": 4,
+        "sirene": 5,
+        "google_search": 5,
+        "directory_search": 5,
+        "pages_jaunes": 5,
+        "inpi": 5,
+        "synthesized": 6,
+        "annuaire_entreprises": 5,
+    }
+
     # Sort contacts by source priority (best first)
     sorted_contacts = sorted(
         contacts,
         key=lambda c: _SOURCE_PRIORITY.get(c.get("source", ""), 99),
     )
 
-    # Fields to merge with standard priority logic
+    # Fields to merge with standard priority logic (phone handled separately below)
     MERGE_FIELDS = (
-        "phone", "email", "website",
+        "email", "website",
         "social_linkedin", "social_facebook", "social_twitter",
         "social_instagram", "social_tiktok", "social_whatsapp", "social_youtube",
         "maps_url",
@@ -1452,6 +1469,24 @@ def _merge_contacts(contacts: list[dict]) -> dict:
             merged["rating"] = c["rating"]
             merged["review_count"] = c.get("review_count")
             merged["rating_source"] = src
+
+    # ── Special rule: phone — Google Maps > website_crawl ───────────────
+    # Google Maps phones are the business's publicly listed number.
+    # Website crawl can pick up wrong numbers (tracking IDs, web agency footers).
+    phone_sorted = sorted(
+        contacts,
+        key=lambda c: _PHONE_SOURCE_PRIORITY.get(c.get("source", ""), 99),
+    )
+    for c in phone_sorted:
+        src = c.get("source")
+        if c.get("phone"):
+            if merged["phone"] is None:
+                merged["phone"] = c["phone"]
+                merged["phone_source"] = src
+            else:
+                if merged.get("phone_alt") is None and c["phone"] != merged["phone"]:
+                    cur_src = merged.get("phone_source") or "?"
+                    merged["phone_alt"] = {"value": c["phone"], "source": src, "current_source": cur_src}
 
     # ── Special rule: address — Maps always wins (unless manual_edit) ──
     # SIRENE address often differs from real business location.
