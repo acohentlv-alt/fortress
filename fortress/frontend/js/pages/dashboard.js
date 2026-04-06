@@ -604,6 +604,7 @@ function _renderAllData(rootContainer, q = '', department = '', naf_code = '', o
     const view = document.getElementById('dashboard-view');
     const PAGE_SIZE = 50;
     const _selected = new Set();
+    const isAdminUser = getCachedUser()?.role === 'admin';
 
     view.innerHTML = `
         <div class="search-filters-row" style="align-items:center">
@@ -685,27 +686,30 @@ function _renderAllData(rootContainer, q = '', department = '', naf_code = '', o
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase">🌐 Site</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">${t('dashboard.colDept')}</th>
                             <th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">${t('dashboard.colSearch')}</th>
+                            ${isAdminUser ? `<th style="text-align:left; padding:var(--space-sm) var(--space-md); border-bottom:2px solid var(--border-default); color:var(--text-muted); font-weight:700; font-size:var(--font-xs); text-transform:uppercase; white-space:nowrap">Espaces</th>` : ''}
                         </tr>
                     </thead>
                     <tbody>
                         ${rows.map(c => {
                             let hostname = '';
                             try { hostname = c.website ? new URL(c.website).hostname : ''; } catch { hostname = c.website || ''; }
+                            const navSiren = c.representative_siren || c.siren;
                             return `
-                            <tr style="cursor:pointer; transition:background 0.15s${_selected.has(c.siren) ? '; background:var(--bg-hover)' : ''}"
+                            <tr style="cursor:pointer; transition:background 0.15s${_selected.has(navSiren) ? '; background:var(--bg-hover)' : ''}"
                                 onmouseover="this.style.background='var(--bg-hover)'"
-                                onmouseout="this.style.background='${_selected.has(c.siren) ? 'var(--bg-hover)' : ''}'"
-                                data-siren="${c.siren}">
+                                onmouseout="this.style.background='${_selected.has(navSiren) ? 'var(--bg-hover)' : ''}'"
+                                data-siren="${navSiren}">
                                 <td style="text-align:center; padding:var(--space-sm); border-bottom:1px solid var(--border-subtle)" onclick="event.stopPropagation()">
-                                    <input type="checkbox" class="alldata-cb" data-siren="${c.siren}" ${_selected.has(c.siren) ? 'checked' : ''} style="cursor:pointer">
+                                    <input type="checkbox" class="alldata-cb" data-siren="${navSiren}" ${_selected.has(navSiren) ? 'checked' : ''} style="cursor:pointer">
                                 </td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap" onclick="window.location.hash='#/company/${c.siren}'">${escapeHtml(c.siren)}</td>
-                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" onclick="window.location.hash='#/company/${c.siren}'">${escapeHtml(c.denomination || '—')}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap" onclick="window.location.hash='#/company/${navSiren}'">${escapeHtml(c.siren)}</td>
+                                <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-primary); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" onclick="window.location.hash='#/company/${navSiren}'">${escapeHtml(c.denomination || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.phone ? 'var(--success)' : 'var(--text-muted)'}; white-space:nowrap">${c.phone ? escapeHtml(c.phone) : '—'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:${c.email ? 'var(--success)' : 'var(--text-muted)'}; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.email ? escapeHtml(c.email) : '—'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" rel="noopener" style="color:var(--accent)" onclick="event.stopPropagation()">${escapeHtml(hostname)}</a>` : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); text-align:center">${escapeHtml(c.departement || '—')}</td>
                                 <td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-muted); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${escapeHtml(c.batch_name || '—')}</td>
+                                ${isAdminUser ? `<td style="padding:var(--space-sm) var(--space-md); border-bottom:1px solid var(--border-subtle); font-size:var(--font-xs); color:var(--text-secondary); white-space:nowrap">${escapeHtml((c.workspaces || []).join(', ') || '—')}</td>` : ''}
                             </tr>
                         `}).join('')}
                     </tbody>

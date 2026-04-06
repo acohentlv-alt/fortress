@@ -980,42 +980,131 @@ async def get_all_data(
 
     where_clause = (" AND ".join(where_parts)) if where_parts else "TRUE"
 
-    # Count total enriched companies matching filters
-    count_params = tuple(params)
-    total_row = await fetch_one(f"""
-        SELECT COUNT(DISTINCT co.siren) AS total
-        FROM companies co
-        WHERE EXISTS (SELECT 1 FROM contacts ct WHERE ct.siren = co.siren)
-          AND {where_clause}
-    """, count_params)
-    total = (total_row or {}).get("total", 0) or 0
+    is_admin = user and user.is_admin
 
-    all_params = tuple(params + [limit, offset])
-    # Performance note: merged_contacts CTE uses ARRAY_AGG with source priority
-    # to pick the best value per field across all contact rows. The subquery
-    # scopes it to enriched companies only (those with at least one contact).
-    rows = await fetch_all(f"""
-        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM contacts')}
-        SELECT
-            co.siren, co.denomination, co.naf_code, co.naf_libelle,
-            co.forme_juridique, co.ville, co.departement,
-            ct.phone, ct.email, ct.website,
-            qt.batch_name
-        FROM companies co
-        LEFT JOIN merged_contacts ct ON ct.siren = co.siren
-        LEFT JOIN LATERAL (
-            SELECT batch_name FROM batch_tags bt
-            WHERE bt.siren = co.siren
-            ORDER BY bt.tagged_at DESC
-            LIMIT 1
-        ) qt ON true
-        WHERE EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.siren = co.siren)
-          AND {where_clause}
-        ORDER BY co.denomination
-        LIMIT %s OFFSET %s
-    """, all_params)
+    if is_admin:
+        # Admin path: group by linked_siren to deduplicate companies across workspaces
+        count_params = tuple(params)
+        total_row = await fetch_one(f"""
+            SELECT COUNT(*) AS total FROM (
+                SELECT COALESCE(co.linked_siren, co.siren) AS group_key
+                FROM companies co
+                WHERE EXISTS (SELECT 1 FROM contacts ct WHERE ct.siren = co.siren)
+                  AND {where_clause}
+                GROUP BY COALESCE(co.linked_siren, co.siren)
+            ) sub
+        """, count_params)
+        total = (total_row or {}).get("total", 0) or 0
 
-    return {"results": rows, "total": total, "offset": offset, "limit": limit}
+        all_params = tuple(params + [limit, offset])
+        rows = await fetch_all(f"""
+            WITH {merged_contacts_cte('SELECT DISTINCT siren FROM contacts')},
+            grouped AS (
+                SELECT
+                    COALESCE(co.linked_siren, co.siren) AS group_key,
+                    MIN(co.siren) AS representative_siren,
+                    (ARRAY_AGG(co.denomination ORDER BY
+                        CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.denomination
+                    ) FILTER (WHERE co.denomination IS NOT NULL))[1] AS denomination,
+                    (ARRAY_AGG(co.naf_code ORDER BY CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.siren) FILTER (WHERE co.naf_code IS NOT NULL))[1] AS naf_code,
+                    (ARRAY_AGG(co.naf_libelle ORDER BY CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.siren) FILTER (WHERE co.naf_libelle IS NOT NULL))[1] AS naf_libelle,
+                    (ARRAY_AGG(co.forme_juridique ORDER BY CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.siren) FILTER (WHERE co.forme_juridique IS NOT NULL))[1] AS forme_juridique,
+                    (ARRAY_AGG(co.ville ORDER BY CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.siren) FILTER (WHERE co.ville IS NOT NULL))[1] AS ville,
+                    (ARRAY_AGG(co.departement ORDER BY CASE WHEN co.siren LIKE 'MAPS%%' THEN 1 ELSE 0 END, co.siren) FILTER (WHERE co.departement IS NOT NULL))[1] AS departement,
+                    ARRAY_AGG(DISTINCT co.siren) AS member_sirens
+                FROM companies co
+                WHERE EXISTS (SELECT 1 FROM contacts ct WHERE ct.siren = co.siren)
+                  AND {where_clause}
+                GROUP BY COALESCE(co.linked_siren, co.siren)
+                ORDER BY denomination
+                LIMIT %s OFFSET %s
+            )
+            SELECT
+                g.group_key AS siren,
+                g.representative_siren,
+                g.denomination,
+                g.naf_code, g.naf_libelle, g.forme_juridique, g.ville, g.departement,
+                COALESCE(
+                    (SELECT mc.phone FROM merged_contacts mc WHERE mc.siren = ANY(g.member_sirens) AND mc.phone IS NOT NULL LIMIT 1),
+                    NULL
+                ) AS phone,
+                COALESCE(
+                    (SELECT mc.email FROM merged_contacts mc WHERE mc.siren = ANY(g.member_sirens) AND mc.email IS NOT NULL LIMIT 1),
+                    NULL
+                ) AS email,
+                COALESCE(
+                    (SELECT mc.website FROM merged_contacts mc WHERE mc.siren = ANY(g.member_sirens) AND mc.website IS NOT NULL LIMIT 1),
+                    NULL
+                ) AS website,
+                (SELECT bt.batch_name FROM batch_tags bt WHERE bt.siren = ANY(g.member_sirens) ORDER BY bt.tagged_at DESC LIMIT 1) AS batch_name,
+                COALESCE(
+                    (SELECT ARRAY_AGG(DISTINCT w.name ORDER BY w.name)
+                     FROM batch_tags bt2
+                     JOIN workspaces w ON w.id = bt2.workspace_id
+                     WHERE bt2.siren = ANY(g.member_sirens) AND bt2.workspace_id IS NOT NULL),
+                    ARRAY[]::text[]
+                ) AS workspaces
+            FROM grouped g
+        """, all_params)
+
+        results = [
+            {
+                "siren": r["siren"],
+                "representative_siren": r["representative_siren"],
+                "denomination": r["denomination"],
+                "naf_code": r["naf_code"],
+                "naf_libelle": r["naf_libelle"],
+                "forme_juridique": r["forme_juridique"],
+                "ville": r["ville"],
+                "departement": r["departement"],
+                "phone": r["phone"],
+                "email": r["email"],
+                "website": r["website"],
+                "batch_name": r["batch_name"],
+                "workspaces": r["workspaces"] or [],
+            }
+            for r in rows
+        ]
+
+    else:
+        # Non-admin path: stays exactly as-is, scoped to workspace
+        count_params = tuple(params)
+        total_row = await fetch_one(f"""
+            SELECT COUNT(DISTINCT co.siren) AS total
+            FROM companies co
+            WHERE EXISTS (SELECT 1 FROM contacts ct WHERE ct.siren = co.siren)
+              AND {where_clause}
+        """, count_params)
+        total = (total_row or {}).get("total", 0) or 0
+
+        all_params = tuple(params + [limit, offset])
+        # Performance note: merged_contacts CTE uses ARRAY_AGG with source priority
+        # to pick the best value per field across all contact rows. The subquery
+        # scopes it to enriched companies only (those with at least one contact).
+        rows = await fetch_all(f"""
+            WITH {merged_contacts_cte('SELECT DISTINCT siren FROM contacts')}
+            SELECT
+                co.siren, co.denomination, co.naf_code, co.naf_libelle,
+                co.forme_juridique, co.ville, co.departement,
+                ct.phone, ct.email, ct.website,
+                qt.batch_name
+            FROM companies co
+            LEFT JOIN merged_contacts ct ON ct.siren = co.siren
+            LEFT JOIN LATERAL (
+                SELECT batch_name FROM batch_tags bt
+                WHERE bt.siren = co.siren
+                ORDER BY bt.tagged_at DESC
+                LIMIT 1
+            ) qt ON true
+            WHERE EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.siren = co.siren)
+              AND {where_clause}
+            ORDER BY co.denomination
+            LIMIT %s OFFSET %s
+        """, all_params)
+
+        results = list(rows)
+
+    return {"results": results, "total": total, "offset": offset, "limit": limit}
 
 
 # ---------------------------------------------------------------------------
