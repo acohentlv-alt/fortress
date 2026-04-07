@@ -814,6 +814,39 @@ async def _update_job_safe(
         await _update_job(new_conn, batch_id, **fields)
 
 
+async def _heartbeat_loop(batch_id: str) -> None:
+    """Touch updated_at every 60s so the watchdog knows we're alive."""
+    conn = None
+    try:
+        conn = await psycopg.AsyncConnection.connect(
+            settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
+        )
+        while True:
+            try:
+                await conn.execute(
+                    "UPDATE batch_data SET updated_at = NOW() WHERE batch_id = %s",
+                    (batch_id,),
+                )
+            except Exception:
+                # Non-fatal — try to reconnect
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+                conn = await psycopg.AsyncConnection.connect(
+                    settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
+                )
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if conn is not None:
+            try:
+                await conn.close()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
@@ -881,8 +914,10 @@ async def run(batch_id: str) -> None:
         )
         conn_holder: list[psycopg.AsyncConnection] = [status_conn]
 
+        heartbeat_task = None
         try:
             await _update_job_safe(conn_holder, batch_id, status="in_progress")
+            heartbeat_task = asyncio.create_task(_heartbeat_loop(batch_id))
 
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
@@ -2156,6 +2191,13 @@ async def run(batch_id: str) -> None:
             raise
 
         finally:
+            # Stop heartbeat
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             # Release Maps advisory lock
             if lock_conn is not None:
                 try:
