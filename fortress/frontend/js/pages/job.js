@@ -54,11 +54,13 @@ export async function renderJob(container, batchId) {
         const red = (s.triage && s.triage.red) || 0;
         const total = black + green + yellow + red;
 
+        const nonQualified = total - qual;
         const breakdownLines = [];
-        if (green > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#00cec9">🟢</span> <span>${green} déjà enrichie${green > 1 ? 's' : ''} — ignorée${green > 1 ? 's' : ''} (cache Maps complet)</span></div>`);
-        if (black > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span>⚫</span> <span>${black} en liste noire ou sans nom</span></div>`);
-        if (red > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#e74c3c">🔴</span> <span>${red} nouvelle${red > 1 ? 's' : ''} entreprise${red > 1 ? 's' : ''} — traitement complet</span></div>`);
+        if (red > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#10b981">🟢</span> <span>${red} nouvelle${red > 1 ? 's' : ''} entreprise${red > 1 ? 's' : ''} — traitement complet</span></div>`);
         if (yellow > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#fdcb6e">🟡</span> <span>${yellow} enrichissement${yellow > 1 ? 's' : ''} partiel${yellow > 1 ? 's' : ''}</span></div>`);
+        if (green > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#00cec9">♻️</span> <span>${green} déjà enrichie${green > 1 ? 's' : ''} — ignorée${green > 1 ? 's' : ''}</span></div>`);
+        if (nonQualified > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:var(--text-muted)">⚪</span> <span>${nonQualified} sans téléphone ni site web</span></div>`);
+        if (black > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span>⚫</span> <span>${black} en liste noire ou sans nom</span></div>`);
         if ((s.failed || 0) > 0) breakdownLines.push(`<div style="display:flex;align-items:center;gap:8px;padding:5px 0"><span style="color:#e74c3c">❌</span> <span>${s.failed} échec${s.failed > 1 ? 's' : ''}</span></div>`);
 
         const shortfallHtml = s.shortfall_reason
