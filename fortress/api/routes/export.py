@@ -21,6 +21,26 @@ from fortress.api.sql_helpers import merged_contacts_cte
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
+# Map SIRENE numeric codes to human-readable legal form labels
+_FORME_JURIDIQUE_LABELS = {
+    '1000': 'Entrepreneur individuel', '5306': 'EURL', '5307': 'SA',
+    '5370': 'SAS', '5498': 'EURL', '5499': 'SARL',
+    '5505': 'SA', '5510': 'SAS', '5515': 'SNC',
+    '5520': 'SCS', '5522': 'SCA', '5525': 'SARL unipersonnelle',
+    '5530': 'SELASU', '5532': 'SELAS', '5560': 'SCI', '5599': 'SA',
+    '5710': 'SAS', '5720': 'SASU', '9220': 'Association loi 1901',
+    '9221': 'Association déclarée', '6316': 'SCOP', '6317': 'SCOP',
+}
+
+
+def _fmt(col_key: str, value) -> str:
+    """Format a cell value for export. Converts forme_juridique codes to labels."""
+    if not value:
+        return ""
+    if col_key == "forme_juridique":
+        return _FORME_JURIDIQUE_LABELS.get(str(value), str(value))
+    return str(value)
+
 _CSV_COLUMNS = [
     ("Nom", "denomination"),
     ("SIREN", "siren"),
@@ -141,7 +161,7 @@ async def export_master_csv(request: Request):
     writer.writerow([col[0] for col in _CSV_COLUMNS])
     for row in rows:
         writer.writerow([
-            str(row.get(col[1]) or "") for col in _CSV_COLUMNS
+            _fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS
         ])
 
     content = buf.getvalue().encode("utf-8-sig")
@@ -213,7 +233,7 @@ async def export_csv(batch_id: str, request: Request):
     writer.writerow([col[0] for col in _CSV_COLUMNS])
     for row in rows:
         writer.writerow([
-            str(row.get(col[1]) or "") for col in _CSV_COLUMNS
+            _fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS
         ])
 
     content = buf.getvalue().encode("utf-8-sig")  # BOM for Excel
@@ -350,7 +370,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
     writer = csv.writer(buf, delimiter=";")
     writer.writerow([col[0] for col in _CSV_COLUMNS])
     for row in (rows or []):
-        writer.writerow([str(row.get(col[1]) or "") for col in _CSV_COLUMNS])
+        writer.writerow([_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
 
     content = buf.getvalue().encode("utf-8-sig")
     return StreamingResponse(
@@ -387,7 +407,7 @@ def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
             val = row.get(key)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
-            ws.cell(row=row_idx, column=col_idx, value=val or "")
+            ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
 
     # Auto-width (approximate)
     for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
