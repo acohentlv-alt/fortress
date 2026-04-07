@@ -824,6 +824,15 @@ async def run(batch_id: str) -> None:
 
     log.info("discovery.start", batch_id=batch_id)
 
+    # Read workspace_id for per-workspace locking
+    _ws_conn = await psycopg.AsyncConnection.connect(settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS)
+    try:
+        _ws_cur = await _ws_conn.execute("SELECT workspace_id FROM batch_data WHERE batch_id = %s", (batch_id,))
+        _ws_row = await _ws_cur.fetchone()
+        _lock_ws_id = _ws_row[0] if _ws_row and _ws_row[0] is not None else 0
+    finally:
+        await _ws_conn.close()
+
     # ── Start Google Maps scraper ─────────────────────────────────────
     maps_scraper = None
     browser_lock_conn = None
@@ -832,7 +841,7 @@ async def run(batch_id: str) -> None:
         browser_lock_conn = await psycopg.AsyncConnection.connect(
             settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
         )
-        await browser_lock_conn.execute("SELECT pg_advisory_lock(42424243)")
+        await browser_lock_conn.execute("SELECT pg_advisory_lock(42424243, %s)", (_lock_ws_id,))
         log.info("discovery.browser_lock_acquired", batch_id=batch_id)
 
         from fortress.scraping.maps import PlaywrightMapsScraper
@@ -844,7 +853,7 @@ async def run(batch_id: str) -> None:
         # Release browser lock if it was acquired
         if browser_lock_conn is not None:
             try:
-                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243)")
+                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243, %s)", (_lock_ws_id,))
             except Exception:
                 pass
             try:
@@ -1614,7 +1623,7 @@ async def run(batch_id: str) -> None:
                     lock_conn = await psycopg.AsyncConnection.connect(
                         settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS,
                     )
-                    await lock_conn.execute("SELECT pg_advisory_lock(42424242)")
+                    await lock_conn.execute("SELECT pg_advisory_lock(42424242, %s)", (_lock_ws_id,))
                     log.info("discovery.advisory_lock_acquired", batch_id=batch_id)
                 except Exception as lock_exc:
                     log.error("discovery.advisory_lock_failed", error=str(lock_exc))
@@ -2150,7 +2159,7 @@ async def run(batch_id: str) -> None:
             # Release Maps advisory lock
             if lock_conn is not None:
                 try:
-                    await lock_conn.execute("SELECT pg_advisory_unlock(42424242)")
+                    await lock_conn.execute("SELECT pg_advisory_unlock(42424242, %s)", (_lock_ws_id,))
                     log.info("discovery.advisory_lock_released", batch_id=batch_id)
                 except Exception:
                     pass
@@ -2177,7 +2186,7 @@ async def run(batch_id: str) -> None:
         # Release browser lock
         if browser_lock_conn is not None:
             try:
-                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243)")
+                await browser_lock_conn.execute("SELECT pg_advisory_unlock(42424243, %s)", (_lock_ws_id,))
                 log.info("discovery.browser_lock_released", batch_id=batch_id)
             except Exception:
                 pass

@@ -139,6 +139,31 @@ async def run_batch(body: BatchRunRequest, request: Request):
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id
 
+            # ── Same-workspace batch guard ─────────────────────────────────────
+            if workspace_id is not None:
+                guard_cur = await conn.execute(
+                    """SELECT 1 FROM batch_data
+                       WHERE workspace_id = %s
+                       AND status IN ('queued', 'in_progress')
+                       AND updated_at > NOW() - INTERVAL '15 minutes'
+                       LIMIT 1""",
+                    (workspace_id,),
+                )
+            else:
+                guard_cur = await conn.execute(
+                    """SELECT 1 FROM batch_data
+                       WHERE workspace_id IS NULL
+                       AND status IN ('queued', 'in_progress')
+                       AND updated_at > NOW() - INTERVAL '15 minutes'
+                       LIMIT 1""",
+                )
+            blocking = await guard_cur.fetchone()
+            if blocking:
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine."}
+                )
+
             await conn.execute(
                 """INSERT INTO batch_data
                    (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id)
