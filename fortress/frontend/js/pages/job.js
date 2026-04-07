@@ -389,18 +389,26 @@ export async function renderJob(container, batchId) {
     const rerunBtn = document.getElementById('btn-rerun');
     if (rerunBtn) {
         rerunBtn.addEventListener('click', () => {
-            // Pre-fill new batch form from original job params
-            const params = new URLSearchParams();
-            if (job.filters_json) {
-                const f = typeof job.filters_json === 'string' ? JSON.parse(job.filters_json) : job.filters_json;
-                if (f.sector) params.set('sector', f.sector);
-                if (f.department) params.set('department', f.department);
-                if (f.size) params.set('size', f.size);
-                if (f.mode) params.set('mode', f.mode);
-                if (f.naf_code) params.set('naf_code', f.naf_code);
-                if (f.city) params.set('city', f.city);
+            // Pre-fill new batch form using search_queries (current format)
+            const queries = job.search_queries || [];
+            const parsedQueries = typeof queries === 'string' ? JSON.parse(queries) : queries;
+            if (parsedQueries.length > 0) {
+                sessionStorage.setItem('fortress_expansion_prefill', JSON.stringify({
+                    queries: parsedQueries,
+                    size: job.batch_size || 20
+                }));
+                window.location.hash = '#/new-batch';
+            } else {
+                // Fallback to old filters_json format
+                const params = new URLSearchParams();
+                if (job.filters_json) {
+                    const f = typeof job.filters_json === 'string' ? JSON.parse(job.filters_json) : job.filters_json;
+                    if (f.sector) params.set('sector', f.sector);
+                    if (f.department) params.set('department', f.department);
+                    if (f.size) params.set('size', f.size);
+                }
+                window.location.hash = `#/new-batch?${params.toString()}`;
             }
-            window.location.hash = `#/new-batch?${params.toString()}`;
         });
     }
 

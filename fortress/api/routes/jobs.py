@@ -319,7 +319,7 @@ async def get_job(batch_id: str, request: Request):
             sj.total_companies, sj.companies_scraped, sj.companies_failed,
             sj.triage_black, COALESCE(sj.triage_blue, 0) AS triage_blue, sj.triage_green, sj.triage_yellow, sj.triage_red,
             sj.wave_current, sj.wave_total,
-            sj.batch_number, sj.batch_offset, sj.filters_json,
+            sj.batch_number, sj.batch_offset, sj.filters_json, sj.search_queries,
             sj.created_at, sj.updated_at,
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             COALESCE(sj.replaced_count, 0) AS replaced_count,
