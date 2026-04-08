@@ -312,8 +312,12 @@ async def resume_job(batch_id: str, request: Request):
     if not user or user.role not in ('admin', 'head'):
         return JSONResponse(status_code=403, content={"error": "Accès refusé"})
 
+    # Admin can resume any workspace's batch (per CLAUDE.md: "admin sees all
+    # workspaces, nothing restricted"). Head restricted to their own workspace.
+    # The 15-min lock guard below still uses the batch's actual workspace_id,
+    # so cross-workspace resume can't bypass concurrency protection.
     if user.is_admin:
-        ws_scope = "AND workspace_id IS NULL"
+        ws_scope = ""
         ws_params: tuple = ()
     else:
         ws_scope = "AND workspace_id = %s"
