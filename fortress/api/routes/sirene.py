@@ -119,26 +119,41 @@ async def search_sirene(
 
             # ── Fetch page (LIMIT+1 to detect more) ──────────────
             fetch_limit = limit + 1
-            if use_similarity_order:
-                order_clause = "ORDER BY similarity(denomination, %s) DESC"
-                data_params = list(params) + [clean_q, fetch_limit, offset]
-            elif not clean_q and has_filters:
-                # Filter-only (no text): no explicit sort — use natural index order.
-                # Sorting by name or SIREN forces a costly sort on large result sets (e.g. Paris).
-                order_clause = ""
-                data_params = list(params) + [fetch_limit, offset]
-            else:
-                order_clause = "ORDER BY denomination"
-                data_params = list(params) + [fetch_limit, offset]
-
             async with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                await cur.execute(f"""
-                    SELECT {_SELECT_COLS}
-                    FROM companies
-                    WHERE {where_clause}
-                    {order_clause}
-                    LIMIT %s OFFSET %s
-                """, tuple(data_params))
+                if use_similarity_order:
+                    # CTE MATERIALIZED pattern: cap candidates FIRST, then sort.
+                    # For common substrings like "BAR" (132K matches), sorting all
+                    # matches takes 18s. Sorting only the first 1000 takes 200ms.
+                    # Pagination beyond offset 1000 is unrealistic — users should
+                    # refine their query.
+                    candidate_cap = max(1000, offset + fetch_limit)
+                    data_params = list(params) + [candidate_cap, clean_q, fetch_limit, offset]
+                    await cur.execute(f"""
+                        WITH candidates AS MATERIALIZED (
+                            SELECT {_SELECT_COLS}
+                            FROM companies
+                            WHERE {where_clause}
+                            LIMIT %s
+                        )
+                        SELECT * FROM candidates
+                        ORDER BY similarity(denomination, %s) DESC
+                        LIMIT %s OFFSET %s
+                    """, tuple(data_params))
+                else:
+                    if not clean_q and has_filters:
+                        # Filter-only (no text): no explicit sort — use natural index order.
+                        # Sorting by name or SIREN forces a costly sort on large result sets (e.g. Paris).
+                        order_clause = ""
+                    else:
+                        order_clause = "ORDER BY denomination"
+                    data_params = list(params) + [fetch_limit, offset]
+                    await cur.execute(f"""
+                        SELECT {_SELECT_COLS}
+                        FROM companies
+                        WHERE {where_clause}
+                        {order_clause}
+                        LIMIT %s OFFSET %s
+                    """, tuple(data_params))
                 results = await cur.fetchall()
 
             has_more = len(results) > limit
