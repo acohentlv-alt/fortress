@@ -120,12 +120,12 @@ export async function renderJob(container, batchId) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-sm)">
-                <a href="${getExportUrl(batchId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
-                <a href="${getExportUrl(batchId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
-                <a href="${getExportUrl(batchId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
+                <div style="position:relative">
+                    <button id="btn-download-dropdown" class="btn btn-primary" title="${t('job.download')}">${t('job.download')}</button>
+                </div>
                 ${job.status === 'interrupted' ? `<button id="btn-resume" class="btn btn-primary" title="${t('job.resume')}">${t('job.resume')}</button>` : ''}
-                ${(job.status === 'completed' || job.status === 'failed' || job.status === 'interrupted' || job.status === 'cancelled') ? `<button id="btn-rerun" class="btn btn-secondary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
-                <button id="btn-delete-job" class="btn btn-secondary" title="${t('job.delete')}" style="color:var(--danger)">🗑️</button>
+                ${(job.status === 'completed' || job.status === 'failed' || job.status === 'interrupted' || job.status === 'cancelled') ? `<button id="btn-rerun" class="btn btn-primary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
+                <button id="btn-delete-job" class="btn btn-danger" title="${t('job.delete')}">🗑️</button>
                 ${job.status === 'in_progress' ?
             `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">${t('job.liveMonitor')}</a>` : ''}
             </div>
@@ -378,6 +378,27 @@ export async function renderJob(container, batchId) {
                     }
                 },
             });
+        });
+    }
+
+    // Download dropdown (CSV / XLSX / JSONL)
+    const downloadBtn = document.getElementById('btn-download-dropdown');
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            let dd = document.getElementById('download-dropdown');
+            if (dd) { dd.remove(); return; }
+            dd = document.createElement('div');
+            dd.id = 'download-dropdown';
+            dd.style.cssText = 'position:absolute; top:100%; left:0; margin-top:var(--space-xs); background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.3); z-index:50; min-width:160px; overflow:hidden;';
+            dd.innerHTML = `
+                <a href="${getExportUrl(batchId, 'csv')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📥 CSV</a>
+                <a href="${getExportUrl(batchId, 'xlsx')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📗 XLSX</a>
+                <a href="${getExportUrl(batchId, 'jsonl')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📄 JSONL</a>
+            `;
+            downloadBtn.parentElement.appendChild(dd);
+            const close = (e2) => { if (!dd.contains(e2.target) && e2.target !== downloadBtn) { dd.remove(); document.removeEventListener('click', close); } };
+            setTimeout(() => document.addEventListener('click', close), 0);
         });
     }
 
