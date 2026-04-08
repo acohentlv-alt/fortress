@@ -243,3 +243,39 @@
 
 ---
 
+## Batch 5: camping 33 (dept 33)
+
+**Batch ID:** CAMPING_33_W417_BATCH_002
+**Status:** completed
+**Duration:** 17.1 min
+**Entities:** 50/50 scraped, 50 qualified
+
+
+### Data Quality (49 entities)
+| Metric | Count | Rate |
+|--------|-------|------|
+| Phone | 94 | 191% |
+| Email | 30 | 61% |
+| Website | 94 | 191% |
+| SIREN matched | 28 | 57% |
+| Officers found | 18 | 36% |
+
+### SIREN Match Methods
+- siren_website: 17
+- address: 4
+- enseigne_weak: 3
+- enseigne: 2
+- fuzzy_name: 2
+
+### Per-Query Breakdown
+- **camping 33**: 33 new / 0 cards / 601.2s
+- **camping Gironde**: 16 new / 38 cards / 358.7s [expansion]
+- **camping Bordeaux**: 0 new / 1 cards / 18.5s [expansion]
+- **camping Mérignac**: 1 new / 1 cards / 15.0s [expansion]
+
+### Running Totals
+- **Total entities in workspace:** 323 / 1000
+- **Query memory rows:** 20
+
+---
+
