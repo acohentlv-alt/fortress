@@ -130,11 +130,6 @@ export async function renderJob(container, batchId) {
             </div>
         </div>
 
-        ${job.shortfall_reason ? `
-        <div style="display:flex; align-items:flex-start; gap:var(--space-md); padding:var(--space-md) var(--space-lg); background:rgba(99,179,237,0.08); border:1px solid rgba(99,179,237,0.3); border-radius:var(--radius-md); margin-bottom:var(--space-xl); font-size:var(--font-sm); color:var(--text-secondary)">
-            <span style="font-size:16px; flex-shrink:0">ℹ️</span>
-            <span>${escapeHtml(job.shortfall_reason)}</span>
-        </div>` : ''}
 
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
