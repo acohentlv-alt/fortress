@@ -429,26 +429,30 @@ export async function renderContacts(container) {
         showAddEntityModal({ onSuccess: () => doSearch() });
     });
 
-    // Export button
+    // Export button — uses filtered endpoint so the CSV matches what the user sees
     document.getElementById('contacts-export-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('contacts-export-btn');
         btn.disabled = true;
         btn.textContent = t('contacts.exportLoading');
         try {
-            const sirens = allResults.map(r => r.siren);
-            const resp = await fetch('/api/export/bulk/csv', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sirens }),
-                credentials: 'same-origin',
-            });
+            // Build URL with current filters — server returns ALL matching rows, not just loaded page
+            const params = new URLSearchParams();
+            if (currentQuery) params.set('q', currentQuery);
+            if (currentDepartment) params.set('department', currentDepartment);
+            if (currentNafCode) params.set('naf_code', currentNafCode);
+            const url = `/api/export/contacts/csv?${params.toString()}`;
+            const resp = await fetch(url, { credentials: 'same-origin' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();
-            const url = URL.createObjectURL(blob);
+            const blobUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = 'contacts_export.csv';
+            a.href = blobUrl;
+            // Use filename from Content-Disposition header if available
+            const disp = resp.headers.get('Content-Disposition') || '';
+            const match = disp.match(/filename=([^;]+)/);
+            a.download = match ? match[1].trim() : 'contacts_export.csv';
             a.click();
-            URL.revokeObjectURL(url);
+            URL.revokeObjectURL(blobUrl);
             showToast(t('contacts.exportSuccess'), 'success');
         } catch (err) {
             showToast(t('contacts.exportError', { error: err.message }), 'error');

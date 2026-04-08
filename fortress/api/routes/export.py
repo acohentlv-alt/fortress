@@ -43,7 +43,7 @@ def _fmt(col_key: str, value) -> str:
 
 _CSV_COLUMNS = [
     ("Nom", "denomination"),
-    ("SIREN", "siren"),
+    ("SIREN", "effective_siren"),
     ("SIRET", "siret_siege"),
     ("NAF", "naf_code"),
     ("Activité", "naf_libelle"),
@@ -65,12 +65,40 @@ _CSV_COLUMNS = [
     ("Twitter", "social_twitter"),
     ("Note Google", "rating"),
     ("Avis Google", "review_count"),
-    ("Source", "contact_source"),
-    ("Source tel", "phone_source"),
-    ("Source email", "email_source"),
-    ("Source site", "website_source"),
     ("Notes", "notes"),
 ]
+
+# SELECT columns used by every export query. Computes the REAL SIREN:
+# - Pure SIRENE entities: use co.siren directly
+# - MAPS entities with confirmed link: use linked_siren (real SIREN)
+# - MAPS entities without confirmed link: NULL (avoids exporting MAPS00001 as "SIREN")
+_EXPORT_SELECT = """
+    CASE
+        WHEN co.siren NOT LIKE 'MAPS%%' THEN co.siren
+        WHEN co.link_confidence = 'confirmed' THEN co.linked_siren
+        ELSE NULL
+    END AS effective_siren,
+    co.siret_siege, co.denomination,
+    co.naf_code, co.naf_libelle, co.forme_juridique,
+    co.adresse, co.code_postal, co.ville,
+    co.departement, co.statut, co.date_creation,
+    co.tranche_effectif,
+    mc.phone, mc.email, mc.website,
+    mc.address, mc.maps_url,
+    mc.social_linkedin, mc.social_facebook, mc.social_twitter,
+    mc.rating, mc.review_count,
+    cn.notes
+"""
+
+# JOINs used by every export query
+_EXPORT_JOINS = """
+    LEFT JOIN merged_contacts mc ON mc.siren = co.siren
+    LEFT JOIN (
+        SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
+        FROM company_notes
+        GROUP BY siren
+    ) cn ON cn.siren = co.siren
+"""
 
 
 async def _fetch_export_data(batch_id: str) -> list[dict]:
@@ -87,26 +115,10 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
 
     return await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s')}
-        SELECT
-            co.siren, co.siret_siege, co.denomination,
-            co.naf_code, co.naf_libelle, co.forme_juridique,
-            co.adresse, co.code_postal, co.ville,
-            co.departement, co.statut, co.date_creation,
-            co.tranche_effectif,
-            mc.phone, mc.email, mc.website,
-            mc.address, mc.maps_url,
-            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
-            mc.rating, mc.review_count, mc.contact_source,
-            mc.phone_source, mc.email_source, mc.website_source,
-            cn.notes
+        SELECT {_EXPORT_SELECT}
         FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
-        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
-        LEFT JOIN (
-            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
-            FROM company_notes
-            GROUP BY siren
-        ) cn ON cn.siren = co.siren
+        {_EXPORT_JOINS}
         ORDER BY co.denomination
     """, (batch_id, batch_id))
 
@@ -127,26 +139,10 @@ async def export_master_csv(request: Request):
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     rows = await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
-        SELECT
-            co.siren, co.siret_siege, co.denomination,
-            co.naf_code, co.naf_libelle, co.forme_juridique,
-            co.adresse, co.code_postal, co.ville,
-            co.departement, co.statut, co.date_creation,
-            co.tranche_effectif,
-            mc.phone, mc.email, mc.website,
-            mc.address, mc.maps_url,
-            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
-            mc.rating, mc.review_count, mc.contact_source,
-            mc.phone_source, mc.email_source, mc.website_source,
-            cn.notes
+        SELECT {_EXPORT_SELECT}
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
-        LEFT JOIN merged_contacts mc ON mc.siren = co.siren
-        LEFT JOIN (
-            SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
-            FROM company_notes
-            GROUP BY siren
-        ) cn ON cn.siren = co.siren
+        {_EXPORT_JOINS}
         ORDER BY co.denomination
     """)
     if not rows:
@@ -181,29 +177,130 @@ async def export_master_xlsx(request: Request):
         return JSONResponse(status_code=403, content={"error": "Admin uniquement"})
     rows = await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags')}
-        SELECT
-            co.siren, co.siret_siege, co.denomination,
-            co.naf_code, co.naf_libelle, co.forme_juridique,
-            co.adresse, co.code_postal, co.ville,
-            co.departement, co.statut, co.date_creation,
-            co.tranche_effectif,
-            mc.phone, mc.email, mc.website,
-            mc.address, mc.maps_url,
-            mc.social_linkedin, mc.social_facebook, mc.social_twitter,
-            mc.rating, mc.review_count, mc.contact_source,
-            mc.phone_source, mc.email_source, mc.website_source,
-            cn.notes
+        SELECT {_EXPORT_SELECT}
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
+        {_EXPORT_JOINS}
+        ORDER BY co.denomination
+    """)
+    return _to_xlsx(rows, "fortress_master.xlsx")
+
+
+# ── FILTERED CONTACTS EXPORT (must be declared BEFORE {batch_id} routes) ──
+
+
+@router.get("/contacts/csv")
+async def export_contacts_filtered_csv(
+    request: Request,
+    q: str = None,
+    department: str = None,
+    naf_code: str = None,
+):
+    """Export contacts matching the current filters as CSV.
+
+    Uses the same filter logic as /api/contacts/list. Returns ALL matching
+    contacts (capped at 10,000), not just the currently loaded page.
+    """
+    user = getattr(request.state, "user", None)
+
+    where_parts: list[str] = []
+    params: list = []
+
+    # Workspace filter — admin sees all, others scoped to their workspace
+    if user and not user.is_admin:
+        where_parts.append("qt.workspace_id = %s")
+        params.append(user.workspace_id)
+
+    if q:
+        clean_q = q.strip()
+        clean_digits = clean_q.replace(" ", "")
+        if clean_digits.isdigit():
+            where_parts.append("(co.siren LIKE %s)")
+            params.append(f"{clean_digits}%")
+        elif clean_q.upper().startswith("MAPS"):
+            where_parts.append("(co.siren ILIKE %s)")
+            params.append(f"{clean_q}%")
+        elif len(clean_q) <= 2:
+            where_parts.append("co.denomination LIKE %s")
+            params.append(f"{clean_q.upper()}%")
+        else:
+            # Multi-field search — must match contacts_list.py exactly
+            where_parts.append("""(
+                co.denomination ILIKE %s
+                OR co.enseigne ILIKE %s
+                OR co.siren ILIKE %s
+                OR co.ville ILIKE %s
+                OR co.naf_code ILIKE %s
+                OR co.departement = %s
+                OR mc.phone ILIKE %s
+                OR mc.email ILIKE %s
+                OR mc.website ILIKE %s
+                OR o.nom ILIKE %s
+                OR o.prenom ILIKE %s
+            )""")
+            like = f"%{clean_q}%"
+            dept_q = clean_q.strip()
+            params.extend([like, like, like, like, like, dept_q, like, like, like, like, like])
+
+    if department:
+        where_parts.append("co.departement = %s")
+        params.append(department.strip())
+
+    if naf_code:
+        where_parts.append("co.naf_code LIKE %s")
+        params.append(f"{naf_code.strip().upper()}%")
+
+    where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
+
+    # Cap at 10k rows — safety net, prevents massive exports.
+    # DISTINCT ON uses COALESCE(linked_siren, co.siren) as the dedup key:
+    # - MAPS entities linked to a real SIREN (confirmed OR pending) collapse into one row
+    # - Unmatched MAPS entities (linked_siren IS NULL) stay as distinct rows (via siren)
+    # - Pure SIRENE entities dedup by their own siren
+    rows = await fetch_all(f"""
+        WITH {merged_contacts_cte('SELECT DISTINCT qt2.siren FROM batch_tags qt2')}
+        SELECT DISTINCT ON (COALESCE(co.linked_siren, co.siren)) {_EXPORT_SELECT}
+        FROM batch_tags qt
+        JOIN companies co ON co.siren = qt.siren
         LEFT JOIN merged_contacts mc ON mc.siren = co.siren
+        LEFT JOIN LATERAL (
+            SELECT * FROM officers off2 WHERE off2.siren = co.siren
+            ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
+            LIMIT 1
+        ) o ON true
         LEFT JOIN (
             SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
             FROM company_notes
             GROUP BY siren
         ) cn ON cn.siren = co.siren
-        ORDER BY co.denomination
-    """)
-    return _to_xlsx(rows, "fortress_master.xlsx")
+        WHERE {where_clause}
+        ORDER BY COALESCE(co.linked_siren, co.siren), co.denomination
+        LIMIT 10000
+    """, tuple(params) if params else None)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow([col[0] for col in _CSV_COLUMNS])
+    for row in (rows or []):
+        writer.writerow([_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
+
+    content = buf.getvalue().encode("utf-8-sig")
+
+    # Build descriptive filename from filters
+    filename_parts = ["contacts"]
+    if department:
+        filename_parts.append(f"dept{department}")
+    if naf_code:
+        filename_parts.append(f"naf{naf_code}")
+    if q:
+        filename_parts.append(q.strip()[:20].replace(" ", "_"))
+    filename = "_".join(filename_parts) + ".csv"
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # ── PER-QUERY EXPORTS ────────────────────────────────────────────
@@ -318,50 +415,18 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
                 WHERE bd.workspace_id = %s AND bt.siren = ANY(%s)
             ),
             {merged_contacts_cte('SELECT siren FROM workspace_sirens')}
-            SELECT
-                co.siren, co.siret_siege, co.denomination,
-                co.naf_code, co.naf_libelle, co.forme_juridique,
-                co.adresse, co.code_postal, co.ville,
-                co.departement, co.statut, co.date_creation,
-                co.tranche_effectif,
-                mc.phone, mc.email, mc.website,
-                mc.address, mc.maps_url,
-                mc.social_linkedin, mc.social_facebook, mc.social_twitter,
-                mc.rating, mc.review_count, mc.contact_source,
-                mc.phone_source, mc.email_source, mc.website_source,
-                cn.notes
+            SELECT {_EXPORT_SELECT}
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
-            LEFT JOIN merged_contacts mc ON mc.siren = co.siren
-            LEFT JOIN (
-                SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
-                FROM company_notes
-                GROUP BY siren
-            ) cn ON cn.siren = co.siren
+            {_EXPORT_JOINS}
             ORDER BY co.denomination
         """, (user.workspace_id, body.sirens))
     else:
         rows = await fetch_all(f"""
             WITH {merged_contacts_cte('SELECT UNNEST(%s::text[])')}
-            SELECT
-                co.siren, co.siret_siege, co.denomination,
-                co.naf_code, co.naf_libelle, co.forme_juridique,
-                co.adresse, co.code_postal, co.ville,
-                co.departement, co.statut, co.date_creation,
-                co.tranche_effectif,
-                mc.phone, mc.email, mc.website,
-                mc.address, mc.maps_url,
-                mc.social_linkedin, mc.social_facebook, mc.social_twitter,
-                mc.rating, mc.review_count, mc.contact_source,
-                mc.phone_source, mc.email_source, mc.website_source,
-                cn.notes
+            SELECT {_EXPORT_SELECT}
             FROM companies co
-            LEFT JOIN merged_contacts mc ON mc.siren = co.siren
-            LEFT JOIN (
-                SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
-                FROM company_notes
-                GROUP BY siren
-            ) cn ON cn.siren = co.siren
+            {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
             ORDER BY co.denomination
         """, (body.sirens, body.sirens))
