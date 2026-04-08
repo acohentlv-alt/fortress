@@ -173,6 +173,10 @@ export async function cancelJob(batchId) {
     return await request(`/jobs/${encodeURIComponent(batchId)}/cancel`, { method: 'POST' });
 }
 
+export async function resumeJob(batchId) {
+    return await request(`/jobs/${encodeURIComponent(batchId)}/resume`, { method: 'POST' });
+}
+
 
 export async function untagCompany(siren, batchName) {
     return await request(`/companies/${siren}/tags/${encodeURIComponent(batchName)}`, { method: 'DELETE' });

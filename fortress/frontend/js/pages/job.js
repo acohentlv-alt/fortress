@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getJobSummary, getJobQueries, getExpansionSuggestions, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getJobSummary, getJobQueries, getExpansionSuggestions, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich, resumeJob } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
@@ -123,7 +123,8 @@ export async function renderJob(container, batchId) {
                 <a href="${getExportUrl(batchId, 'csv')}" class="btn btn-secondary" download>📥 CSV</a>
                 <a href="${getExportUrl(batchId, 'xlsx')}" class="btn btn-secondary" download>📥 XLSX</a>
                 <a href="${getExportUrl(batchId, 'jsonl')}" class="btn btn-secondary" download>📥 JSONL</a>
-                ${job.status !== 'in_progress' ? `<button id="btn-rerun" class="btn btn-secondary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
+                ${job.status === 'interrupted' ? `<button id="btn-resume" class="btn btn-primary" title="${t('job.resume')}">${t('job.resume')}</button>` : ''}
+                ${(job.status === 'completed' || job.status === 'failed' || job.status === 'interrupted' || job.status === 'cancelled') ? `<button id="btn-rerun" class="btn btn-secondary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
                 <button id="btn-delete-job" class="btn btn-secondary" title="${t('job.delete')}" style="color:var(--danger)">🗑️</button>
                 ${job.status === 'in_progress' ?
             `<a href="#/monitor/${encodeURIComponent(batchId)}" class="btn btn-primary">${t('job.liveMonitor')}</a>` : ''}
@@ -403,6 +404,26 @@ export async function renderJob(container, batchId) {
                     if (f.size) params.set('size', f.size);
                 }
                 window.location.hash = `#/new-batch?${params.toString()}`;
+            }
+        });
+    }
+
+    // Resume button (interrupted batches only)
+    const resumeBtn = document.getElementById('btn-resume');
+    if (resumeBtn) {
+        resumeBtn.addEventListener('click', async () => {
+            resumeBtn.disabled = true;
+            const originalLabel = resumeBtn.textContent;
+            resumeBtn.textContent = t('job.resumeLaunching');
+            const result = await resumeJob(batchId);
+            if (result && result._ok !== false) {
+                showToast(t('job.resumeSuccess'), 'success');
+                window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
+            } else {
+                resumeBtn.disabled = false;
+                resumeBtn.textContent = originalLabel;
+                const msg = (result && (result.error || result.detail)) || t('job.resumeError');
+                showToast(msg, 'error');
             }
         });
     }

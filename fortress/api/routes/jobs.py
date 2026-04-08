@@ -300,6 +300,135 @@ async def cancel_job(batch_id: str, request: Request):
     return {"cancelled": True, "batch_id": batch_id}
 
 
+@router.post("/{batch_id}/resume")
+async def resume_job(batch_id: str, request: Request):
+    """Resume an interrupted batch from its last completed query checkpoint."""
+    import subprocess
+    import sys
+    import os
+    from pathlib import Path
+
+    user = getattr(request.state, 'user', None)
+    if not user or user.role not in ('admin', 'head'):
+        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
+
+    if user.is_admin:
+        ws_scope = "AND workspace_id IS NULL"
+        ws_params: tuple = ()
+    else:
+        ws_scope = "AND workspace_id = %s"
+        ws_params = (user.workspace_id,)
+
+    async with get_conn() as conn:
+        # SELECT FOR UPDATE locks the row so two simultaneous clicks can't both pass
+        row = await (await conn.execute(
+            f"""SELECT status, workspace_id, batch_name
+                FROM batch_data
+                WHERE batch_id = %s {ws_scope}
+                FOR UPDATE""",
+            (batch_id,) + ws_params,
+        )).fetchone()
+
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
+
+        current_status = row[0]
+        row_workspace_id = row[1]
+        batch_name = row[2]
+
+        # Only 'interrupted' is resumable — never 'failed', 'completed', or anything else
+        if current_status != 'interrupted':
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "Ce batch ne peut pas être repris",
+                    "current_status": current_status,
+                },
+            )
+
+        # Same-workspace batch guard (15 min, excluding self)
+        if row_workspace_id is not None:
+            guard_cur = await conn.execute(
+                """SELECT 1 FROM batch_data
+                   WHERE workspace_id = %s
+                     AND status IN ('queued', 'in_progress')
+                     AND batch_id != %s
+                     AND updated_at > NOW() - INTERVAL '15 minutes'
+                   LIMIT 1""",
+                (row_workspace_id, batch_id),
+            )
+        else:
+            guard_cur = await conn.execute(
+                """SELECT 1 FROM batch_data
+                   WHERE workspace_id IS NULL
+                     AND status IN ('queued', 'in_progress')
+                     AND batch_id != %s
+                     AND updated_at > NOW() - INTERVAL '15 minutes'
+                   LIMIT 1""",
+                (batch_id,),
+            )
+        blocking = await guard_cur.fetchone()
+        if blocking:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine."},
+            )
+
+        await conn.execute(
+            """UPDATE batch_data
+               SET status = 'queued',
+                   cancel_requested = FALSE,
+                   shortfall_reason = NULL,
+                   updated_at = NOW()
+               WHERE batch_id = %s""",
+            (batch_id,),
+        )
+        await conn.commit()
+
+    # Spawn the runner subprocess — same pattern as batch.py run_batch
+    fortress_root = Path(__file__).resolve().parent.parent.parent.parent
+    log_dir = fortress_root / "fortress" / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{batch_id}.log"
+
+    runner_cmd = [sys.executable, "-m", "fortress.discovery", batch_id]
+    launcher = Path("/tmp/fortress_launcher.py")
+    if launcher.exists():
+        runner_cmd = [sys.executable, str(launcher), "runner", batch_id]
+
+    try:
+        log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        os.close(log_fd)
+        process = subprocess.Popen(
+            runner_cmd,
+            cwd=str(fortress_root),
+            stdout=None,
+            stderr=None,
+            close_fds=False,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to spawn runner: {exc}", "batch_id": batch_id},
+        )
+
+    await log_activity(
+        user_id=getattr(user, 'id', None),
+        username=getattr(user, 'username', 'unknown'),
+        action='resume_job',
+        target_type='job',
+        target_id=batch_id,
+        details=f"Reprise du batch {batch_name or batch_id}",
+    )
+
+    return {
+        "resumed": True,
+        "batch_id": batch_id,
+        "pid": process.pid,
+        "status": "queued",
+    }
+
 
 @router.get("/{batch_id}")
 async def get_job(batch_id: str, request: Request):

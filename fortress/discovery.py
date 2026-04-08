@@ -921,7 +921,8 @@ async def run(batch_id: str) -> None:
 
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
-                """SELECT batch_name, search_queries, filters_json, batch_size, workspace_id
+                """SELECT batch_name, search_queries, filters_json, batch_size,
+                          workspace_id, completed_queries_count, queries_json
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -935,6 +936,8 @@ async def run(batch_id: str) -> None:
             batch_size: int = row[3] or 0  # 0 = collect all results
             batch_size = min(batch_size, 50) if batch_size > 0 else 50
             batch_workspace_id: int | None = row[4]
+            _completed_queries_count: int = int(row[5] or 0)
+            _prior_queries_json = row[6]
 
             # Parse search_queries from JSON
             search_queries: list[str] = []
@@ -1024,41 +1027,89 @@ async def run(batch_id: str) -> None:
                     if _sw:
                         _sector_word = _sw
 
-                # ── Resume support: skip already-processed companies ──
-                async with pool.connection() as conn:
-                    cur = await conn.execute(
-                        """SELECT sa.siren, co.denomination, co.adresse
-                           FROM batch_log sa
-                           LEFT JOIN companies co ON co.siren = sa.siren
-                           WHERE sa.batch_id = %s
-                           AND sa.action != 'relevance_filter'""",
-                        (batch_id,),
-                    )
-                    existing_rows = await cur.fetchall()
+                # ── Resume state rehydration ──────────────────────────────────
+                if _prior_queries_json:
+                    try:
+                        if isinstance(_prior_queries_json, str):
+                            _query_stats = list(json.loads(_prior_queries_json))
+                        else:
+                            _query_stats = list(_prior_queries_json)
+                        # Delta 1: drop expansion entries so rerun-expansion doesn't duplicate
+                        _query_stats = [s for s in _query_stats if not s.get("is_expansion")]
+                    except Exception:
+                        _query_stats = []
 
-                if existing_rows:
-                    for row in existing_rows:
-                        siren, denom, addr = row[0], row[1] or "", row[2] or ""
-                        name_key = denom.lower().strip()
-                        addr_key = addr.lower().strip()
-                        seen_names.add(f"{name_key}|{addr_key}")
-                    companies_discovered = len(existing_rows)
-                    # Count qualified (those with phone or website)
+                if _completed_queries_count > 0:
+                    # Single connection for all three SELECTs — do NOT nest pool.connection()
                     async with pool.connection() as conn:
+                        # 1. Distinct sirens already discovered + name/address for seen_names seeding
+                        cur = await conn.execute(
+                            """SELECT DISTINCT bl.siren,
+                                      COALESCE(co.denomination, '') AS denom,
+                                      COALESCE(co.adresse, '') AS addr
+                                 FROM batch_log bl
+                                 LEFT JOIN companies co ON co.siren = bl.siren
+                                WHERE bl.batch_id = %s
+                                  AND bl.action != 'relevance_filter'
+                                  AND bl.siren IS NOT NULL""",
+                            (batch_id,),
+                        )
+                        existing_rows = await cur.fetchall()
+                        for row in existing_rows:
+                            siren, denom, addr = row[0], row[1] or "", row[2] or ""
+                            name_key = denom.lower().strip()
+                            addr_key = addr.lower().strip()
+                            seen_names.add(f"{name_key}|{addr_key}")
+                            if siren:
+                                seen_sirens.add(str(siren))
+                        companies_discovered = len(existing_rows)
+
+                        # 2. Contacts replay — rebuild website/phone dedup sets
+                        contacts_cur = await conn.execute(
+                            """SELECT DISTINCT ON (bl.siren) bl.siren, c.website, c.phone
+                                 FROM batch_log bl
+                                 LEFT JOIN contacts c ON c.siren = bl.siren
+                                WHERE bl.batch_id = %s
+                                  AND bl.action != 'relevance_filter'
+                                  AND bl.siren IS NOT NULL
+                                ORDER BY bl.siren, c.collected_at DESC NULLS LAST""",
+                            (batch_id,),
+                        )
+                        contact_rows = await contacts_cur.fetchall()
+                        for crow in contact_rows:
+                            _siren, _website, _phone = crow[0], crow[1], crow[2]
+                            if _website:
+                                _d = re.sub(r'^https?://(www\.)?', '', _website.strip().lower())
+                                _dom = _d.split('/')[0].split('?')[0]
+                                if _dom:
+                                    seen_websites.add(_dom)
+                            if _phone:
+                                _p = re.sub(r'\D', '', _phone)
+                                if _p:
+                                    seen_phones.add(_p)
+
+                        # 3. Qualified count = distinct sirens with phone or website in contacts
                         qr = await conn.execute(
                             """SELECT COUNT(DISTINCT c.siren) FROM contacts c
-                               WHERE c.siren IN (SELECT siren FROM batch_log WHERE batch_id = %s)
-                               AND (c.phone IS NOT NULL OR c.website IS NOT NULL)""",
+                                WHERE c.siren IN (
+                                    SELECT DISTINCT siren FROM batch_log
+                                    WHERE batch_id = %s AND siren IS NOT NULL
+                                )
+                                AND (c.phone IS NOT NULL OR c.website IS NOT NULL)""",
                             (batch_id,),
                         )
                         qrow = await qr.fetchone()
-                        qualified = qrow[0] if qrow else 0
+                        qualified = int(qrow[0] or 0) if qrow else 0
 
                     log.info(
-                        "discovery.resume_skip",
+                        "discovery.resume",
                         batch_id=batch_id,
-                        already_processed=companies_discovered,
-                        already_qualified=qualified,
+                        completed_queries=_completed_queries_count,
+                        sirens=len(seen_sirens),
+                        websites=len(seen_websites),
+                        phones=len(seen_phones),
+                        qualified=qualified,
+                        prior_stats_kept=len(_query_stats),
                     )
 
                 # HTTP client for website crawl — polite delays to avoid anti-bot blocks
@@ -1786,6 +1837,9 @@ async def run(batch_id: str) -> None:
 
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
+                    # Resume: skip queries that completed in a prior run
+                    if q_idx <= _completed_queries_count:
+                        continue
                     # Check for graceful shutdown
                     if _shutdown:
                         log.warning(
@@ -1916,6 +1970,17 @@ async def run(batch_id: str) -> None:
                             await qm_conn.commit()
                     except Exception:
                         pass  # Memory is best-effort
+
+                    # Persist per-query checkpoint (runs for every query, including the last)
+                    try:
+                        async with pool.connection() as cp_conn:
+                            await cp_conn.execute(
+                                "UPDATE batch_data SET completed_queries_count = %s, queries_json = %s WHERE batch_id = %s",
+                                (q_idx, json.dumps(_query_stats), batch_id),
+                            )
+                            await cp_conn.commit()
+                    except Exception as _e:
+                        log.warning("discovery.checkpoint_failed", batch_id=batch_id, q_idx=q_idx, err=str(_e))
 
                     # Small delay between searches to avoid detection
                     if q_idx < total_queries:
