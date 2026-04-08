@@ -1,16 +1,16 @@
 /**
- * New Batch Page — Simplified Maps-first search form
+ * New Batch Page — Gemini-style centered prompt
  *
  * User provides:
  *   1. Search queries (e.g. "camping Perpignan", "transport 66")
- *   2. Batch size (how many companies to collect)
+ *   2. Batch size via segmented control (10/20/30/50)
  *
- * Removed: strategy toggle, department dropdown, city input, NAF code
- * (These are embedded in the natural language query or moved to Base SIRENE)
+ * Rebuilt as Gemini-style prompt interface with suggestion chips,
+ * inline warnings, live summary, and "Comment ça marche" expandable card.
  */
 
 import { escapeHtml, showToast } from '../components.js';
-import { runBatch, extractApiError } from '../api.js';
+import { runBatch, extractApiError, fetchTopQueries } from '../api.js';
 import { t, getLang } from '../i18n.js';
 
 // French department names → codes (lowercase, accent-insensitive keys)
@@ -46,135 +46,158 @@ const DEPT_NAMES = {
 
 export async function renderNewBatch(container) {
     container.innerHTML = `
-        <h1 class="page-title">🚀 ${t('newBatch.title')}</h1>
-        <p class="page-subtitle">${t('newBatch.subtitle')}</p>
+        <div class="gemini-wrapper">
+            <div class="gemini-container">
 
-        <div class="batch-form">
-            <!-- Search Queries -->
-            <div class="form-group">
-                <label class="form-label">${t('newBatch.queries')}</label>
-                <div class="form-hint" style="margin-bottom:var(--space-md)">
-                    ${t('newBatch.queriesHint')}
+                <h1 class="gemini-headline">${t('newBatch.headline')}</h1>
+
+                <div class="gemini-prompt-box">
+                    <div class="gemini-query-row primary" data-query-index="0">
+                        <input type="text"
+                            class="gemini-query-input primary"
+                            placeholder="${t('newBatch.promptPlaceholder')}"
+                            autocomplete="off">
+                    </div>
+                    <div id="additional-queries"></div>
+                    <button type="button" id="btn-add-query" class="gemini-add-query-btn">
+                        ${t('newBatch.addQueryBtn')}
+                    </button>
                 </div>
-                <div id="search-queries-container">
-                    <div class="search-query-row" style="display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center">
-                        <input type="text" class="form-input search-query-input"
-                            placeholder="${t('newBatch.queryPlaceholder')}"
-                            autocomplete="off" style="flex:1">
-                        <button type="button" class="btn-remove-query"
-                            style="background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:18px; padding:4px 8px; opacity:0.3"
-                            disabled title="${t('newBatch.queryMinRequired')}">✕</button>
+
+                <div class="gemini-chips-wrapper">
+                    <span class="gemini-chips-label">${t('newBatch.suggestionsLabel')}</span>
+                    <div class="gemini-chips" id="suggestion-chips"></div>
+                </div>
+
+                <div class="gemini-controls">
+                    <span class="gemini-controls-label">${t('newBatch.sizeSegmentLabel')}</span>
+                    <div class="segmented" id="batch-size-segmented" role="radiogroup">
+                        <button type="button" class="segment" data-size="10" role="radio" aria-checked="false">10</button>
+                        <button type="button" class="segment active" data-size="20" role="radio" aria-checked="true">20</button>
+                        <button type="button" class="segment" data-size="30" role="radio" aria-checked="false">30</button>
+                        <button type="button" class="segment" data-size="50" role="radio" aria-checked="false">50</button>
                     </div>
                 </div>
-                <button type="button" id="btn-add-query"
-                    style="display:flex; align-items:center; gap:var(--space-sm); padding:var(--space-sm) var(--space-md); background:var(--bg-secondary); border:2px dashed var(--border); border-radius:var(--radius-sm); color:var(--accent); cursor:pointer; font-size:var(--font-sm); font-weight:600; transition:all var(--transition-fast); width:100%"
-                    onmouseover="this.style.borderColor='var(--accent)';this.style.background='var(--bg-hover)'"
-                    onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-secondary)'"
-                >
-                    ${t('newBatch.addQuery')}
+
+                <button type="button" class="btn-launch-hero" id="btn-launch-batch">
+                    ${t('newBatch.launchHero')}
                 </button>
-                <div class="form-hint" style="margin-top:var(--space-sm); color:var(--info)">
-                    ${t('newBatch.addQueryTip')}
+
+                <div class="gemini-summary-line" id="gemini-summary-line">
+                    ${t('newBatch.summaryEmptyState')}
                 </div>
-            </div>
 
-            <!-- Batch Size -->
-            <div class="form-group">
-                <label class="form-label" for="batch-size">${t('newBatch.sizeLabel')}</label>
-                <input type="number" id="batch-size" class="form-input"
-                    value="20" min="5" max="50" step="5"
-                    style="max-width:140px">
-                <div class="form-hint">${t('newBatch.sizeHint')}</div>
-            </div>
+                <details class="how-it-works" id="how-it-works">
+                    <summary>${t('howItWorks.title')}</summary>
+                    <ol class="how-it-works-steps">
+                        <li><strong>1. ${t('howItWorks.step1Title')}</strong> — ${t('howItWorks.step1Body')}</li>
+                        <li><strong>2. ${t('howItWorks.step2Title')}</strong> — ${t('howItWorks.step2Body')}</li>
+                        <li><strong>3. ${t('howItWorks.step3Title')}</strong> — ${t('howItWorks.step3Body')}</li>
+                        <li><strong>4. ${t('howItWorks.step4Title')}</strong> — ${t('howItWorks.step4Body')}</li>
+                    </ol>
+                </details>
 
-            <!-- Safeguard Warning Area -->
-            <div id="batch-warning" style="display:none; margin-bottom:var(--space-lg);
-                padding:var(--space-md); background:var(--warning-subtle);
-                border:1px solid rgba(245,158,11,0.3); border-radius:var(--radius-sm);
-                font-size:var(--font-sm); color:var(--warning)">
-            </div>
-
-            <!-- Summary Preview -->
-            <div id="batch-summary" style="background:var(--bg-secondary); border:1px solid var(--accent-subtle); border-left:3px solid var(--accent); border-radius:var(--radius); padding:var(--space-xl); margin-top:var(--space-xl)">
-                <div style="font-size:var(--font-xs); font-weight:700; color:var(--accent-hover); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
-                    ${t('newBatch.summaryTitle')}
-                </div>
-                <div id="batch-summary-content" style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.6">
-                    ${t('newBatch.summaryEmpty')}
-                </div>
-            </div>
-
-            <!-- Actions -->
-            <div class="form-actions">
-                <button class="btn btn-primary" id="btn-launch-batch" style="padding:var(--space-md) var(--space-2xl)">
-                    ${t('newBatch.launch')}
-                </button>
-                <button class="btn btn-secondary" onclick="window.location.hash='#/'">
-                    ${t('common.cancel')}
-                </button>
-            </div>
-
-            <!-- Info note -->
-            <div style="margin-top:var(--space-xl); padding:var(--space-lg); background:var(--info-subtle); border-radius:var(--radius-sm); font-size:var(--font-sm); color:var(--info)">
-                ${t('newBatch.infoNote')}
             </div>
         </div>
     `;
 
-    // ── Dynamic search query management ───────────────────────────────
-    const queriesContainer = document.getElementById('search-queries-container');
-    const btnAddQuery = document.getElementById('btn-add-query');
+    // ── Suggestion chips ──────────────────────────────────────────────
+    const chipsContainer = document.getElementById('suggestion-chips');
+    try {
+        const result = await fetchTopQueries();
+        let queries = (result && result.queries) || [];
+        if (queries.length < 3) {
+            const fallback = [
+                { query_text: 'camping 66' },
+                { query_text: 'transport Paris' },
+                { query_text: 'restaurant Lyon' }
+            ];
+            queries = [...queries, ...fallback].slice(0, 3);
+        }
+        chipsContainer.innerHTML = queries.map(q => `
+            <button type="button" class="chip" data-query="${escapeHtml(q.query_text)}">
+                ${escapeHtml(q.query_text)}
+            </button>
+        `).join('');
+        chipsContainer.querySelectorAll('.chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const primaryInput = document.querySelector('.gemini-query-input.primary');
+                if (primaryInput) {
+                    primaryInput.value = chip.dataset.query;
+                    primaryInput.focus();
+                    updateSummary();
+                }
+            });
+        });
+    } catch (e) {
+        chipsContainer.innerHTML = '';
+    }
 
-    function createQueryRow(value = '') {
-        const row = document.createElement('div');
-        row.className = 'search-query-row';
-        row.style.cssText = 'display:flex; gap:var(--space-sm); margin-bottom:var(--space-sm); align-items:center';
-        row.innerHTML = `
-            <input type="text" class="form-input search-query-input"
-                placeholder="${t('newBatch.queryPlaceholder2')}"
-                autocomplete="off" style="flex:1" value="${escapeHtml(value)}">
-            <button type="button" class="btn-remove-query"
-                style="background:none; border:1px solid var(--danger); border-radius:var(--radius-sm); color:var(--danger); cursor:pointer; font-size:14px; padding:6px 10px; transition:all var(--transition-fast)"
-                title="${t('newBatch.removeQueryTitle')}"
-                onmouseover="this.style.background='var(--danger)';this.style.color='white'"
-                onmouseout="this.style.background='none';this.style.color='var(--danger)'"
-            >✕</button>
-        `;
-        row.querySelector('.btn-remove-query').addEventListener('click', () => {
-            row.remove();
-            updateRemoveButtons();
+    // ── Segmented size control ────────────────────────────────────────
+    let currentBatchSize = 20;
+    const segmented = document.getElementById('batch-size-segmented');
+    segmented.querySelectorAll('.segment').forEach(btn => {
+        btn.addEventListener('click', () => {
+            segmented.querySelectorAll('.segment').forEach(b => {
+                b.classList.remove('active');
+                b.setAttribute('aria-checked', 'false');
+            });
+            btn.classList.add('active');
+            btn.setAttribute('aria-checked', 'true');
+            currentBatchSize = parseInt(btn.dataset.size, 10);
             updateSummary();
         });
-        row.querySelector('.search-query-input').addEventListener('input', updateSummary);
+    });
+
+    // ── Subordinate query row creation ────────────────────────────────
+    function createSubordinateQueryRow(value = '') {
+        const row = document.createElement('div');
+        row.className = 'gemini-query-row';
+        row.innerHTML = `
+            <input type="text"
+                class="gemini-query-input"
+                placeholder="${t('newBatch.queryPlaceholderSecondary')}"
+                autocomplete="off"
+                value="${escapeHtml(value)}">
+            <button type="button" class="gemini-query-remove" title="${t('newBatch.removeQuery')}">✕</button>
+        `;
+        row.querySelector('.gemini-query-remove').addEventListener('click', () => {
+            const warning = row.nextElementSibling;
+            if (warning && warning.classList.contains('gemini-inline-warning')) warning.remove();
+            row.remove();
+            updateSummary();
+        });
+        row.querySelector('.gemini-query-input').addEventListener('input', () => {
+            validateSingleRow(row);
+            updateSummary();
+        });
         return row;
     }
 
-    function updateRemoveButtons() {
-        const removes = queriesContainer.querySelectorAll('.btn-remove-query');
-        if (removes.length <= 1) {
-            removes.forEach(btn => {
-                btn.disabled = true;
-                btn.style.opacity = '0.3';
-                btn.style.cursor = 'default';
-                btn.style.border = 'none';
-            });
-        } else {
-            removes.forEach(btn => {
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                btn.style.cursor = 'pointer';
-                btn.style.border = '1px solid var(--danger)';
-            });
-        }
-    }
-
-    btnAddQuery.addEventListener('click', () => {
-        const newRow = createQueryRow();
-        queriesContainer.appendChild(newRow);
-        newRow.querySelector('.search-query-input').focus();
-        updateRemoveButtons();
+    document.getElementById('btn-add-query').addEventListener('click', () => {
+        const newRow = createSubordinateQueryRow();
+        document.getElementById('additional-queries').appendChild(newRow);
+        newRow.querySelector('.gemini-query-input').focus();
         updateSummary();
     });
+
+    // ── Inline warnings (per row) ─────────────────────────────────────
+    function validateSingleRow(row) {
+        const existingWarning = row.nextElementSibling;
+        if (existingWarning && existingWarning.classList.contains('gemini-inline-warning')) {
+            existingWarning.remove();
+        }
+        const input = row.querySelector('.gemini-query-input');
+        const value = input.value.trim();
+        if (!value) return;
+        const words = value.split(/\s+/);
+        if (words.length === 1 && !/^\d{2,5}$/.test(words[0])) {
+            const warning = document.createElement('div');
+            warning.className = 'gemini-inline-warning';
+            warning.textContent = '⚠️ ' + t('newBatch.warningInline');
+            row.insertAdjacentElement('afterend', warning);
+        }
+    }
 
     // ── Safeguard: check for overly broad queries ─────────────────────
     function validateQueries(queries) {
@@ -183,55 +206,54 @@ export async function renderNewBatch(container) {
             const words = q.trim().split(/\s+/);
             // Single word without location = too broad
             if (words.length === 1 && !/^\d{2,5}$/.test(words[0])) {
-                warnings.push(`"${q}" — ${t('newBatch.warningBroad')}`);
+                warnings.push(`"${q}" — ${t('newBatch.warningInline')}`);
             }
         }
         return warnings;
     }
 
-    // ── Live summary update ───────────────────────────────────────────
-    const updateSummary = () => {
-        const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
-        const queries = Array.from(queryInputs)
-            .map(i => i.value.trim())
-            .filter(q => q.length > 0);
-
-        const batchSize = document.getElementById('batch-size').value;
-        const warningDiv = document.getElementById('batch-warning');
-
-        // Safeguard check
-        const warnings = validateQueries(queries);
-        if (warnings.length > 0) {
-            warningDiv.style.display = 'block';
-            warningDiv.innerHTML = '⚠️ ' + warnings.join('<br>⚠️ ');
-        } else {
-            warningDiv.style.display = 'none';
-        }
-
+    // ── Live summary ──────────────────────────────────────────────────
+    function updateSummary() {
+        const inputs = [
+            document.querySelector('.gemini-query-input.primary'),
+            ...document.querySelectorAll('#additional-queries .gemini-query-input')
+        ].filter(Boolean);
+        const queries = inputs.map(i => i.value.trim()).filter(q => q.length > 0);
+        const summaryEl = document.getElementById('gemini-summary-line');
         if (queries.length === 0) {
-            document.getElementById('batch-summary-content').innerHTML = t('newBatch.summaryEmpty');
+            summaryEl.textContent = t('newBatch.summaryEmptyState');
             return;
         }
+        summaryEl.textContent = t('newBatch.summaryLive', {
+            count: queries.length,
+            plural: queries.length > 1 ? 's' : '',
+            size: currentBatchSize
+        });
+    }
 
-        document.getElementById('batch-summary-content').innerHTML = `
-            <strong>${t('newBatch.summaryHeader')}</strong> — ${queries.length} ${queries.length > 1 ? t('newBatch.summaryTerms') : t('newBatch.summaryTerm')}<br>
-            <ul style="margin:var(--space-xs) 0 0 var(--space-lg); padding:0">
-                ${queries.map(q => `<li style="color:var(--text-primary)">${escapeHtml(q)}</li>`).join('')}
-            </ul>
-            <span style="color:var(--text-muted)">
-                ${t('newBatch.summaryFooter', { size: batchSize })}
-            </span>
-        `;
-    };
+    // Wire primary row validation and summary
+    document.querySelector('.gemini-query-input.primary').addEventListener('input', () => {
+        validateSingleRow(document.querySelector('.gemini-query-row.primary'));
+        updateSummary();
+    });
 
-    // ── Attach listeners ──────────────────────────────────────────────
-    document.getElementById('batch-size').addEventListener('input', updateSummary);
-    document.getElementById('batch-size').addEventListener('change', updateSummary);
+    // ── "Comment ça marche" localStorage (private-mode safe) ─────────
+    const howItWorks = document.getElementById('how-it-works');
+    try {
+        const seen = localStorage.getItem('fortress_howItWorks_seen');
+        if (!seen) howItWorks.open = true;
+        howItWorks.addEventListener('toggle', () => {
+            try { localStorage.setItem('fortress_howItWorks_seen', 'true'); } catch (e) {}
+        });
+    } catch (e) { /* private mode */ }
 
     // ── Launch button ─────────────────────────────────────────────────
     document.getElementById('btn-launch-batch').addEventListener('click', async () => {
-        const queryInputs = queriesContainer.querySelectorAll('.search-query-input');
-        const queries = Array.from(queryInputs)
+        const queryInputs = [
+            document.querySelector('.gemini-query-input.primary'),
+            ...document.querySelectorAll('#additional-queries .gemini-query-input')
+        ].filter(Boolean);
+        const queries = queryInputs
             .map(i => i.value.trim())
             .filter(q => q.length > 0);
 
@@ -248,7 +270,7 @@ export async function renderNewBatch(container) {
         }
 
         const btn = document.getElementById('btn-launch-batch');
-        const batchSize = parseInt(document.getElementById('batch-size').value) || 20;
+        const batchSize = currentBatchSize;
 
         // Extract sector name from first query (first word)
         const firstQuery = queries[0];
@@ -288,7 +310,7 @@ export async function renderNewBatch(container) {
         btn.disabled = true;
         btn.innerHTML = t('newBatch.launching');
 
-        document.getElementById('batch-summary-content').innerHTML = `
+        document.getElementById('gemini-summary-line').innerHTML = `
             <div style="color:var(--warning); font-weight:700">${t('newBatch.sendingConfig')}</div>
         `;
 
@@ -296,7 +318,7 @@ export async function renderNewBatch(container) {
             const result = await runBatch(payload);
 
             if (result && result._ok && result.status === 'launched') {
-                document.getElementById('batch-summary-content').innerHTML = `
+                document.getElementById('gemini-summary-line').innerHTML = `
                     <div style="color:var(--success); font-weight:700; margin-bottom:var(--space-sm)">
                         ${t('newBatch.launched')}
                     </div>
@@ -314,44 +336,51 @@ export async function renderNewBatch(container) {
                 }, 3000);
             } else {
                 const errorMsg = extractApiError(result);
-                document.getElementById('batch-summary-content').innerHTML = `
+                document.getElementById('gemini-summary-line').innerHTML = `
                     <div style="color:var(--danger); font-weight:700">${t('newBatch.errorLaunch', { message: escapeHtml(errorMsg) })}</div>
                 `;
                 btn.disabled = false;
-                btn.innerHTML = t('newBatch.launch');
+                btn.innerHTML = t('newBatch.launchHero');
             }
         } catch (err) {
-            document.getElementById('batch-summary-content').innerHTML = `
+            document.getElementById('gemini-summary-line').innerHTML = `
                 <div style="color:var(--danger); font-weight:700">${t('newBatch.errorNetwork', { message: escapeHtml(err.message) })}</div>
             `;
             btn.disabled = false;
-            btn.innerHTML = t('newBatch.launch');
+            btn.innerHTML = t('newBatch.launchHero');
         }
     });
 
-    // ── Pre-fill from expansion suggestion (sessionStorage) ──────
+    // ── Pre-fill from expansion suggestion (sessionStorage) ──────────
     const prefillRaw = sessionStorage.getItem('fortress_expansion_prefill');
     if (prefillRaw) {
         sessionStorage.removeItem('fortress_expansion_prefill');
         try {
             const prefill = JSON.parse(prefillRaw);
-            if (prefill.queries && Array.isArray(prefill.queries)) {
-                const firstInput = queriesContainer.querySelector('.search-query-input');
-                if (firstInput && prefill.queries[0]) {
-                    firstInput.value = prefill.queries[0];
+            if (prefill.queries && Array.isArray(prefill.queries) && prefill.queries.length > 0) {
+                const primaryInput = document.querySelector('.gemini-query-input.primary');
+                if (primaryInput && prefill.queries[0]) {
+                    primaryInput.value = prefill.queries[0];
                 }
                 for (let i = 1; i < prefill.queries.length; i++) {
-                    const newRow = createQueryRow(prefill.queries[i]);
-                    queriesContainer.appendChild(newRow);
+                    const newRow = createSubordinateQueryRow(prefill.queries[i]);
+                    document.getElementById('additional-queries').appendChild(newRow);
                 }
-                updateRemoveButtons();
             }
             if (prefill.size) {
-                document.getElementById('batch-size').value = prefill.size;
+                const targetSize = parseInt(prefill.size, 10);
+                const targetSegment = document.querySelector(`.segment[data-size="${targetSize}"]`);
+                if (targetSegment) {
+                    segmented.querySelectorAll('.segment').forEach(b => {
+                        b.classList.remove('active');
+                        b.setAttribute('aria-checked', 'false');
+                    });
+                    targetSegment.classList.add('active');
+                    targetSegment.setAttribute('aria-checked', 'true');
+                    currentBatchSize = targetSize;
+                }
             }
             updateSummary();
-        } catch {
-            // Bad JSON — ignore
-        }
+        } catch {}
     }
 }

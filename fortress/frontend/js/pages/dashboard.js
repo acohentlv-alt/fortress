@@ -99,19 +99,41 @@ export async function renderDashboard(container, gen) {
 
 
         <!-- Welcome Banner -->
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); margin-bottom:var(--space-xl); flex-wrap:wrap">
-            <div>
-                <h1 class="page-title" style="margin-bottom:var(--space-xs)">${t('dashboard.greeting')}${user ? ' ' + escapeHtml(user.display_name || user.username) : ''} 👋</h1>
-                <p class="page-subtitle" style="margin-bottom:0">
-                    ${t('dashboard.companiesEnriched', { count: (s.total_companies || 0).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-US') })}
-                </p>
+        <div class="welcome-banner">
+            <div class="welcome-banner-main">
+                <div class="welcome-banner-text">
+                    <h1 class="welcome-banner-title">${t('welcomeBanner.title')}</h1>
+                    <p class="welcome-banner-subtitle">${t('welcomeBanner.subtitle', { date: (() => { const lang = getLang(); return new Date().toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric', month: 'long', year: 'numeric' }); })() })}</p>
+                </div>
+                ${s.total_companies === 0 ? `
+                    <div class="welcome-banner-empty">${t('welcomeBanner.emptyState')}</div>
+                ` : `
+                    <div class="welcome-banner-pills">
+                        <div class="stat-pill">
+                            <span class="stat-pill-value">${(s.total_companies || 0).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-US')}</span>
+                            <span class="stat-pill-label">${t('welcomeBanner.totalCompanies')}</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-pill-value">${(s.enriched_this_week || 0).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-US')}</span>
+                            <span class="stat-pill-label">${t('welcomeBanner.enrichedWeek')}</span>
+                        </div>
+                        <div class="stat-pill">
+                            <span class="stat-pill-value">${s.running_jobs || 0}</span>
+                            <span class="stat-pill-label">${t('welcomeBanner.activeBatches')}</span>
+                        </div>
+                    </div>
+                `}
+                <a href="#/new-batch" class="btn-hero">
+                    ${t('dashboard.newSearch')} <span class="btn-hero-arrow">→</span>
+                </a>
             </div>
-            <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
-                <a href="#/new-batch" class="btn btn-primary" style="display:flex; align-items:center; gap:var(--space-sm)">${t('dashboard.newSearch')}</a>
-                <a href="#/monitor" class="btn btn-secondary" style="display:flex; align-items:center; gap:var(--space-sm)">${t('dashboard.pipelineLive')}</a>
-                <button class="btn btn-secondary" id="btn-master-export" style="display:flex; align-items:center; gap:var(--space-sm)">${t('dashboard.export')}</button>
-                <button class="btn btn-secondary" id="btn-add-entity" style="display:flex; align-items:center; gap:var(--space-sm)">${t('dashboard.addEntity')}</button>
-            </div>
+        </div>
+
+        <!-- Secondary actions row -->
+        <div class="secondary-actions">
+            <a href="#/monitor" class="btn btn-secondary btn-sm">${t('dashboard.pipelineLive')}</a>
+            <button class="btn btn-secondary btn-sm" id="btn-master-export">${t('dashboard.export')}</button>
+            <button class="btn btn-secondary btn-sm" id="btn-add-entity">${t('dashboard.addEntity')}</button>
         </div>
 
 

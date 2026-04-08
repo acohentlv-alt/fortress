@@ -43,11 +43,13 @@ async def get_stats(request: Request):
         cache_key = f"stats_ws_{wid}"
         tags_clause = "WHERE qt.workspace_id = %s"
         jobs_clause = "AND workspace_id = %s"
-        stats_params: tuple = (wid, wid, wid, wid)
+        enriched_week_clause = "AND bt.workspace_id = %s"
+        stats_params: tuple = (wid, wid, wid, wid, wid)
     else:
         cache_key = "stats_admin"
         tags_clause = ""
         jobs_clause = ""
+        enriched_week_clause = ""
         stats_params = ()
 
     cached = _cached(cache_key, 60)
@@ -71,7 +73,11 @@ async def get_stats(request: Request):
              WHERE status IN ('completed', 'interrupted') {jobs_clause})  AS completed_jobs,
             (SELECT COUNT(*) FROM batch_data
              WHERE status IN ('in_progress', 'queued', 'triage')
-               {jobs_clause})                                           AS running_jobs
+               {jobs_clause})                                           AS running_jobs,
+            (SELECT COUNT(DISTINCT bt.siren)
+             FROM batch_tags bt
+             WHERE bt.created_at > NOW() - INTERVAL '7 days'
+               {enriched_week_clause})                                  AS enriched_this_week
         FROM tagged t
         JOIN companies co ON co.siren = t.siren
         LEFT JOIN merged_contacts cs ON cs.siren = t.siren
@@ -1364,3 +1370,37 @@ async def delete_job_group(batch_name: str, request: Request):
 
     _invalidate_cache()
     return {"deleted": True, "batch_name": batch_name, "jobs_deleted": len(job_ids), "tags_removed": tag_count}
+
+
+@router.get("/top-queries")
+async def get_top_queries(request: Request):
+    """Top 3 most successful recent queries for suggestion chips on new-batch page."""
+    user = getattr(request.state, "user", None)
+
+    if user and not user.is_admin:
+        wid = user.workspace_id
+        cache_key = f"topqueries_ws_{wid}"
+        where_clause = "workspace_id = %s AND executed_at > NOW() - INTERVAL '30 days' AND new_companies > 0"
+        params = (wid,)
+    else:
+        # Admin: global SUM across all workspaces
+        cache_key = "topqueries_admin"
+        where_clause = "executed_at > NOW() - INTERVAL '30 days' AND new_companies > 0"
+        params = ()
+
+    cached = _cached(cache_key, 300)
+    if cached is not None:
+        return cached
+
+    rows = await fetch_all(f"""
+        SELECT query_text, SUM(new_companies)::int AS total_new
+        FROM query_memory
+        WHERE {where_clause}
+        GROUP BY query_text
+        ORDER BY total_new DESC
+        LIMIT 3
+    """, params if params else None)
+
+    result = {"queries": rows or []}
+    _set_cache(cache_key, result)
+    return result

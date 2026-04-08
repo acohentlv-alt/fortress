@@ -330,6 +330,12 @@ async def lifespan(app: FastAPI):
                 # Clean up entries older than 30 days
                 await conn.execute("DELETE FROM system_log WHERE created_at < NOW() - INTERVAL '30 days'")
 
+                # ── batch_tags enrichment tracking ───────────────────
+                await conn.execute("""
+                    ALTER TABLE batch_tags
+                    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
+                """)
+
                 # ── Query Memory table ────────────────────────────────
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS query_memory (
@@ -348,6 +354,13 @@ async def lifespan(app: FastAPI):
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_query_memory_lookup
                     ON query_memory(workspace_id, sector_word, dept_code)
+                """)
+
+                # ── Index to accelerate /api/dashboard/top-queries ────
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_query_memory_recent
+                    ON query_memory(workspace_id, executed_at DESC)
+                    WHERE new_companies > 0
                 """)
 
                 # ── RGPD opposition table ────────────────────────────────

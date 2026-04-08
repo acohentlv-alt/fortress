@@ -126,6 +126,10 @@ export async function getDashboardStats() {
     return await request('/dashboard/stats');
 }
 
+export async function fetchTopQueries() {
+    return request('/dashboard/top-queries');
+}
+
 export async function getDashboardStatsByJob() {
     return await request('/dashboard/stats/by-job');
 }
