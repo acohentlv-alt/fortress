@@ -61,7 +61,7 @@ async def search_sirene(
 
     try:
         async with get_conn() as conn:
-            await conn.execute("SET LOCAL statement_timeout = '15000ms'")
+            await conn.execute("SET LOCAL statement_timeout = '5000ms'")
 
             if is_exact_siren:
                 # Exact SIREN lookup — PK index (instant)
@@ -92,17 +92,14 @@ async def search_sirene(
                     # 1-2 characters → simple prefix on denomination (fast LIKE)
                     where_parts.append("denomination LIKE %s")
                     params.append(f"{clean_q.upper()}%")
-                elif department:
-                    # 3+ chars WITH department filter → use ILIKE (B-tree on dept narrows to ~100K rows first)
-                    # Trigram similarity on 14.7M rows is too slow even with department filter
-                    where_parts.append("denomination ILIKE %s")
-                    params.append(f"%{clean_q.upper()}%")
                 else:
-                    # 3+ characters, no department → trigram fuzzy search (GIN index)
-                    # Use similarity() function — NOT the % operator (conflicts with psycopg)
-                    await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.15")
-                    where_parts.append("similarity(denomination, %s) > 0.15")
-                    params.append(clean_q.upper())
+                    # 3+ characters → ILIKE substring search.
+                    # pg_trgm's GIN index handles LIKE/ILIKE directly (no % operator needed).
+                    # Server-side execution: ~8ms without sort, ~22ms with similarity sort.
+                    # Works uniformly with or without department filter — the planner
+                    # BitmapAnds the trigram index with idx_companies_dept automatically.
+                    where_parts.append("denomination ILIKE %s")
+                    params.append(f"%{clean_q}%")
                     use_similarity_order = True
 
             # Filters always apply
@@ -124,7 +121,7 @@ async def search_sirene(
             fetch_limit = limit + 1
             if use_similarity_order:
                 order_clause = "ORDER BY similarity(denomination, %s) DESC"
-                data_params = list(params) + [clean_q.upper(), fetch_limit, offset]
+                data_params = list(params) + [clean_q, fetch_limit, offset]
             elif not clean_q and has_filters:
                 # Filter-only (no text): no explicit sort — use natural index order.
                 # Sorting by name or SIREN forces a costly sort on large result sets (e.g. Paris).
