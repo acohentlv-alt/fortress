@@ -69,6 +69,10 @@ async def run_batch(body: BatchRunRequest, request: Request):
     # Build base_id for batch numbering (embeds _W{workspace_id} when not admin)
     base_id = _build_batch_id(sector, dept, workspace_id)
 
+    # Defined here so the except handler below can safely reference it even
+    # if an exception fires before the SELECT/INSERT block assigns it.
+    batch_id = None
+
     # Build filters_json from optional fields
     filters_dict = {}
     if body.naf_code:
@@ -174,7 +178,10 @@ async def run_batch(body: BatchRunRequest, request: Request):
     except Exception as exc:
         return JSONResponse(
             status_code=500,
-            content={"error": f"Database insert failed: {exc}", "batch_id": batch_id},
+            content={
+                "error": f"Database insert failed: {exc}",
+                **({"batch_id": batch_id} if batch_id else {}),
+            },
         )
 
     # Spawn the runner as a detached subprocess with stderr logging
