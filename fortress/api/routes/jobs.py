@@ -326,7 +326,7 @@ async def resume_job(batch_id: str, request: Request):
     async with get_conn() as conn:
         # SELECT FOR UPDATE locks the row so two simultaneous clicks can't both pass
         row = await (await conn.execute(
-            f"""SELECT status, workspace_id, batch_name
+            f"""SELECT status, workspace_id, batch_name, batch_size, companies_scraped
                 FROM batch_data
                 WHERE batch_id = %s {ws_scope}
                 FOR UPDATE""",
@@ -339,6 +339,22 @@ async def resume_job(batch_id: str, request: Request):
         current_status = row[0]
         row_workspace_id = row[1]
         batch_name = row[2]
+        batch_size_row = row[3] or 0
+        companies_scraped_row = row[4] or 0
+
+        # Size-cap guard: a batch that already reached its target has nothing
+        # left to resume even if the watchdog marked it interrupted. Return
+        # 409 with a clear French message so direct endpoint hits (stale
+        # frontend caches) surface the state instead of silently restarting.
+        if batch_size_row > 0 and companies_scraped_row >= batch_size_row:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "Ce batch a déjà atteint sa taille cible — aucune requête à reprendre",
+                    "companies_scraped": companies_scraped_row,
+                    "batch_size": batch_size_row,
+                },
+            )
 
         # Only 'interrupted' is resumable — never 'failed', 'completed', or anything else
         if current_status != 'interrupted':

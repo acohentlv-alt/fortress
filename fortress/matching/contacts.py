@@ -401,25 +401,53 @@ _SIREN_RE = re.compile(
 )
 
 
+# Hosting providers and domain registrars whose SIRENs commonly appear in
+# website footers as the TLS/DNS/hosting operator, NOT the actual business.
+# When extract_siret() or extract_siren_from_html() pick one of these up,
+# we treat it as "no SIREN found" and leave the MAPS entity unlinked.
+# Sources verified on annuaire-entreprises.data.gouv.fr on 2026-04-09.
+_HOSTING_SIRENS: frozenset[str] = frozenset({
+    "424761419",  # OVH
+    "431303775",  # IONOS / 1&1 (IONOS SARL)
+    "423093459",  # Gandi
+    "433115904",  # Scaleway / Online.net / Dedibox / BookMyName
+    "510909807",  # o2switch
+})
+
+
+def _accept_siren(siren: str | None) -> str | None:
+    """Return the SIREN if it's a real business SIREN, None if it's blocked.
+
+    Used by extract_siret() and extract_siren_from_html() to prevent hosting
+    provider SIRENs from being attached to customer MAPS entities.
+    """
+    if not siren:
+        return None
+    if siren in _HOSTING_SIRENS:
+        return None
+    return siren
+
+
 def extract_siret(html: str) -> str | None:
     """Extract SIREN (9 digits) from SIRET or SIREN mentions in HTML.
 
     If a 14-digit SIRET is found, returns the first 9 digits (the SIREN).
-    Returns None if nothing found.
+    Returns None if nothing found, or if the extracted SIREN is a known
+    hosting provider (see _HOSTING_SIRENS).
     """
     # Try SIRET first (more specific, 14 digits)
     m = _SIRET_RE.search(html)
     if m:
         digits = re.sub(r"\s", "", m.group(1))
         if len(digits) == 14:
-            return digits[:9]  # SIREN = first 9 of SIRET
+            return _accept_siren(digits[:9])  # SIREN = first 9 of SIRET
 
     # Fallback: look for explicit SIREN mention (9 digits)
     m = _SIREN_RE.search(html)
     if m:
         digits = re.sub(r"\s", "", m.group(1))
         if len(digits) == 9:
-            return digits
+            return _accept_siren(digits)
 
     return None
 
@@ -451,6 +479,9 @@ def extract_siren_from_html(html: str) -> str | None:
 
     Used by crawl.py after fetching website pages.
     More thorough than extract_siret() — uses context patterns and footer analysis.
+    Filters out known hosting provider SIRENs via _accept_siren(); when a
+    strategy returns a blocked SIREN we fall through to the next strategy
+    so a real business SIREN elsewhere in the page can still be found.
     """
     if not html:
         return None
@@ -459,8 +490,8 @@ def extract_siren_from_html(html: str) -> str | None:
     match = _SIREN_CONTEXT_RE.search(html)
     if match:
         raw = match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-            return raw
+        if len(raw) == 9 and raw.isdigit() and raw != "000000000" and (accepted := _accept_siren(raw)):
+            return accepted
 
     # Strategy 2: SIRET (14 digits) — first 9 are the SIREN
     siret_match = _SIRET_14_RE.search(html)
@@ -468,8 +499,8 @@ def extract_siren_from_html(html: str) -> str | None:
         raw = siret_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
         if len(raw) == 14 and raw.isdigit():
             siren = raw[:9]
-            if siren != "000000000":
-                return siren
+            if siren != "000000000" and (accepted := _accept_siren(siren)):
+                return accepted
 
     # Strategy 3: Check the footer area (last 25% of page)
     footer_start = len(html) * 3 // 4
@@ -477,8 +508,8 @@ def extract_siren_from_html(html: str) -> str | None:
     footer_match = _FOOTER_SIREN_RE.search(footer_html)
     if footer_match:
         raw = footer_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-        if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-            return raw
+        if len(raw) == 9 and raw.isdigit() and raw != "000000000" and (accepted := _accept_siren(raw)):
+            return accepted
 
     # Strategy 4: Check inside <footer> tag if present
     footer_tag = re.search(r'<footer[^>]*>(.*?)</footer>', html, re.DOTALL | re.IGNORECASE)
@@ -486,8 +517,8 @@ def extract_siren_from_html(html: str) -> str | None:
         ft_match = _FOOTER_SIREN_RE.search(footer_tag.group(1))
         if ft_match:
             raw = ft_match.group(1).replace(" ", "").replace("\u00a0", "").replace("-", "")
-            if len(raw) == 9 and raw.isdigit() and raw != "000000000":
-                return raw
+            if len(raw) == 9 and raw.isdigit() and raw != "000000000" and (accepted := _accept_siren(raw)):
+                return accepted
 
     return None
 

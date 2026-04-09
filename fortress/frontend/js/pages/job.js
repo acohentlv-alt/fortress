@@ -123,7 +123,15 @@ export async function renderJob(container, batchId) {
                 <div style="position:relative">
                     <button id="btn-download-dropdown" class="btn btn-primary" title="${t('job.download')}">${t('job.download')}</button>
                 </div>
-                ${job.status === 'interrupted' ? `<button id="btn-resume" class="btn btn-primary" title="${t('job.resume')}">${t('job.resume')}</button>` : ''}
+                ${(() => {
+                    if (job.status !== 'interrupted') return '';
+                    const size = job.batch_size || 0;
+                    const done = job.companies_scraped || 0;
+                    // Hide Reprendre when the batch already hit its size target —
+                    // there's nothing left to resume, the button would be a no-op.
+                    if (size > 0 && done >= size) return '';
+                    return `<button id="btn-resume" class="btn btn-primary" title="${t('job.resume')}">${t('job.resume')}</button>`;
+                })()}
                 ${(job.status === 'completed' || job.status === 'failed' || job.status === 'interrupted' || job.status === 'cancelled') ? `<button id="btn-rerun" class="btn btn-primary" title="${t('job.rerun')}">${t('job.rerun')}</button>` : ''}
                 <button id="btn-delete-job" class="btn btn-danger" title="${t('job.delete')}">🗑️</button>
                 ${job.status === 'in_progress' ?
