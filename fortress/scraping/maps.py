@@ -604,26 +604,77 @@ class PlaywrightMapsScraper:
 
                 if current_count == prev_count:
                     stale_rounds += 1
-                    if stale_rounds >= 4:
-                        # No new results after 4 scrolls — we've loaded everything
-                        break
                 else:
                     stale_rounds = 0
                     prev_count = current_count
 
-                # Check if "end of list" marker is visible
-                end_marker = await page.query_selector(
-                    'span.HlvSq, '       # "Vous avez vu tous les résultats"
-                    'p.fontBodyMedium:has-text("résultat")'
-                )
-                if end_marker:
+                # Gated end-of-list sentinel: only trust the marker after at
+                # least 2 stale rounds. Google Maps renders this footer as a
+                # placeholder during lazy-load transitions, so checking it
+                # before any stall means we exit prematurely (the Apr-8 bug
+                # that lost ~48% of cards). After 2+ stale rounds it is a
+                # legitimate "you've seen all results" signal — small-city
+                # queries can still fast-exit via this path.
+                if stale_rounds >= 2:
+                    end_marker = await page.query_selector(
+                        'span.HlvSq, '       # "Vous avez vu tous les résultats"
+                        'p.fontBodyMedium:has-text("résultat")'
+                    )
+                    if end_marker:
+                        try:
+                            end_text = await end_marker.inner_text()
+                            if "tous les" in end_text.lower() or "no more" in end_text.lower():
+                                log.debug("maps_discovery.end_of_list", query=query)
+                                break
+                        except Exception:
+                            pass
+
+                # Stall recovery: after 6 consecutive rounds with no new cards,
+                # do ONE recovery pass before giving up. Google Maps' lazy-loader
+                # is edge-triggered: scrolling up then back down re-activates the
+                # "near bottom" observer that fetches the next batch of ~10 cards.
+                # On slow Render/Neon hops, this recovers cards that the plain
+                # stall break was missing (~48% data loss measured on Apr 8).
+                if stale_rounds >= 6:
+                    log.debug(
+                        "maps_discovery.stall_detected",
+                        query=query,
+                        count=current_count,
+                        round=scroll_round + 1,
+                    )
                     try:
-                        end_text = await end_marker.inner_text()
-                        if "tous les" in end_text.lower() or "no more" in end_text.lower():
-                            log.debug("maps_discovery.end_of_list", query=query)
-                            break
-                    except Exception:
-                        pass
+                        await feed.evaluate(
+                            "el => { el.scrollTop = Math.max(0, el.scrollTop - 500); }"
+                        )
+                        await page.wait_for_timeout(500)
+                        await feed.evaluate(
+                            "el => el.scrollTo(0, el.scrollHeight)"
+                        )
+                        await page.wait_for_timeout(3000)
+                    except Exception as exc:
+                        log.debug("maps_discovery.recovery_scroll_error", error=str(exc))
+
+                    recovered_results = await page.query_selector_all('a.hfpxzc')
+                    recovered_count = len(recovered_results)
+                    if recovered_count > current_count:
+                        log.info(
+                            "maps_discovery.stall_recovered",
+                            query=query,
+                            before=current_count,
+                            after=recovered_count,
+                        )
+                        stale_rounds = 0
+                        prev_count = recovered_count
+                        # Fall through to normal scroll + wait below — gives
+                        # the lazy-loader more time to render the batch we
+                        # just triggered before the next count.
+                    else:
+                        log.debug(
+                            "maps_discovery.stall_confirmed",
+                            query=query,
+                            final_count=current_count,
+                        )
+                        break
 
                 # Scroll the feed container down
                 await feed.evaluate(
