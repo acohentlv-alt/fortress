@@ -285,21 +285,25 @@ async def start_deep_enrich(body: DeepEnrichRequest, background_tasks: Backgroun
                     "forbidden_sirens": foreign_list,
                 })
         
+    # Extract workspace_id from user (None for admin — that's fine, admin sees NULL-scoped data)
+    _user = getattr(request.state, "user", None)
+    _workspace_id = _user.workspace_id if _user and not _user.is_admin else None
+
     batch_id = f"MANUAL_ENRICH_{uuid.uuid4().hex[:8].upper()}"
-    
+
     async with get_conn() as conn:
         # Create standard batch_data entry for Analyze dashboard tracking
         await conn.execute("""
-            INSERT INTO batch_data (batch_id, batch_name, status, total_companies)
-            VALUES (%s, %s, 'running', %s)
-        """, (batch_id, f"Enrichissement Manuel ({len(sirens)})", len(sirens)))
-        
+            INSERT INTO batch_data (batch_id, batch_name, status, total_companies, workspace_id)
+            VALUES (%s, %s, 'running', %s, %s)
+        """, (batch_id, f"Enrichissement Manuel ({len(sirens)})", len(sirens), _workspace_id))
+
         # Link SIRENS via batch_tags
         now = datetime.datetime.now()
         for s in sirens:
             await conn.execute(
-                "INSERT INTO batch_tags (siren, batch_id, batch_name, tagged_at) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                (s, batch_id, "Enrichissement Manuel", now)
+                "INSERT INTO batch_tags (siren, batch_id, batch_name, workspace_id, tagged_at) VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (s, batch_id, "Enrichissement Manuel", _workspace_id, now)
             )
         await conn.commit()
 
@@ -547,6 +551,10 @@ async def enrich_company(siren: str, body: EnrichRequest, request: Request):
     # ── Background dispatch: create micro scrape_job + spawn runner ─
     batch_id = f"ENRICH_{siren}"
 
+    # Extract workspace_id from user
+    _user = getattr(request.state, "user", None)
+    _workspace_id = _user.workspace_id if _user and not _user.is_admin else None
+
     # Create or reset the micro job (batch_id is indexed but not UNIQUE)
     try:
         async with get_conn() as conn:
@@ -566,9 +574,9 @@ async def enrich_company(siren: str, body: EnrichRequest, request: Request):
                 # Create new micro job
                 await conn.execute("""
                     INSERT INTO batch_data
-                        (batch_id, batch_name, status, batch_number, batch_offset, total_companies)
-                    VALUES (%s, %s, 'queued', 1, 0, 1)
-                """, (batch_id, f"enrich {siren}"))
+                        (batch_id, batch_name, status, batch_number, batch_offset, total_companies, workspace_id)
+                    VALUES (%s, %s, 'queued', 1, 0, 1, %s)
+                """, (batch_id, f"enrich {siren}", _workspace_id))
 
             # Ensure the company is tagged for this micro-job
             tag_exists = await conn.execute(
@@ -577,8 +585,8 @@ async def enrich_company(siren: str, body: EnrichRequest, request: Request):
             )
             if not await tag_exists.fetchone():
                 await conn.execute(
-                    "INSERT INTO batch_tags (siren, batch_name, tagged_at) VALUES (%s, %s, NOW())",
-                    (siren, f"enrich {siren}"),
+                    "INSERT INTO batch_tags (siren, batch_id, batch_name, workspace_id, tagged_at) VALUES (%s, %s, %s, %s, NOW())",
+                    (siren, batch_id, f"enrich {siren}", _workspace_id),
                 )
 
             await conn.commit()
@@ -1039,6 +1047,14 @@ async def get_enrich_history(siren: str, request: Request):
             if owner and owner.get("workspace_id") != ws_id:
                 return JSONResponse(status_code=403, content={"error": "Accès refusé — entreprise hors de votre espace."})
 
+    # For real SIRENs, also gate on workspace
+    if not siren.startswith("MAPS"):
+        is_admin, ws_id = _get_workspace_filter(request)
+        if not is_admin and ws_id is not None:
+            from fortress.api.routes._workspace_gate import siren_in_workspace
+            if not await siren_in_workspace(siren, ws_id):
+                return {"siren": siren, "history": [], "count": 0}
+
     rows = await fetch_all("""
         SELECT
             action, result, source_url, detail, search_query, duration_ms, timestamp
@@ -1157,6 +1173,31 @@ async def _get_company_impl(siren: str, request=None):
 
     if not company:
         return JSONResponse(status_code=404, content={"error": "Company not found", "siren": siren})
+
+    # Real-SIREN workspace gate — non-admin users without batch_tags for this SIREN
+    # see only the public SIRENE base data (name, NAF, address), no enrichment.
+    if not siren.startswith("MAPS") and request:
+        user = getattr(request.state, "user", None)
+        if user and not user.is_admin:
+            from fortress.api.routes._workspace_gate import siren_in_workspace
+            if not await siren_in_workspace(siren, user.workspace_id):
+                return {
+                    "company": company,
+                    "contacts": [],
+                    "merged_contact": {},
+                    "officers": [],
+                    "batch_tags": [],
+                    "history": [],
+                    "linked_company": None,
+                    "sirene_denomination": None,
+                    "link_method": None,
+                    "link_confidence": None,
+                    "suggested_matches": [],
+                    "matching_available": False,
+                    "data_conflicts": [],
+                    "siren_match": None,
+                    "alerts": [],
+                }
 
     # MAPS workspace gate
     if siren.startswith("MAPS") and request:

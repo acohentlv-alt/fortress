@@ -94,8 +94,8 @@ async def create_user(request: Request):
         return JSONResponse(status_code=400, content={"error": "Identifiant et mot de passe requis."})
     if role not in _VALID_ROLES:
         return JSONResponse(status_code=400, content={"error": "Rôle invalide. Les valeurs acceptées sont : admin, head, user."})
-    if len(password) < 4:
-        return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 4 caractères)."})
+    if len(password) < 10:
+        return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 10 caractères)."})
 
     # Workspace validation per role
     if role == "head" and not workspace_id:
@@ -197,8 +197,8 @@ async def update_user(user_id: int, request: Request):
         params.append(body["display_name"])
 
     if "password" in body and body["password"]:
-        if len(body["password"]) < 4:
-            return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 4 caractères)."})
+        if len(body["password"]) < 10:
+            return JSONResponse(status_code=400, content={"error": "Mot de passe trop court (minimum 10 caractères)."})
         updates.append("password_hash = %s")
         params.append(hash_password(body["password"]))
 

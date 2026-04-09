@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
+from fortress.api.routes._workspace_gate import siren_in_workspace
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -22,33 +23,13 @@ class NoteCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
 
 
-async def _siren_in_workspace(siren: str, workspace_id) -> bool:
-    """Return True if the SIREN belongs to the given workspace.
-
-    For MAPS entities, check companies.workspace_id directly.
-    For real SIRENs, check via batch_tags → batch_data.workspace_id.
-    """
-    if siren.startswith("MAPS"):
-        row = await fetch_one(
-            "SELECT workspace_id FROM companies WHERE siren = %s", (siren,)
-        )
-        return row is not None and row.get("workspace_id") == workspace_id
-    else:
-        row = await fetch_one("""
-            SELECT 1 FROM batch_tags bt
-            JOIN batch_data bd ON bd.batch_id = bt.batch_id
-            WHERE bt.siren = %s AND bd.workspace_id = %s
-            LIMIT 1
-        """, (siren, workspace_id))
-        return row is not None
-
 
 @router.get("/{siren}")
 async def list_notes(siren: str, request: Request):
     """Return all notes for a company, newest first."""
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
-        if not await _siren_in_workspace(siren, user.workspace_id):
+        if not await siren_in_workspace(siren, user.workspace_id):
             return JSONResponse(status_code=403, content={"error": "Accès refusé."})
 
     notes = await fetch_all("""
@@ -73,7 +54,7 @@ async def add_note(siren: str, body: NoteCreate, request: Request):
 
         # Workspace scoping: non-admin users can only add notes to their workspace companies
         if not user.is_admin:
-            if not await _siren_in_workspace(siren, user.workspace_id):
+            if not await siren_in_workspace(siren, user.workspace_id):
                 return JSONResponse(status_code=403, content={"error": "Accès refusé."})
 
         # Verify company exists

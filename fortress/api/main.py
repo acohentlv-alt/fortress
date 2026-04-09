@@ -25,8 +25,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 
+from slowapi.errors import RateLimitExceeded
+
 from fortress.api.auth import decode_session_token
 from fortress.api.db import close_pool, init_pool, pool_status
+from fortress.api.rate_limit import limiter
 from fortress.api.routes import activity, admin, auth as auth_routes, batch, blacklist, bug_report, client, companies, contact, contacts_list, dashboard, departments, export, health, jobs, notes, sirene
 from fortress.config.settings import settings
 
@@ -36,6 +39,11 @@ logger = logging.getLogger("fortress.api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle — resilient to DB failures."""
+    if settings.secure_cookies and settings.session_secret == "fortress-dev-secret-change-me":
+        raise RuntimeError(
+            "FATAL: SESSION_SECRET is still the public default value. "
+            "Set SESSION_SECRET env var to a 32-byte random value on Render before booting."
+        )
     await init_pool()
     db = pool_status()
     if db["connected"]:
@@ -408,6 +416,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+
+
+async def _french_rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"error": "Trop de tentatives. Réessayez dans quelques minutes."},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _french_rate_limit_handler)
+
+
 async def _log_system_error(level: str, message: str, source: str = "api", traceback: str = None, path: str = None):
     """Write an error to system_log. Fire-and-forget — never crashes the caller."""
     try:
@@ -531,6 +552,28 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(CacheControlMiddleware)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.sheetjs.com https://html2canvas.hertzen.com; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self' wss: https:; "
+            "font-src 'self' data:"
+        )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # CORS — restrict to configured frontend origin

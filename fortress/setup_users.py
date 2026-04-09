@@ -65,8 +65,8 @@ def main():
             continue
 
         password = getpass.getpass("Mot de passe: ")
-        if len(password) < 4:
-            print("  ❌ Mot de passe trop court (minimum 4 caractères).\n")
+        if len(password) < 10:
+            print("  ❌ Mot de passe trop court (minimum 10 caractères).\n")
             continue
 
         password_confirm = getpass.getpass("Confirmer le mot de passe: ")

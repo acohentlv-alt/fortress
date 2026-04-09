@@ -19,6 +19,7 @@ from fortress.api.auth import (
     verify_password,
 )
 from fortress.api.db import get_conn
+from fortress.api.rate_limit import limiter
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api.auth")
@@ -31,6 +32,7 @@ _COOKIE_MAX_AGE = 2_592_000  # 30 days
 
 
 @router.post("/login")
+@limiter.limit("10/15minutes")
 async def login(request: Request):
     """Authenticate with username + password. Sets a session cookie.
 
