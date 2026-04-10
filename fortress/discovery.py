@@ -2201,7 +2201,23 @@ async def run(batch_id: str) -> None:
                     )
 
                 # ── Mark completed or interrupted ─────────────────────
-                final_status = "interrupted" if _shutdown else "completed"
+                # Check if a cancel was requested while we were finishing up —
+                # if so, honour 'cancelled' instead of overwriting with 'completed'.
+                try:
+                    _cancel_check = await (await conn_holder[0].execute(
+                        "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                        (batch_id,),
+                    )).fetchone()
+                    _was_cancelled = bool(_cancel_check and _cancel_check[0])
+                except Exception:
+                    _was_cancelled = False
+
+                if _was_cancelled:
+                    final_status = "cancelled"
+                elif _shutdown:
+                    final_status = "interrupted"
+                else:
+                    final_status = "completed"
                 _final_written = False
                 for _attempt in range(3):
                     try:

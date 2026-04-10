@@ -256,13 +256,13 @@ async def delete_job(batch_id: str, request: Request):
 
 @router.post("/{batch_id}/cancel")
 async def cancel_job(batch_id: str, request: Request):
-    """Request graceful cancellation of a running batch. Admin or head."""
+    """Request graceful cancellation of a running batch. All authenticated users."""
     user = getattr(request.state, 'user', None)
-    if not user or user.role not in ('admin', 'head'):
+    if not user:
         return JSONResponse(status_code=403, content={"error": "Accès refusé"})
 
     if user.is_admin:
-        ws_scope = "AND workspace_id IS NULL"
+        ws_scope = ""
         ws_params = ()
     else:
         ws_scope = "AND workspace_id = %s"
@@ -283,7 +283,7 @@ async def cancel_job(batch_id: str, request: Request):
             })
 
         await conn.execute(
-            f"UPDATE batch_data SET cancel_requested = TRUE, updated_at = NOW() WHERE batch_id = %s {ws_scope}",
+            f"UPDATE batch_data SET cancel_requested = TRUE, status = 'cancelled', updated_at = NOW() WHERE batch_id = %s {ws_scope}",
             (batch_id,) + ws_params,
         )
         await conn.commit()
