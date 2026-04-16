@@ -199,6 +199,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         if (method === 'siren_website') return t('company.linkReasonSirenWebsite');
         if (method === 'fuzzy_name') return t('company.linkReasonFuzzy');
         if (method === 'manual') return t('company.linkReasonManual');
+        if (method === 'surname') return t('company.linkReasonSurname');
         return t('company.linkReasonAuto');
     };
 
@@ -254,6 +255,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
             : m.method === 'enseigne' ? t('company.methodLabelEnseigne')
             : m.method === 'enseigne_weak' ? t('company.methodLabelEnseigneWeak')
             : m.method === 'siren_website' ? t('company.methodLabelSirenWebsite')
+            : m.method === 'surname' ? t('company.methodLabelSurname')
             : m.method;
 
         // Build additional context hints

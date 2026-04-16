@@ -104,6 +104,7 @@ def _normalize_name(name: str) -> str:
         "sarl", "sas", "sasu", "eurl", "sa", "sci", "snc",
         "scs", "sca", "ei", "eirl", "asso", "association",
         "et", "cie", "fils", "freres", "groupe", "holding",
+        "earl", "gaec", "scea", "scev",
     }
     tokens = [t for t in cleaned.split() if t not in _LEGAL and len(t) > 0]
     return " ".join(tokens)
@@ -231,6 +232,15 @@ _INDUSTRY_WORDS = {
 }
 
 
+_LEGAL_FORM_TOKENS = frozenset({
+    "earl", "gaec", "scea", "scev", "sci", "sarl", "sas",
+    "sasu", "eurl", "sa", "snc", "eirl", "ei",
+})
+
+_SURNAME_PREFIXES = frozenset({
+    "domaine", "mas", "chateau", "cave", "vignoble", "clos",
+})
+
 _FOREIGN_INDICATORS = frozenset({
     "espagne", "spain", "españa", "espanya",
     "italia", "italy", "italie",
@@ -270,15 +280,19 @@ def _is_in_france(address: str | None) -> bool:
 def _is_person_name(name: str) -> bool:
     """Detect if a name looks like a person name (e.g. 'LORENE PRIGENT').
 
-    Heuristic: exactly 2 capitalized tokens, no digits, no common business words.
+    Heuristic: exactly 2 capitalized tokens, no digits, no legal form prefix.
     """
     tokens = name.strip().split()
     if len(tokens) != 2:
         return False
     if any(c.isdigit() for c in name):
         return False
-    # Both tokens should be alpha-only and start with uppercase
-    return all(t[0].isupper() and t.isalpha() for t in tokens)
+    if not all(t[0].isupper() and t.isalpha() for t in tokens):
+        return False
+    # If the first token is a legal form, this is not a person name
+    if tokens[0].lower() in _LEGAL_FORM_TOKENS:
+        return False
+    return True
 
 
 def _is_industry_generic(name: str) -> bool:
@@ -434,11 +448,16 @@ async def _match_to_sirene(
         siren_cur = await conn.execute(
             """SELECT siren, denomination, enseigne, adresse, ville, departement
                FROM companies
-               WHERE siren = %s AND siren NOT LIKE 'MAPS%%'
+               WHERE siren = %s AND siren NOT LIKE 'MAPS%%' AND statut = 'A'
                LIMIT 1""",
             (extracted_siren,),
         )
         siren_row = await siren_cur.fetchone()
+        if not siren_row:
+            log.warning(
+                "discovery.siren_website_closed",
+                extracted_siren=extracted_siren,
+            )
         if siren_row:
             sirene_dept = siren_row[5] or ""
             sirene_denom = siren_row[1] or ""
@@ -481,9 +500,14 @@ async def _match_to_sirene(
     # If it matches the Maps name well, it's the business — even if the
     # legal address is different (owner registered company elsewhere).
     if departement:
-        term_clauses = " OR ".join(["LOWER(enseigne) LIKE %s"] * len(meaningful_terms))
-        ens_params: list[Any] = [f"%{t}%" for t in meaningful_terms]
-        ens_params.extend([departement])
+        term_clauses = " OR ".join(
+            ["(LOWER(enseigne) LIKE %s OR LOWER(denomination) LIKE %s)"] * len(meaningful_terms)
+        )
+        ens_params: list[Any] = []
+        for t in meaningful_terms:
+            ens_params.append(f"%{t}%")   # for enseigne
+            ens_params.append(f"%{t}%")   # for denomination
+        ens_params.append(departement)
         ens_cur = await conn.execute(
             f"""SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
                       forme_juridique, adresse, code_postal, ville, departement,
@@ -503,7 +527,10 @@ async def _match_to_sirene(
             best_ens_score = 0.0
             for row in ens_rows:
                 enseigne_val = row[3] or ""
-                score = _name_match_score(maps_name, enseigne_val)
+                score = max(
+                    _name_match_score(maps_name, enseigne_val),
+                    _name_match_score(maps_name, row[2] or ""),
+                )
                 if score > best_ens_score and score >= 0.75:
                     best_ens_score = score
                     best_ens = {
@@ -741,6 +768,110 @@ async def _match_to_sirene(
         )
         return best_candidate
 
+    # ── Step 4b — Surname extraction (domaine / mas / chateau / cave / vignoble / clos)
+    # If Maps label starts with a French agricultural/viniculture prefix, extract
+    # the last token as a surname candidate and search SIRENE for it. Requires at
+    # least 2 independent signals agree (surname + CP OR ville OR phone OR street).
+    # Returns method='surname' which always lands as pending (user decides).
+    name_tokens_4b = _normalize_name(maps_name).split()
+    if (
+        name_tokens_4b
+        and name_tokens_4b[0] in _SURNAME_PREFIXES
+        and len(name_tokens_4b) >= 2
+        and len(name_tokens_4b[-1]) >= 3
+        and name_tokens_4b[-1] not in _INDUSTRY_WORDS
+    ):
+        surname_candidate = name_tokens_4b[-1]
+        pattern = f"%{surname_candidate}%"
+        surname_cur = await conn.execute(
+            """SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
+                      forme_juridique, adresse, code_postal, ville, departement, region,
+                      statut, date_creation, tranche_effectif, latitude, longitude, fortress_id
+               FROM companies
+               WHERE departement = %s
+                 AND statut = 'A'
+                 AND siren NOT LIKE 'MAPS%%'
+                 AND (LOWER(denomination) LIKE %s OR LOWER(enseigne) LIKE %s)
+               LIMIT 20""",
+            (departement, pattern, pattern),
+        )
+        surname_rows = await surname_cur.fetchall()
+
+        best_surname_match = None
+        best_surname_signals = 1  # S1 surname always counts; need >= 2 total
+
+        def _norm_phone_local(p: str) -> str:
+            """Normalize a French phone number to 0XXXXXXXXX for comparison."""
+            p = re.sub(r'[\s\-\.]', '', p or "")
+            if p.startswith('+33') and len(p) == 12:
+                return '0' + p[3:]
+            return p
+
+        for row in surname_rows:
+            db_siren = row[0]
+            db_cp = row[8] or ""
+            db_ville = (row[9] or "").lower()
+            db_adresse = (row[7] or "").lower()
+
+            signals_met = []
+
+            # S1 — Surname as a whole token in denomination or enseigne (after normalization)
+            db_denom_tokens = _normalize_name(row[2] or "").split()
+            db_enseigne_tokens = _normalize_name(row[3] or "").split()
+            if surname_candidate in db_denom_tokens or surname_candidate in db_enseigne_tokens:
+                signals_met.append("surname")
+            else:
+                continue  # S1 required; substring alone doesn't count
+
+            # S2 — Postal code exact match
+            if maps_cp and db_cp and maps_cp == db_cp:
+                signals_met.append("cp")
+
+            # S3 — Ville token overlap (any 4+ char token)
+            if maps_city_tokens and db_ville:
+                if any(t in db_ville for t in maps_city_tokens if len(t) >= 4):
+                    signals_met.append("ville")
+
+            # S4 — Phone match: check contacts table for this SIREN
+            if maps_phone:
+                phone_cur2 = await conn.execute(
+                    "SELECT phone FROM contacts WHERE siren = %s AND phone IS NOT NULL",
+                    (db_siren,),
+                )
+                db_phones = [r[0] for r in await phone_cur2.fetchall()]
+                for db_phone in db_phones:
+                    if _norm_phone_local(db_phone) == _norm_phone_local(maps_phone):
+                        signals_met.append("phone")
+                        break
+
+            # S5 — Street-number + street match (reuse maps_street_key from Step 4)
+            if maps_street_key and db_adresse and _extract_street_key:
+                db_street_key = _extract_street_key(db_adresse)
+                if db_street_key and db_street_key == maps_street_key:
+                    signals_met.append("street")
+
+            if len(signals_met) >= 2 and len(signals_met) > best_surname_signals:
+                best_surname_match = row
+                best_surname_signals = len(signals_met)
+
+        if best_surname_match:
+            log.info(
+                "maps_discovery.surname_match",
+                maps_name=maps_name,
+                siren=best_surname_match[0],
+                denomination=best_surname_match[2],
+                surname=surname_candidate,
+            )
+            return {
+                "siren": best_surname_match[0],
+                "denomination": best_surname_match[2],
+                "enseigne": best_surname_match[3] or "",
+                "score": 0.75,
+                "method": "surname",
+                "adresse": best_surname_match[7] or "",
+                "ville": best_surname_match[9] or "",
+            }
+
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
     # Each term needs 2 params: one for enseigne LIKE, one for denomination LIKE
     name_clauses = " OR ".join(
@@ -749,6 +880,7 @@ async def _match_to_sirene(
     conditions = [
         f"({name_clauses})",
         "statut = 'A'",
+        "siren NOT LIKE 'MAPS%%'",
     ]
     params: list[Any] = []
     for t in meaningful_terms:

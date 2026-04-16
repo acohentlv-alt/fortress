@@ -470,6 +470,7 @@ function _renderPendingLinks(data, rootContainer) {
                             : r.link_method === 'phone_weak' ? t('dashboard.reasonPhoneWeak')
                             : r.link_method === 'enseigne' ? t('dashboard.reasonEnseigne')
                             : r.link_method === 'enseigne_weak' ? t('dashboard.reasonEnseigneWeak')
+                            : r.link_method === 'surname' ? t('dashboard.reasonSurname')
                             : r.link_method || '—';
                         const hints = [];
                         if (r.suggested_ville && r.maps_address &&
