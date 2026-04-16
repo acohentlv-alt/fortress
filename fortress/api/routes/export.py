@@ -119,6 +119,7 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
         ORDER BY co.denomination
     """, (batch_id, batch_id))
 
@@ -143,6 +144,7 @@ async def export_master_csv(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
         ORDER BY co.denomination
     """)
     if not rows:
@@ -181,6 +183,7 @@ async def export_master_xlsx(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
         ORDER BY co.denomination
     """)
     return _to_xlsx(rows, "fortress_master.xlsx")
@@ -249,6 +252,9 @@ async def export_contacts_filtered_csv(
     if naf_code:
         where_parts.append("co.naf_code LIKE %s")
         params.append(f"{naf_code.strip().upper()}%")
+
+    # Exclude pending MAPS rows — they have no confirmed SIRENE data and are not export-ready
+    where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')")
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
@@ -419,6 +425,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
+            WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
             ORDER BY co.denomination
         """, (user.workspace_id, body.sirens))
     else:
@@ -428,6 +435,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM companies co
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
+              AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
             ORDER BY co.denomination
         """, (body.sirens, body.sirens))
 

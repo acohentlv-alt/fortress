@@ -343,7 +343,10 @@
     "crawlScanning": "⏳ Scan du site en cours...",
     "crawlNoContact": "Aucun contact trouvé sur le site",
     "conflictReason": "{{src1}} et {{src2}} ont trouvé des valeurs différentes",
-    "websiteCrawlLabel": "Données site web"
+    "websiteCrawlLabel": "Données site web",
+    "nafVerified": "NAF vérifié",
+    "nafMismatch": "NAF incompatible",
+    "nafMapsOnly": "NAF non vérifié"
   },
   "contacts": {
     "title": "Contacts",
@@ -409,7 +412,9 @@
     "enrichLaunching": "Enrichissement de {{count}} entreprise(s)…",
     "enrichLaunched": "Enrichissement lancé pour {{count}} entreprise(s)",
     "enrichError": "Erreur lors de l'enrichissement",
-    "bulkCount": "☑ {{count}} sélectionnée{{plural}}"
+    "bulkCount": "☑ {{count}} sélectionnée{{plural}}",
+    "pendingApproval": "En attente d'approbation",
+    "pendingApprovalTitle": "Lien MAPS non confirmé — approuvez ou rejetez depuis la fiche"
   },
   "search": {
     "title": "Base SIRENE",
@@ -486,6 +491,7 @@
     "metricSubstitutions": "Substitutions",
     "poolBreakdown": "Répartition du pool",
     "dataQuality": "Qualité des données enrichies",
+    "exhaustive": "Mode exhaustif",
     "autoRefresh": "Actualisation automatique toutes les 1.5 secondes",
     "collectingTitle": "📋 Entreprises collectées ({{count}})",
     "waitingData": "⏳ En attente des premières données...",
@@ -612,7 +618,8 @@
     "suppressPermanent": "Supprimer",
     "queriesResultCount": "{{count}} résultat{{plural}}",
     "noQueryGroup": "(sans requête)",
-    "clickForDetail": "Cliquer pour voir le détail"
+    "clickForDetail": "Cliquer pour voir le détail",
+    "exhaustiveMode": "Mode exhaustif — cible {{target}}"
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",
@@ -636,7 +643,11 @@
     "redirecting": "Redirection vers Pipeline Live dans 3 secondes...",
     "errorLaunch": "❌ Erreur : {{message}}",
     "errorNetwork": "❌ Erreur de connexion : {{message}}",
-    "sendingConfig": "⏳ Envoi de la configuration au serveur..."
+    "sendingConfig": "⏳ Envoi de la configuration au serveur...",
+    "nafLabel": "Filtre NAF (optionnel)",
+    "nafPlaceholder": "Saisissez une section (A–U), une division (ex : 55) ou un code (ex : 55.30Z)",
+    "exhaustiveLabel": "Mode exhaustif (jusqu'à 500 entités)",
+    "exhaustiveHint": "Un batch exhaustif dure 15 à 30 minutes."
   },
   "upload": {
     "title": "Import / Export",
@@ -741,6 +752,7 @@
     "conflict_dismissed": "Conflit ignoré",
     "merge": "Fusion manuelle",
     "link": "Lien confirmé",
+    "approve_link": "Lien confirmé",
     "reject_link": "Lien refusé",
     "unlink": "Lien dissocié",
     "manual_edit": "Modification manuelle",
@@ -1088,7 +1100,11 @@
     "outcomeReplaced": "Remplacées",
     "outcomeFailed": "Échouées",
     "outcomeSkipped": "Ignorées",
-    "inProgress": "⏳ En cours"
+    "inProgress": "⏳ En cours",
+    "nafVerified": "Vérifié NAF",
+    "nafMismatch": "Incompatible NAF",
+    "nafMapsOnly": "MAPS seul",
+    "nafNoFilter": "Sans filtre NAF"
   },
   "department": {
     "title": "Département",

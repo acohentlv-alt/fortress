@@ -252,6 +252,9 @@ export async function renderContacts(container) {
                                 </td>
                                 <td class="contacts-td" style="font-family:var(--font-mono); color:var(--accent); font-weight:600; white-space:nowrap">
                                     ${escapeHtml(r.siren)}
+                                    ${r.link_confidence === 'pending' && r.siren && r.siren.startsWith('MAPS')
+                                        ? `<span class="badge badge-pending-approval" title="${t('contacts.pendingApprovalTitle')}">${t('contacts.pendingApproval')}</span>`
+                                        : ''}
                                 </td>
                                 <td class="contacts-td">
                                     ${r.phone

@@ -47,6 +47,20 @@ from fortress.processing.dedup import (
 
 log = structlog.get_logger()
 
+
+def _compute_naf_status(
+    matched_naf: str | None,
+    picked_naf: str,
+    division_whitelist: list[str] | None,
+) -> str:
+    """Return 'verified' or 'mismatch' based on SIRENE NAF vs picked filter."""
+    candidate = (matched_naf or "")
+    if division_whitelist is not None:
+        # Section letter: match if NAF starts with any division in whitelist
+        return "verified" if any(candidate.startswith(d) for d in division_whitelist) else "mismatch"
+    return "verified" if candidate.startswith(picked_naf) else "mismatch"
+
+
 # Graceful shutdown flag — set by SIGTERM handler
 _shutdown = False
 
@@ -934,10 +948,36 @@ async def run(batch_id: str) -> None:
             raw_queries = row[1]
             filters_raw = row[2]
             batch_size: int = row[3] or 0  # 0 = collect all results
-            batch_size = min(batch_size, 50) if batch_size > 0 else 50
             batch_workspace_id: int | None = row[4]
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
+
+            # Parse optional department + NAF filter + exhaustive mode from filters
+            # (Parsed BEFORE the size cap so exhaustive_mode controls the ceiling.)
+            dept_filter = None
+            picked_naf = None
+            exhaustive_mode = False
+            if filters_raw:
+                try:
+                    filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
+                    dept_filter = filters.get("department")
+                    picked_naf = (filters.get("naf_code") or "").strip() or None
+                    exhaustive_mode = bool(filters.get("exhaustive", False))
+                except Exception:
+                    pass
+
+            # Conditional size cap: 500 in exhaustive mode, 50 otherwise
+            _max_target = 500 if exhaustive_mode else 50
+            batch_size = min(batch_size, _max_target) if batch_size > 0 else _max_target
+
+            # Expand section letter → list of divisions (null if picked_naf is not a single letter)
+            naf_division_whitelist: list[str] | None = None
+            if picked_naf and len(picked_naf) == 1 and picked_naf.isalpha():
+                from fortress.config.naf_codes import NAF_DIVISION_TO_SECTION
+                naf_division_whitelist = [
+                    div for div, section in NAF_DIVISION_TO_SECTION.items()
+                    if section == picked_naf.upper()
+                ]
 
             # Parse search_queries from JSON
             search_queries: list[str] = []
@@ -957,15 +997,6 @@ async def run(batch_id: str) -> None:
                 batch_name=batch_name,
                 search_queries=search_queries,
             )
-
-            # Parse optional department from filters
-            dept_filter = None
-            if filters_raw:
-                try:
-                    filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
-                    dept_filter = filters.get("department")
-                except Exception:
-                    pass
 
             # Safety net: if frontend sent "FR" or empty, try to extract dept from queries
             if (not dept_filter or dept_filter == "FR") and search_queries:
@@ -1433,52 +1464,34 @@ async def run(batch_id: str) -> None:
                         await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
                         await upsert_contact(conn, contact)
 
-                        # Store link metadata on the MAPS entity
-                        # Address match → confirmed (auto-link). Name match → pending (user decides).
+                        # All MAPS links start as pending — user must approve via /link endpoint
                         if _pending_link:
-                            confidence = "confirmed" if _pending_link["method"] in ("enseigne", "phone", "address", "siren_website") else "pending"
                             await conn.execute("""
                                 UPDATE companies
-                                SET linked_siren = %s, link_confidence = %s, link_method = %s
+                                SET linked_siren = %s, link_confidence = 'pending', link_method = %s
                                 WHERE siren = %s
-                            """, (_pending_link["siren"], confidence, _pending_link["method"], siren))
+                            """, (_pending_link["siren"], _pending_link["method"], siren))
 
-                            # Copy SIRENE reference data into the MAPS entity (confirmed links only)
-                            # Populates NAF, legal form, postal code, etc. for a complete company card.
-                            # denomination, enseigne, adresse are intentionally kept from Google Maps.
-                            if confidence == "confirmed":
-                                cur = await conn.execute(
-                                    """SELECT siret_siege, naf_code, naf_libelle,
-                                              forme_juridique, code_postal, ville,
-                                              date_creation, tranche_effectif
-                                       FROM companies WHERE siren = %s""",
+                            # Compute naf_status if a NAF filter was applied
+                            if picked_naf:
+                                naf_cur = await conn.execute(
+                                    "SELECT naf_code FROM companies WHERE siren = %s",
                                     (_pending_link["siren"],)
                                 )
-                                sirene_row = await cur.fetchone()
-                                if sirene_row:
-                                    await conn.execute(
-                                        """UPDATE companies
-                                           SET siret_siege     = %s,
-                                               naf_code        = %s,
-                                               naf_libelle     = %s,
-                                               forme_juridique = %s,
-                                               code_postal     = %s,
-                                               ville           = %s,
-                                               date_creation   = %s,
-                                               tranche_effectif = COALESCE(tranche_effectif, %s)
-                                           WHERE siren = %s""",
-                                        (
-                                            sirene_row[0],
-                                            sirene_row[1],
-                                            sirene_row[2],
-                                            sirene_row[3],
-                                            sirene_row[4],
-                                            sirene_row[5],
-                                            sirene_row[6],
-                                            sirene_row[7],
-                                            siren,
-                                        )
-                                    )
+                                sirene_naf_row = await naf_cur.fetchone()
+                                matched_naf = (sirene_naf_row[0] if sirene_naf_row else None) or ""
+                                naf_status = _compute_naf_status(matched_naf, picked_naf, naf_division_whitelist)
+                                await conn.execute(
+                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
+                                    (naf_status, siren)
+                                )
+
+                        # MAPS-only (no SIRENE candidate): mark naf_status if NAF filter was applied
+                        if not _pending_link and picked_naf:
+                            await conn.execute(
+                                "UPDATE companies SET naf_status = 'maps_only' WHERE siren = %s",
+                                (siren,)
+                            )
 
                         await log_audit(
                             conn,

@@ -79,6 +79,24 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
+                <div class="gemini-controls">
+                    <span class="gemini-controls-label">${t('newBatch.nafLabel')}</span>
+                    <div class="naf-picker" id="naf-picker">
+                        <input type="text" class="naf-picker-input" id="naf-picker-input"
+                               placeholder="${t('newBatch.nafPlaceholder')}" autocomplete="off">
+                        <input type="hidden" id="naf-picker-value">
+                        <div class="naf-picker-dropdown" id="naf-picker-dropdown"></div>
+                    </div>
+                </div>
+
+                <div class="gemini-controls">
+                    <label class="exhaustive-toggle" for="exhaustive-toggle">
+                        <input type="checkbox" id="exhaustive-toggle">
+                        <span>${t('newBatch.exhaustiveLabel')}</span>
+                        <span class="exhaustive-hint">${t('newBatch.exhaustiveHint')}</span>
+                    </label>
+                </div>
+
                 <button type="button" class="btn-launch-hero" id="btn-launch-batch">
                     ${t('newBatch.launchHero')}
                 </button>
@@ -147,6 +165,66 @@ export async function renderNewBatch(container) {
             currentBatchSize = parseInt(btn.dataset.size, 10);
             updateSummary();
         });
+    });
+
+    // ── NAF picker ────────────────────────────────────────────────────
+    let _nafData = null;
+    try {
+        const resp = await fetch('/api/batch/naf-codes', { credentials: 'include' });
+        if (resp.ok) _nafData = await resp.json();
+    } catch (_e) {}
+
+    const _allNafEntries = _nafData ? [
+        ..._nafData.sections,
+        ..._nafData.divisions,
+        ..._nafData.codes,
+    ] : [];
+
+    const nafInput = document.getElementById('naf-picker-input');
+    const nafValue = document.getElementById('naf-picker-value');
+    const nafDropdown = document.getElementById('naf-picker-dropdown');
+
+    function renderNafDropdown(query) {
+        const q = (query || '').toLowerCase().trim();
+        const matches = q
+            ? _allNafEntries.filter(e => e.label.toLowerCase().includes(q)).slice(0, 30)
+            : [];
+        nafDropdown.innerHTML = matches.map(m =>
+            `<div class="naf-picker-option" data-code="${escapeHtml(m.code)}" data-label="${escapeHtml(m.label)}">${escapeHtml(m.label)}</div>`
+        ).join('');
+        nafDropdown.style.display = matches.length ? 'block' : 'none';
+    }
+
+    nafInput.addEventListener('input', () => renderNafDropdown(nafInput.value));
+    nafInput.addEventListener('focus', () => renderNafDropdown(nafInput.value));
+    nafDropdown.addEventListener('click', (e) => {
+        const opt = e.target.closest('.naf-picker-option');
+        if (!opt) return;
+        nafInput.value = opt.dataset.label;
+        nafValue.value = opt.dataset.code;
+        nafDropdown.style.display = 'none';
+    });
+    document.addEventListener('click', (e) => {
+        const picker = document.getElementById('naf-picker');
+        if (picker && !picker.contains(e.target)) {
+            nafDropdown.style.display = 'none';
+        }
+    });
+
+    // ── Exhaustive toggle ─────────────────────────────────────────────
+    const exhaustiveToggle = document.getElementById('exhaustive-toggle');
+    exhaustiveToggle.addEventListener('change', () => {
+        if (exhaustiveToggle.checked) {
+            segmented.style.opacity = '0.5';
+            segmented.style.pointerEvents = 'none';
+            currentBatchSize = 500;
+        } else {
+            segmented.style.opacity = '1';
+            segmented.style.pointerEvents = 'auto';
+            const active = segmented.querySelector('.segment.active');
+            currentBatchSize = active ? parseInt(active.dataset.size, 10) : 20;
+        }
+        updateSummary();
     });
 
     // ── Subordinate query row creation ────────────────────────────────
@@ -305,6 +383,8 @@ export async function renderNewBatch(container) {
             strategy: 'maps',
             search_queries: queries,
             size: batchSize,
+            naf_code: nafValue.value || null,
+            exhaustive: exhaustiveToggle.checked,
         };
 
         btn.disabled = true;

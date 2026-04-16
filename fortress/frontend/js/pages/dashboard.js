@@ -433,11 +433,19 @@ function _renderPendingLinks(data, rootContainer) {
         return;
     }
 
+    const breakdown = data.breakdown || { verified: 0, mismatch: 0, maps_only: 0, no_filter: 0 };
+
     view.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
             <span style="font-size:var(--font-sm); color:var(--text-secondary)">
                 ${t('dashboard.pendingCount', { count: results.length, plural: results.length > 1 ? 's' : '' })}
             </span>
+        </div>
+        <div class="pending-breakdown-row">
+            <span class="chip chip-verified">✓ ${t('dashboard.nafVerified')}: ${breakdown.verified}</span>
+            <span class="chip chip-mismatch">⚠ ${t('dashboard.nafMismatch')}: ${breakdown.mismatch}</span>
+            <span class="chip chip-maps-only">○ ${t('dashboard.nafMapsOnly')}: ${breakdown.maps_only}</span>
+            <span class="chip chip-no-filter">– ${t('dashboard.nafNoFilter')}: ${breakdown.no_filter}</span>
         </div>
         <div class="card" style="overflow-x:auto">
             <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">

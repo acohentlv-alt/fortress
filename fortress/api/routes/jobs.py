@@ -53,6 +53,19 @@ async def list_jobs(request: Request):
         tuple(ws_params) if ws_params else None,
     )
 
+    # Parse exhaustive flag from filters_json (backend-computed — single source of truth)
+    import json as _json
+    for r in rows:
+        fj = r.get("filters_json")
+        if fj:
+            try:
+                parsed = _json.loads(fj) if isinstance(fj, str) else fj
+                r["exhaustive"] = bool(parsed.get("exhaustive", False))
+            except Exception:
+                r["exhaustive"] = False
+        else:
+            r["exhaustive"] = False
+
     # Watchdog: auto-resolve orphaned batches (in_progress but idle >10 min)
     # completed if scraped >= batch_size, interrupted if scraped < batch_size
     import datetime as _dt
@@ -482,6 +495,18 @@ async def get_job(batch_id: str, request: Request):
     """, (batch_id,) + ws_params)
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+    # Parse exhaustive flag from filters_json
+    import json as _json
+    fj = job.get("filters_json")
+    if fj:
+        try:
+            parsed = _json.loads(fj) if isinstance(fj, str) else fj
+            job["exhaustive"] = bool(parsed.get("exhaustive", False))
+        except Exception:
+            job["exhaustive"] = False
+    else:
+        job["exhaustive"] = False
 
     # Watchdog: if batch is in_progress but no update in 10+ minutes, resolve status.
     # completed if scraped >= batch_size, interrupted if scraped < batch_size.

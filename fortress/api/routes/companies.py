@@ -1166,6 +1166,7 @@ async def _get_company_impl(siren: str, request=None):
             co.extra_data,
             co.created_at, co.updated_at,
             co.linked_siren, co.link_confidence, co.link_method,
+            co.naf_status,
             co.workspace_id
         FROM companies co
         WHERE co.siren = %s
@@ -1751,14 +1752,41 @@ async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTa
             WHERE siren = %s
         """, (body.target_siren, siren))
 
+        # Copy SIRENE reference data into the MAPS entity.
+        # Populates NAF, legal form, postal code, etc. for a complete company card.
+        # denomination, enseigne, adresse are intentionally kept from Google Maps.
+        sirene_cur = await conn.execute(
+            """SELECT siret_siege, naf_code, naf_libelle,
+                      forme_juridique, code_postal, ville,
+                      date_creation, tranche_effectif
+               FROM companies WHERE siren = %s""",
+            (body.target_siren,)
+        )
+        sirene_row = await sirene_cur.fetchone()
+        if sirene_row:
+            await conn.execute(
+                """UPDATE companies
+                   SET siret_siege      = %s,
+                       naf_code         = %s,
+                       naf_libelle      = %s,
+                       forme_juridique  = %s,
+                       code_postal      = %s,
+                       ville            = %s,
+                       date_creation    = %s,
+                       tranche_effectif = COALESCE(tranche_effectif, %s)
+                   WHERE siren = %s""",
+                (sirene_row[0], sirene_row[1], sirene_row[2], sirene_row[3],
+                 sirene_row[4], sirene_row[5], sirene_row[6], sirene_row[7], siren)
+            )
+
         await conn.execute("""
             INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)
-            VALUES ('ENTITY_LINK', %s, 'link', 'success', NULL, NOW(), %s)
+            VALUES ('ENTITY_LINK', %s, 'approve_link', 'success', NULL, NOW(), %s)
         """, (siren, f"Linked to {body.target_siren} ({target.get('denomination')})"))
 
         await conn.commit()
 
-    await log_activity(user_id, username, "link", "company", siren,
+    await log_activity(user_id, username, "approve_link", "company", siren,
         f"Lié à {body.target_siren} ({target.get('denomination')})")
 
     # Trigger INPI enrichment for the confirmed target SIREN (background)

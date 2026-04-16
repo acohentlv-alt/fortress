@@ -218,6 +218,7 @@ async def lifespan(app: FastAPI):
                     ("link_confidence", "TEXT"),
                     ("link_method", "TEXT"),
                     ("resultat_net", "BIGINT"),
+                    ("naf_status", "TEXT"),  # 'verified' | 'mismatch' | 'maps_only' | 'no_filter' | NULL (legacy)
                 ]:
                     await conn.execute(
                         f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col} {col_type} DEFAULT NULL"

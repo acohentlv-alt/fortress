@@ -34,6 +34,18 @@ function effectifLabel(code) {
     return EFFECTIF_LABELS[code] || code;
 }
 
+function nafStatusBadge(status) {
+    const map = {
+        verified:  { cls: 'glass-badge--green',  icon: '✓', labelKey: 'company.nafVerified' },
+        mismatch:  { cls: 'glass-badge--amber',  icon: '⚠', labelKey: 'company.nafMismatch' },
+        maps_only: { cls: 'glass-badge--grey',   icon: '○', labelKey: 'company.nafMapsOnly' },
+        no_filter: null,
+    };
+    const m = map[status];
+    if (!m) return '';
+    return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}</span>`;
+}
+
 // Forme juridique — human-readable labels for common codes
 const FORME_LABELS = {
     '1000': 'Entrepreneur individuel', '5306': 'EURL', '5307': 'SA à conseil d\'administration',
@@ -581,6 +593,7 @@ export async function renderCompany(container, siren) {
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
                     </span>` : ''}
+                    ${co.naf_status ? nafStatusBadge(co.naf_status) : ''}
                     ${effectifLabel(co.tranche_effectif) ? `<span class="glass-badge glass-badge--green">👥 ${effectifLabel(co.tranche_effectif)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.trancheEffectif')}</strong><br>${t('company.effectifTooltip')}<span class="info-tip-source">${t('company.effectifTooltipSource')}</span></span></span>
                     </span>` : ''}

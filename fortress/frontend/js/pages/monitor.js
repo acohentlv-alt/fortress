@@ -104,6 +104,7 @@ async function renderMonitorList(container) {
                                 <div class="job-card-meta">
                                     <span>${formatDateTime(j.created_at)}</span>
                                     <span>${scraped}/${batchSize} ${t('monitor.companies')}</span>
+                                    ${j.exhaustive ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
                                     ${j.wave_total ? `<span>${t('monitor.wavechip', { current: j.wave_current || 0, total: j.wave_total })}</span>` : ''}
                                 </div>
                             </div>
@@ -134,6 +135,7 @@ async function renderMonitorList(container) {
                             <div class="job-card-meta">
                                 <span>${formatDateTime(j.updated_at)}</span>
                                 <span>${j.companies_scraped || 0} ${t('monitor.companies')}</span>
+                                ${j.exhaustive ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
                             </div>
                         </div>
                         <div style="display:flex;align-items:center;gap:var(--space-sm)">

@@ -1207,6 +1207,7 @@ async def get_pending_links(request: Request):
             co.link_method,
             co.departement,
             co.ville,
+            co.naf_status,
             ct.phone,
             ct.address AS maps_address,
             bt.batch_name
@@ -1222,7 +1223,18 @@ async def get_pending_links(request: Request):
         ORDER BY co.siren
     """, ws_params if ws_params else None)
 
-    return {"count": len(rows), "results": rows}
+    # Aggregate breakdown by naf_status (legacy NULL rolls into 'no_filter')
+    breakdown = {"verified": 0, "mismatch": 0, "maps_only": 0, "no_filter": 0}
+    for row in rows:
+        status = row.get("naf_status")
+        if status is None or status == "no_filter":
+            breakdown["no_filter"] += 1
+        elif status in breakdown:
+            breakdown[status] += 1
+        else:
+            breakdown["no_filter"] += 1
+
+    return {"count": len(rows), "results": rows, "breakdown": breakdown}
 
 
 # ---------------------------------------------------------------------------

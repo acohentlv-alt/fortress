@@ -28,12 +28,13 @@ class BatchRunRequest(BaseModel):
     """JSON body for POST /api/batch/run."""
     sector: str = Field(..., min_length=1, description="Sector name, e.g. 'agriculture'")
     department: str = Field(..., min_length=1, max_length=10, description="Department code (e.g. '66') or 'FR'/'ALL' for France-wide")
-    size: int = Field(20, ge=1, le=50, description="Number of entities to collect (SIRENE mode)")
+    size: int = Field(20, ge=1, le=500, description="1-50 for standard mode, up to 500 in exhaustive mode")
     mode: str = Field("discovery", description="Mode: discovery or enrichment")
     city: str | None = Field(None, description="Optional city filter")
-    naf_code: str | None = Field(None, description="Optional exact NAF code, e.g. '49.41A'")
+    naf_code: str | None = Field(None, description="Optional NAF filter — section letter (A-U), 2-digit division (e.g. 55), or 5-char code (e.g. 55.30Z)")
     strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
     search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
+    exhaustive: bool = Field(False, description="Exhaustive mode — raises size cap to 500 and keeps scraping until target or NAF pool is exhausted")
 
 
 
@@ -52,6 +53,13 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
     Returns 202 with the batch_id for monitoring.
     """
+    # Server-side size cap: non-exhaustive batches max 50
+    if body.size > 50 and not body.exhaustive:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Taille maximale sans mode exhaustif : 50."}
+        )
+
     sector = body.sector.strip().lower()
     dept = body.department.strip()
     # Use the user's original search query as the display name if available,
@@ -79,6 +87,8 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["naf_code"] = body.naf_code.strip()
     if body.department:
         filters_dict["department"] = body.department.strip()
+    if body.exhaustive:
+        filters_dict["exhaustive"] = True
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
     # Build search_queries JSON for Maps-first mode
@@ -246,5 +256,26 @@ async def run_batch(body: BatchRunRequest, request: Request):
         "message": f"Batch {batch_id} launched (PID {process.pid}). Monitor at /api/jobs/{batch_id}",
     }
 
+
+@router.get("/naf-codes")
+async def list_naf_codes(request: Request):
+    """Return sections + divisions + full codes for the NAF picker.
+
+    Auth required (session middleware). Same static data for all workspaces.
+    Divisions inherit their parent section's label (no separate division dict exists).
+    """
+    from fortress.config.naf_codes import NAF_CODES, NAF_SECTIONS, NAF_DIVISION_TO_SECTION
+
+    # Division labels fall back to parent section label (N4 decision)
+    divisions = []
+    for div, section in NAF_DIVISION_TO_SECTION.items():
+        section_label = NAF_SECTIONS.get(section, "")
+        divisions.append({"code": div, "label": f"{div} — {section_label}"})
+
+    return {
+        "sections": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_SECTIONS.items()],
+        "divisions": sorted(divisions, key=lambda d: d["code"]),
+        "codes": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_CODES.items()],
+    }
 
 

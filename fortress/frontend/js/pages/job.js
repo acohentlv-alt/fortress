@@ -113,6 +113,7 @@ export async function renderJob(container, batchId) {
                 </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)">
                     ${statusBadge(job.status)}
+                    ${job.exhaustive ? `<span class="badge badge-exhaustive">⚡ ${t('job.exhaustiveMode', { target: job.batch_size })}</span>` : ''}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
                         ${t('job.createdOn')} ${formatDateTime(job.created_at)}
                     </span>
