@@ -265,7 +265,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         }
         if (m.address && co.adresse) {
             const streetOnly = (s) =>
-                (s.split(',')[0] || '').toUpperCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+                (s.split(',')[0] || '').toUpperCase().replace(/[.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
             const mapsStreet = streetOnly(co.adresse);
             const sireneStreet = streetOnly(m.address);
             if (mapsStreet && sireneStreet && mapsStreet === sireneStreet) {
