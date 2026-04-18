@@ -30,7 +30,12 @@ class BatchRunRequest(BaseModel):
     department: str = Field(..., min_length=1, max_length=10, description="Department code (e.g. '66') or 'FR'/'ALL' for France-wide")
     mode: str = Field("discovery", description="Mode: discovery or enrichment")
     city: str | None = Field(None, description="Optional city filter")
-    naf_code: str | None = Field(None, description="Optional NAF filter — section letter (A-U), 2-digit division (e.g. 55), or 5-char code (e.g. 55.30Z)")
+    naf_codes: list[str] | None = Field(
+        None,
+        description="Optional list of NAF filters (1-10). Each can be a section letter (A-U), 2-digit division (e.g. 55), or 5-char code (e.g. 55.30Z). All codes must belong to the same sector group (see SECTOR_EXPANSIONS). Section letters must be picked alone.",
+    )
+    # Legacy alias — single code posted by older clients. Normalized into naf_codes at handler entry.
+    naf_code: str | None = Field(None, description="DEPRECATED — use naf_codes. Accepted for backward compatibility.")
     strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
     search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
 
@@ -72,10 +77,39 @@ async def run_batch(body: BatchRunRequest, request: Request):
     # if an exception fires before the SELECT/INSERT block assigns it.
     batch_id = None
 
-    # Build filters_json from optional fields
+    # Normalize picker input: accept legacy single `naf_code` or new `naf_codes` list.
+    # New code always writes `naf_codes` into filters_json (list), even for single pick.
+    picked_codes: list[str] = []
+    if body.naf_codes:
+        picked_codes = [c.strip() for c in body.naf_codes if c and c.strip()]
+    elif body.naf_code and body.naf_code.strip():
+        picked_codes = [body.naf_code.strip()]
+
+    # Cap (10)
+    if len(picked_codes) > 10:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Trop de codes NAF sélectionnés (maximum 10)."},
+        )
+
+    # Same-sector-group validation (skipped for section letters and single pick)
+    if len(picked_codes) > 1:
+        # Section letters (A-U, single alpha char) must stand alone
+        if any(len(c) == 1 and c.isalpha() for c in picked_codes):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Un filtre par section (A-U) doit être utilisé seul. Combinez uniquement des codes NAF détaillés."},
+            )
+        from fortress.config.naf_sector_expansion import all_same_sector_group
+        if not all_same_sector_group(picked_codes):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Ces codes NAF ne sont pas de la même catégorie. Seuls les codes appartenant au même groupe sectoriel peuvent être combinés."},
+            )
+
     filters_dict = {}
-    if body.naf_code:
-        filters_dict["naf_code"] = body.naf_code.strip()
+    if picked_codes:
+        filters_dict["naf_codes"] = picked_codes
     if body.department:
         filters_dict["department"] = body.department.strip()
     filters_json = json.dumps(filters_dict) if filters_dict else None
@@ -261,10 +295,13 @@ async def list_naf_codes(request: Request):
         section_label = NAF_SECTIONS.get(section, "")
         divisions.append({"code": div, "label": f"{div} — {section_label}"})
 
+    from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
+
     return {
         "sections": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_SECTIONS.items()],
         "divisions": sorted(divisions, key=lambda d: d["code"]),
         "codes": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_CODES.items()],
+        "sector_expansions": {k: sorted(list(v)) for k, v in SECTOR_EXPANSIONS.items()},
     }
 
 

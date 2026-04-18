@@ -651,8 +651,13 @@
     "errorLaunch": "❌ Erreur : {{message}}",
     "errorNetwork": "❌ Erreur de connexion : {{message}}",
     "sendingConfig": "⏳ Envoi de la configuration au serveur...",
-    "nafLabel": "Filtre NAF (optionnel)",
-    "nafPlaceholder": "Saisissez une section (A–U), une division (ex : 55) ou un code (ex : 55.30Z)"
+    "nafLabel": "Filtres NAF (optionnel)",
+    "nafPlaceholder": "Saisissez une section (A–U), une division (ex : 55) ou un code (ex : 55.30Z)",
+    "nafChipRemove": "Retirer",
+    "nafErrorSameCategory": "Ces codes NAF ne sont pas de la même catégorie. Ajoutez uniquement des codes du même groupe sectoriel.",
+    "nafErrorSectionAlone": "Un filtre par section (A–U) doit être utilisé seul.",
+    "nafErrorCap": "Maximum 10 codes NAF. Retirez-en un avant d'en ajouter d'autres.",
+    "nafErrorDuplicate": "Ce code est déjà sélectionné."
   },
   "upload": {
     "title": "Import / Export",

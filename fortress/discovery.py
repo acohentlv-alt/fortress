@@ -51,28 +51,36 @@ log = structlog.get_logger()
 
 def _compute_naf_status(
     matched_naf: str | None,
-    picked_naf: str,
+    picked_nafs: list[str],
     division_whitelist: list[str] | None,
 ) -> str:
-    """Return 'verified' or 'mismatch' based on SIRENE NAF vs picked filter.
+    """Return 'verified' or 'mismatch' based on SIRENE NAF vs user's picker list.
 
-    Order of checks (first match wins):
-      1. division_whitelist set → section-letter broadening
-      2. strict prefix match of picked_naf on matched NAF
+    Picker is a list of 1..10 leaf/division/section codes (already validated
+    same-sector-group upstream). Status is 'verified' if ANY picker resolves
+    to verified, 'mismatch' if all miss.
+
+    NOTE: this function does NOT enforce the same-sector-group rule itself.
+    That check belongs to the backend validator in batch.py. This function will
+    happily verify a status against a cross-sector pair like ['10.71C', '56.10A']
+    if asked — by design, so unit tests can exercise edge cases.
+
+    Order of checks per picker (first match wins):
+      1. division_whitelist set (only when a single section letter was picked)
+          → section-letter broadening
+      2. strict prefix match of picker on matched NAF
       3. picker is a leaf in SECTOR_EXPANSIONS and matched NAF is a curated sibling
-      4. otherwise mismatch
     """
     candidate = (matched_naf or "")
     if division_whitelist is not None:
-        # Section letter: match if NAF starts with any division in whitelist
+        # Section letter case — only ever set when picked_nafs is exactly [section_letter].
         return "verified" if any(candidate.startswith(d) for d in division_whitelist) else "mismatch"
-    if candidate.startswith(picked_naf):
-        return "verified"
-    # Per-sector expansion: picker is a leaf code and matched NAF is a
-    # curated sibling. Still counts as verified for auto-confirm.
-    expansion = SECTOR_EXPANSIONS.get(picked_naf)
-    if expansion is not None and candidate in expansion:
-        return "verified"
+    for picked in picked_nafs:
+        if candidate.startswith(picked):
+            return "verified"
+        expansion = SECTOR_EXPANSIONS.get(picked)
+        if expansion is not None and candidate in expansion:
+            return "verified"
     return "mismatch"
 
 
@@ -1112,26 +1120,38 @@ async def run(batch_id: str) -> None:
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
 
-            # Parse optional department + NAF filter from filters
+            # Parse optional department + NAF filter list from filters.
+            # Accepts new key `naf_codes` (list) written by batch.py after the multi-NAF
+            # migration. Falls back to legacy single `naf_code` for in-flight batches
+            # launched before the migration.
             dept_filter = None
-            picked_naf = None
+            picked_nafs: list[str] = []
             if filters_raw:
                 try:
                     filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
                     dept_filter = filters.get("department")
-                    picked_naf = (filters.get("naf_code") or "").strip() or None
+                    raw_list = filters.get("naf_codes")
+                    if isinstance(raw_list, list):
+                        picked_nafs = [str(c).strip() for c in raw_list if c and str(c).strip()]
+                    else:
+                        legacy = (filters.get("naf_code") or "").strip()
+                        if legacy:
+                            picked_nafs = [legacy]
                 except Exception:
                     pass
 
             batch_size = 2000  # Hard server-side ceiling — user-facing size control removed
 
-            # Expand section letter → list of divisions (null if picked_naf is not a single letter)
+            # Section-letter broadening only applies when user picked EXACTLY one section letter.
+            # This is guaranteed by batch.py validation (section letters must stand alone), but
+            # we re-check here for defense in depth against manually-crafted filters_json.
             naf_division_whitelist: list[str] | None = None
-            if picked_naf and len(picked_naf) == 1 and picked_naf.isalpha():
+            if len(picked_nafs) == 1 and len(picked_nafs[0]) == 1 and picked_nafs[0].isalpha():
                 from fortress.config.naf_codes import NAF_DIVISION_TO_SECTION
+                section_letter = picked_nafs[0].upper()
                 naf_division_whitelist = [
                     div for div, section in NAF_DIVISION_TO_SECTION.items()
-                    if section == picked_naf.upper()
+                    if section == section_letter
                 ]
 
             # Parse search_queries from JSON
@@ -1626,14 +1646,14 @@ async def run(batch_id: str) -> None:
 
                             # Compute naf_status first so we can decide on auto-confirm
                             naf_status = None
-                            if picked_naf:
+                            if picked_nafs:
                                 naf_cur = await conn.execute(
                                     "SELECT naf_code FROM companies WHERE siren = %s",
                                     (target_siren,),
                                 )
                                 sirene_naf_row = await naf_cur.fetchone()
                                 matched_naf = (sirene_naf_row[0] if sirene_naf_row else None) or ""
-                                naf_status = _compute_naf_status(matched_naf, picked_naf, naf_division_whitelist)
+                                naf_status = _compute_naf_status(matched_naf, picked_nafs, naf_division_whitelist)
 
                             auto_confirm = (method in _STRONG_METHODS) and (naf_status == "verified")
                             link_state = "confirmed" if auto_confirm else "pending"
@@ -1659,7 +1679,7 @@ async def run(batch_id: str) -> None:
                                 await _copy_sirene_reference_data(conn, siren, target_siren)
                                 # Distinguish strict/section match from sibling-expansion match for audit.
                                 strict_prefix = bool(
-                                    matched_naf and picked_naf and matched_naf.startswith(picked_naf)
+                                    matched_naf and any(matched_naf.startswith(p) for p in picked_nafs)
                                 )
                                 if strict_prefix or naf_division_whitelist is not None:
                                     audit_action = "auto_linked_verified"
@@ -1676,7 +1696,7 @@ async def run(batch_id: str) -> None:
                                 )
 
                         # MAPS-only (no SIRENE candidate): mark naf_status if NAF filter was applied
-                        if not _pending_link and picked_naf:
+                        if not _pending_link and picked_nafs:
                             await conn.execute(
                                 "UPDATE companies SET naf_status = 'maps_only' WHERE siren = %s",
                                 (siren,),

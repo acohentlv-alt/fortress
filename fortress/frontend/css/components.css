@@ -3743,6 +3743,62 @@
 }
 .naf-picker-option:hover { background: var(--bg-hover); }
 
+/* ── NAF multi-picker: chips inside the input container ──────────── */
+/* IMPORTANT: .naf-picker (the parent) keeps its existing position: relative
+   so .naf-picker-dropdown's position: absolute continues to anchor to it.
+   The .naf-picker-multi modifier only changes display/layout, not position. */
+.naf-picker-multi {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    align-items: center;
+    padding: var(--space-xs);
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    min-height: 44px;
+    /* position inherited from .naf-picker — do not override */
+}
+.naf-picker-multi .naf-picker-input {
+    flex: 1 1 200px;
+    min-width: 160px;
+    padding: var(--space-xs) var(--space-sm);
+    background: transparent;
+    border: none;
+    min-height: 36px;
+}
+.naf-picker-multi .naf-picker-input:focus { outline: none; }
+.naf-chips {
+    display: contents;  /* chips flow into the flex container directly */
+}
+.naf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-default);
+    padding: 2px 6px 2px 8px;
+    border-radius: 999px;
+    font-size: var(--font-sm);
+    color: var(--text-primary);
+}
+.naf-chip-remove {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+}
+.naf-chip-remove:hover { color: var(--danger); }
+.naf-picker-error {
+    flex-basis: 100%;
+    color: var(--danger);
+    font-size: var(--font-xs);
+    padding: 4px 8px 0;
+}
+
 /* ── Exhaustive toggle ───────────────────────────────────────────── */
 .exhaustive-toggle {
     display: flex;

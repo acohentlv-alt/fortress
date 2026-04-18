@@ -73,11 +73,12 @@ export async function renderNewBatch(container) {
 
                 <div class="gemini-controls">
                     <span class="gemini-controls-label">${t('newBatch.nafLabel')}</span>
-                    <div class="naf-picker" id="naf-picker">
+                    <div class="naf-picker naf-picker-multi" id="naf-picker">
+                        <div class="naf-chips" id="naf-chips"></div>
                         <input type="text" class="naf-picker-input" id="naf-picker-input"
                                placeholder="${t('newBatch.nafPlaceholder')}" autocomplete="off">
-                        <input type="hidden" id="naf-picker-value">
                         <div class="naf-picker-dropdown" id="naf-picker-dropdown"></div>
+                        <div class="naf-picker-error" id="naf-picker-error" role="alert" aria-live="polite" style="display:none"></div>
                     </div>
                 </div>
 
@@ -140,7 +141,7 @@ export async function renderNewBatch(container) {
         chipsContainer.innerHTML = '';
     }
 
-    // ── NAF picker ────────────────────────────────────────────────────
+    // ── NAF picker (multi-select with chips) ─────────────────────────
     let _nafData = null;
     try {
         const resp = await fetch('/api/batch/naf-codes', { credentials: 'include' });
@@ -153,14 +154,113 @@ export async function renderNewBatch(container) {
         ..._nafData.codes,
     ] : [];
 
+    // Build lookup map: code → label (for chip rendering + paste handling)
+    const _nafLabelByCode = {};
+    for (const e of _allNafEntries) _nafLabelByCode[e.code] = e.label;
+
+    // Frontend mirror of SECTOR_EXPANSIONS — fetched fresh every page load via
+    // /api/batch/naf-codes. Source of truth is fortress/config/naf_sector_expansion.py.
+    const _sectorExpansions = _nafData?.sector_expansions || {};
+
+    function sameSectorGroup(a, b) {
+        if (a === b) return true;
+        const ea = _sectorExpansions[a];
+        if (ea && ea.includes(b)) return true;
+        const eb = _sectorExpansions[b];
+        if (eb && eb.includes(a)) return true;
+        return false;
+    }
+
+    function allSameSectorGroup(codes) {
+        if (codes.length <= 1) return true;
+        const anchor = codes[0];
+        return codes.slice(1).every(c => sameSectorGroup(anchor, c));
+    }
+
+    const MAX_NAF_CHIPS = 10;
+    const _pickedCodes = [];  // Source of truth for submit payload
+    const _pickedLabels = {}; // code → label, for rendering
+
+    const nafPicker = document.getElementById('naf-picker');
     const nafInput = document.getElementById('naf-picker-input');
-    const nafValue = document.getElementById('naf-picker-value');
     const nafDropdown = document.getElementById('naf-picker-dropdown');
+    const nafChips = document.getElementById('naf-chips');
+    const nafError = document.getElementById('naf-picker-error');
+
+    function showNafError(msg) {
+        nafError.textContent = msg;
+        nafError.style.display = 'block';
+        clearTimeout(showNafError._t);
+        showNafError._t = setTimeout(() => {
+            nafError.style.display = 'none';
+            nafError.textContent = '';
+        }, 4000);
+    }
+
+    function renderChips() {
+        nafChips.innerHTML = _pickedCodes.map(code => `
+            <span class="naf-chip" data-code="${escapeHtml(code)}">
+                <span class="naf-chip-label">${escapeHtml(_pickedLabels[code] || code)}</span>
+                <button type="button" class="naf-chip-remove" aria-label="${t('newBatch.nafChipRemove')}">×</button>
+            </span>
+        `).join('');
+    }
+
+    function tryAddCode(code, label) {
+        // Normalize: accept both raw code "10.71C" and label-style "10.71C — Boulangerie"
+        const rawCode = code.split('—')[0].trim().toUpperCase();
+        if (!rawCode) return { ok: false };
+
+        // Must exist in NAF data
+        if (!_nafLabelByCode[rawCode]) return { ok: false, err: null };  // Silent: just no match
+
+        // Duplicate
+        if (_pickedCodes.includes(rawCode)) {
+            return { ok: false, err: t('newBatch.nafErrorDuplicate') };
+        }
+
+        // Cap
+        if (_pickedCodes.length >= MAX_NAF_CHIPS) {
+            return { ok: false, err: t('newBatch.nafErrorCap') };
+        }
+
+        // Section letters must stand alone
+        const isSection = rawCode.length === 1 && /[A-U]/.test(rawCode);
+        if (isSection && _pickedCodes.length > 0) {
+            return { ok: false, err: t('newBatch.nafErrorSectionAlone') };
+        }
+        if (!isSection && _pickedCodes.some(c => c.length === 1)) {
+            return { ok: false, err: t('newBatch.nafErrorSectionAlone') };
+        }
+
+        // Same-sector-group check (only when adding 2nd+ leaf code)
+        if (_pickedCodes.length > 0) {
+            const candidate = [..._pickedCodes, rawCode];
+            if (!allSameSectorGroup(candidate)) {
+                return { ok: false, err: t('newBatch.nafErrorSameCategory') };
+            }
+        }
+
+        _pickedCodes.push(rawCode);
+        _pickedLabels[rawCode] = label || _nafLabelByCode[rawCode] || rawCode;
+        renderChips();
+        return { ok: true };
+    }
+
+    function removeCode(code) {
+        const idx = _pickedCodes.indexOf(code);
+        if (idx >= 0) {
+            _pickedCodes.splice(idx, 1);
+            delete _pickedLabels[code];
+            renderChips();
+        }
+    }
 
     function renderNafDropdown(query) {
         const q = (query || '').toLowerCase().trim();
+        // Hide codes already picked from the dropdown
         const matches = q
-            ? _allNafEntries.filter(e => e.label.toLowerCase().includes(q)).slice(0, 30)
+            ? _allNafEntries.filter(e => e.label.toLowerCase().includes(q) && !_pickedCodes.includes(e.code)).slice(0, 30)
             : [];
         nafDropdown.innerHTML = matches.map(m =>
             `<div class="naf-picker-option" data-code="${escapeHtml(m.code)}" data-label="${escapeHtml(m.label)}">${escapeHtml(m.label)}</div>`
@@ -170,16 +270,70 @@ export async function renderNewBatch(container) {
 
     nafInput.addEventListener('input', () => renderNafDropdown(nafInput.value));
     nafInput.addEventListener('focus', () => renderNafDropdown(nafInput.value));
+
+    // Paste handler: split on comma/semicolon/newline and try each.
+    // Note: the regex /^[A-U]$|^\d{2}$|^\d{2}\.\d{2}[A-Z]$/ runs on `p`, which is
+    // already trimmed by the .map(s => s.trim()) above. No leading/trailing
+    // whitespace will reach the regex.
+    nafInput.addEventListener('paste', (e) => {
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!text || !text.includes(',')) return;  // Let normal paste happen for single value
+        e.preventDefault();
+        const parts = text.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+        let firstError = null;
+        for (const p of parts) {
+            // Match by code prefix first (p is already trimmed), then by label contains
+            const codeMatch = p.toUpperCase().match(/^[A-U]$|^\d{2}$|^\d{2}\.\d{2}[A-Z]$/);
+            let targetCode = null;
+            if (codeMatch && _nafLabelByCode[codeMatch[0]]) {
+                targetCode = codeMatch[0];
+            } else {
+                const entry = _allNafEntries.find(en => en.label.toLowerCase().includes(p.toLowerCase()));
+                if (entry) targetCode = entry.code;
+            }
+            if (!targetCode) continue;
+            const res = tryAddCode(targetCode, _nafLabelByCode[targetCode]);
+            if (!res.ok && res.err && !firstError) firstError = res.err;
+        }
+        if (firstError) showNafError(firstError);
+        nafInput.value = '';
+        nafDropdown.style.display = 'none';
+    });
+
     nafDropdown.addEventListener('click', (e) => {
         const opt = e.target.closest('.naf-picker-option');
         if (!opt) return;
-        nafInput.value = opt.dataset.label;
-        nafValue.value = opt.dataset.code;
+        const res = tryAddCode(opt.dataset.code, opt.dataset.label);
+        if (!res.ok && res.err) showNafError(res.err);
+        nafInput.value = '';
         nafDropdown.style.display = 'none';
+        nafInput.focus();
     });
+
+    // Enter key: attempt to add exact-code match if input equals a code
+    nafInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const val = nafInput.value.trim().toUpperCase();
+            if (val && _nafLabelByCode[val]) {
+                const res = tryAddCode(val, _nafLabelByCode[val]);
+                if (!res.ok && res.err) showNafError(res.err);
+                nafInput.value = '';
+                nafDropdown.style.display = 'none';
+            }
+        }
+    });
+
+    // Chip remove handler (delegated)
+    nafChips.addEventListener('click', (e) => {
+        const btn = e.target.closest('.naf-chip-remove');
+        if (!btn) return;
+        const chip = btn.closest('.naf-chip');
+        if (chip && chip.dataset.code) removeCode(chip.dataset.code);
+    });
+
     document.addEventListener('click', (e) => {
-        const picker = document.getElementById('naf-picker');
-        if (picker && !picker.contains(e.target)) {
+        if (nafPicker && !nafPicker.contains(e.target)) {
             nafDropdown.style.display = 'none';
         }
     });
@@ -337,7 +491,7 @@ export async function renderNewBatch(container) {
             mode: 'discovery',
             strategy: 'maps',
             search_queries: queries,
-            naf_code: nafValue.value || null,
+            naf_codes: _pickedCodes.length > 0 ? [..._pickedCodes] : null,
         };
 
         btn.disabled = true;

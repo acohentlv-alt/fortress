@@ -42,6 +42,10 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     # Excluded: 43.21X électricité (métier distinct)
 
     # Plâtrerie — métier isolé.
+    # Investigated Apr 19 for clique with 43.34Z (peinture) and 43.33Z (carrelage).
+    # Decision: keep singleton. Map's design rule (line 14) is "when in doubt, exclude";
+    # plâtriers typically register strictly under 43.31Z and bundling with peinture/
+    # carrelage risks false positives. Revisit if regressions appear in the 43.3X range.
     "43.31Z": frozenset({"43.31Z"}),
     # Excluded: 43.29A isolation (métier proche mais distinct, risque faux positif)
 
@@ -147,25 +151,64 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     # Pressing / laverie de détail — clientèle grand public.
     "96.01B": frozenset({"96.01B"}),
 
-    # ═══ Restauration rapide / traiteur ═══
-    # Restauration rapide — kebab/snack/fast-food. Modèle distinct.
-    "56.10C": frozenset({"56.10C"}),
-    # Excluded: 56.10A traditionnelle (service à table), 56.10B cafétéria (libre-service),
-    #           56.21Z traiteurs (événementiel), 56.30Z débits de boissons
+    # ═══ Hôtellerie / Hébergement touristique ═══
+    # Une recherche Maps "hôtel Bordeaux" remonte indistinctement hôtels (55.10Z),
+    # appart-hôtels et résidences (55.20Z), campings haut de gamme (55.30Z) et
+    # autres formes (55.90Z — foyers de jeunes travailleurs ouverts au public, etc.).
+    # Cindy traite ces 4 codes comme un même secteur hébergement touristique.
+    # Expansion en clique mutuelle.
+    "55.10Z": frozenset({"55.10Z", "55.20Z", "55.30Z", "55.90Z"}),
+    "55.20Z": frozenset({"55.20Z", "55.10Z", "55.30Z", "55.90Z"}),  # Symétrie : courte durée ↔ hôtels/camping/autres
+    "55.30Z": frozenset({"55.30Z", "55.10Z", "55.20Z", "55.90Z"}),  # Symétrie : camping ↔ hôtels/courte durée/autres
+    "55.90Z": frozenset({"55.90Z", "55.10Z", "55.20Z", "55.30Z"}),  # Symétrie : autres hébergements ↔ hôtels/courte durée/camping
 
-    # Traiteurs — événementiel/B2B.
-    "56.21Z": frozenset({"56.21Z"}),
-    # Excluded: 56.29A collective sous contrat (échelle différente), 56.10C rapide (grand public)
-
-    # ═══ Hôtellerie ═══
-    "55.10Z": frozenset({"55.10Z"}),
-    # Excluded: 55.20Z courte durée (Airbnb/gîtes), 55.30Z camping, 55.90Z autres (foyers, internats)
-
-    # ═══ Camping ═══
-    "55.30Z": frozenset({"55.30Z"}),
-
-    # ═══ Restaurant traditionnel ═══
-    # Service à table. Distinct de la restauration rapide, des débits de boisson, des traiteurs.
-    "56.10A": frozenset({"56.10A"}),
-    # Excluded: 56.10B cafétérias (libre-service), 56.10C rapide, 56.21Z traiteurs, 56.30Z débits
+    # ═══ Restauration grand public ═══
+    # Une recherche Maps "restaurant Bordeaux" remonte traditionnel (56.10A — service à
+    # table), rapide (56.10C — kebab/burger/sushi à emporter ou sur place), et certains
+    # traiteurs (56.21Z) qui ouvrent une boutique au comptoir. Du point de vue Cindy
+    # (cible commerce de bouche grand public), ces 3 codes sont un même secteur.
+    # Expansion en clique mutuelle. Restent exclus : 56.10B cafétérias (libre-service
+    # institutionnel), 56.29A restauration collective sous contrat, 56.30Z débits de
+    # boissons (modèle bar/café distinct).
+    "56.10A": frozenset({"56.10A", "56.10C", "56.21Z"}),
+    "56.10C": frozenset({"56.10C", "56.10A", "56.21Z"}),  # Symétrie : rapide ↔ traditionnelle/traiteur
+    "56.21Z": frozenset({"56.21Z", "56.10A", "56.10C"}),  # Symétrie : traiteur ↔ traditionnelle/rapide
 }
+
+
+def same_sector_group(code_a: str, code_b: str) -> bool:
+    """True if two NAF leaf codes belong to the same curated sector group.
+
+    Rule:
+      - Identity: same code always shares its group with itself.
+      - Mutual: code_b is in SECTOR_EXPANSIONS[code_a], OR code_a is in SECTOR_EXPANSIONS[code_b].
+      - Isolated codes (keys with single-element set, e.g. 41.20A) share only with themselves.
+      - Codes NOT in SECTOR_EXPANSIONS as a key (e.g. 47.24Z) can only match via the
+        other side being a key whose expansion contains them. Picking two non-key codes
+        together is always False (they have no anchor).
+
+    Note: Section letters and 2-digit divisions are NEVER keys in SECTOR_EXPANSIONS.
+    A user who picks section letter 'I' cannot combine it with anything else
+    (same_sector_group returns False for any pair with a section letter — intentional,
+    section-letter picks must stand alone).
+    """
+    if code_a == code_b:
+        return True
+    exp_a = SECTOR_EXPANSIONS.get(code_a)
+    if exp_a is not None and code_b in exp_a:
+        return True
+    exp_b = SECTOR_EXPANSIONS.get(code_b)
+    if exp_b is not None and code_a in exp_b:
+        return True
+    return False
+
+
+def all_same_sector_group(codes: list[str]) -> bool:
+    """True if every pair of codes in the list shares a sector group.
+
+    Empty list and single-element list are trivially True. Used by backend validator.
+    """
+    if len(codes) <= 1:
+        return True
+    anchor = codes[0]
+    return all(same_sector_group(anchor, c) for c in codes[1:])
