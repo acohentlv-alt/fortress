@@ -164,7 +164,7 @@ function _buildSocialSection(mc, siren) {
 // ── Context-aware breadcrumb ─────────────────────────────────────
 // ── Entity Link Banner ───────────────────────────────────────────────
 
-function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, contacts) {
+function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, contacts, linkConfidence) {
     if (!co.siren || !co.siren.startsWith('MAPS')) return '';
 
     // Extract website crawl data for third column
@@ -240,7 +240,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
                 ${_buildCrawlColumn()}
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>
+                ${linkConfidence === 'confirmed' ? '' : `<button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>`}
                 <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">${t('company.btnUnlink')}</button>
             </div>
         </div>`;
@@ -264,11 +264,19 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
             hints.push(t('company.contextSameCity'));
         }
         if (m.address && co.adresse) {
-            const mapsWords = co.adresse.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
-            const sireneWords = m.address.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
-            const commonWords = mapsWords.filter(w => sireneWords.includes(w));
-            if (commonWords.length > 0) {
-                hints.push(t('company.contextSimilarAddress'));
+            const streetOnly = (s) =>
+                (s.split(',')[0] || '').toUpperCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+            const mapsStreet = streetOnly(co.adresse);
+            const sireneStreet = streetOnly(m.address);
+            if (mapsStreet && sireneStreet && mapsStreet === sireneStreet) {
+                hints.push(t('company.contextSameAddress'));
+            } else {
+                const mapsWords = co.adresse.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
+                const sireneWords = m.address.toLowerCase().split(/[\s,]+/).filter(w => w.length > 3);
+                const commonWords = mapsWords.filter(w => sireneWords.includes(w));
+                if (commonWords.length > 0) {
+                    hints.push(t('company.contextSimilarAddress'));
+                }
             }
         }
         const contextStr = hints.length > 0 ? ` · ${hints.join(' · ')}` : '';
@@ -511,7 +519,8 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
             null,
             matches,
             null,
-            _currentContacts
+            _currentContacts,
+            null
         );
 
         placeholder.outerHTML = bannerHtml || `<div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(251,191,36,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(251,191,36,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
@@ -563,7 +572,7 @@ export async function renderCompany(container, siren) {
     container.innerHTML = `
         ${_buildBreadcrumb(co, tags)}
 
-        ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method, data.contacts || [])}
+        ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method, data.contacts || [], data.link_confidence)}
 
         ${data.matching_available && suggestedMatches.length === 0 ? `
         <div id="entity-match-placeholder" class="card" style="background:rgba(59,130,246,0.04); border:1px solid rgba(59,130,246,0.15); margin-bottom:var(--space-lg); padding:var(--space-md) var(--space-lg); display:flex; align-items:center; gap:var(--space-sm)">

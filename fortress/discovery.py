@@ -33,6 +33,7 @@ import psycopg_pool
 import structlog
 
 from fortress.config.departments import DEPARTMENTS  # noqa: F401
+from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
 from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
@@ -53,12 +54,26 @@ def _compute_naf_status(
     picked_naf: str,
     division_whitelist: list[str] | None,
 ) -> str:
-    """Return 'verified' or 'mismatch' based on SIRENE NAF vs picked filter."""
+    """Return 'verified' or 'mismatch' based on SIRENE NAF vs picked filter.
+
+    Order of checks (first match wins):
+      1. division_whitelist set → section-letter broadening
+      2. strict prefix match of picked_naf on matched NAF
+      3. picker is a leaf in SECTOR_EXPANSIONS and matched NAF is a curated sibling
+      4. otherwise mismatch
+    """
     candidate = (matched_naf or "")
     if division_whitelist is not None:
         # Section letter: match if NAF starts with any division in whitelist
         return "verified" if any(candidate.startswith(d) for d in division_whitelist) else "mismatch"
-    return "verified" if candidate.startswith(picked_naf) else "mismatch"
+    if candidate.startswith(picked_naf):
+        return "verified"
+    # Per-sector expansion: picker is a leaf code and matched NAF is a
+    # curated sibling. Still counts as verified for auto-confirm.
+    expansion = SECTOR_EXPANSIONS.get(picked_naf)
+    if expansion is not None and candidate in expansion:
+        return "verified"
+    return "mismatch"
 
 
 async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) -> None:
@@ -1642,13 +1657,21 @@ async def run(batch_id: str) -> None:
                                 # Copy SIRENE reference data onto the MAPS row — same semantics
                                 # as manual /link approve. Uses shared helper (single source of truth).
                                 await _copy_sirene_reference_data(conn, siren, target_siren)
+                                # Distinguish strict/section match from sibling-expansion match for audit.
+                                strict_prefix = bool(
+                                    matched_naf and picked_naf and matched_naf.startswith(picked_naf)
+                                )
+                                if strict_prefix or naf_division_whitelist is not None:
+                                    audit_action = "auto_linked_verified"
+                                else:
+                                    audit_action = "auto_linked_expanded"
                                 await log_audit(
                                     conn,
                                     batch_id=batch_id,
                                     siren=siren,
-                                    action="auto_linked_verified",
+                                    action=audit_action,
                                     result="success",
-                                    detail=f"Auto-confirmé → {target_siren} (method={method}, naf_status={naf_status})",
+                                    detail=f"Auto-confirmé → {target_siren} (method={method}, naf_status={naf_status}, audit={audit_action})",
                                     workspace_id=batch_workspace_id,
                                 )
 

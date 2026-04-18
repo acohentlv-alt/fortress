@@ -283,6 +283,7 @@
     "methodLabelSurname": "Nom de famille (vérification requise)",
     "contextSameCity": "même ville",
     "contextSimilarAddress": "adresse similaire",
+    "contextSameAddress": "même adresse",
     "fieldUpdated": "{{field}} mis à jour ✅",
     "fieldUpdateError": "Erreur lors de la mise à jour",
     "saveError": "Erreur de sauvegarde",
