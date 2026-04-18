@@ -93,10 +93,7 @@ async function renderMonitorList(container) {
         ` : `
             <div class="job-list">
                 ${runningJobs.map(j => {
-        const batchSize = j.batch_size || j.total_companies || 1;
-        const qualified = j.companies_qualified || 0;
         const scraped = j.companies_scraped || 0;
-        const pct = Math.min(100, Math.round((qualified / batchSize) * 100));
         return `
                         <div class="job-card" onclick="window.location.hash='#/monitor/${encodeURIComponent(j.batch_id)}'">
                             <div class="job-card-info">
@@ -134,7 +131,7 @@ async function renderMonitorList(container) {
                             <div class="job-card-meta">
                                 <span>${formatDateTime(j.updated_at)}</span>
                                 <span>${j.companies_scraped || 0} ${t('monitor.companies')}</span>
-                                ${j.exhaustive ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
+                                ${(j.exhaustive && !j.exhaustive_default) ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
                             </div>
                         </div>
                         <div style="display:flex;align-items:center;gap:var(--space-sm)">
@@ -233,7 +230,7 @@ async function renderJobMonitor(container, batchId) {
             <div style="display:flex; align-items:center; gap:var(--space-2xl); flex-wrap:wrap">
                 <!-- Progress Ring -->
                 <div style="flex-shrink:0" id="mon-ring">
-                    ${renderProgressRing(0, 140)}
+                    ${renderProgressRing(null, 140, 6, t('monitor.ringLabelQualRate'))}
                 </div>
 
                 <!-- Metric Cards -->
@@ -247,8 +244,8 @@ async function renderJobMonitor(container, batchId) {
                             <div class="monitor-metric-label">${t('monitor.metricFailed')}</div>
                         </div>
                         <div class="monitor-metric">
-                            <div class="monitor-metric-value" id="mon-batch">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricTarget')}</div>
+                            <div class="monitor-metric-value" id="mon-duration">0m 0s</div>
+                            <div class="monitor-metric-label">${t('monitor.metricDuration')}</div>
                         </div>
                         ${isAdmin ? `
                         <div class="monitor-metric">
@@ -321,7 +318,7 @@ async function renderJobMonitor(container, batchId) {
         ring: document.getElementById('mon-ring'),
         scraped: document.getElementById('mon-scraped'),
         failed: document.getElementById('mon-failed'),
-        batch: document.getElementById('mon-batch'),
+        duration: document.getElementById('mon-duration'),
         replaced: document.getElementById('mon-replaced'),
         pipeline: document.getElementById('mon-pipeline'),
         wave: document.getElementById('mon-wave'),
@@ -343,22 +340,44 @@ async function renderJobMonitor(container, batchId) {
     const renderedSirens = new Set();
     let lastScrapedCount = 0;
     let failedPolls = 0;
-    let previousValues = { scraped: -1, failed: -1, batch: -1, replaced: -1, pct: -1 };
+    let previousValues = { scraped: -1, failed: -1, replaced: -1, pct: -1 };
+
+    // Durée ticker state — freezes when batch ends (completed/failed/interrupted/cancelled)
+    let jobStartMs = null;           // set from job.created_at on first successful poll
+    let jobEndMs = null;             // set from job.updated_at when batch reaches terminal state
+    let durationTickerInterval = null;
+
+    function formatDurationMs(ms) {
+        if (!ms || ms < 0) ms = 0;
+        const totalSec = Math.floor(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        return `${m}m ${s}s`;
+    }
+
+    function tickDuration() {
+        if (!$.duration) return;
+        if (!jobStartMs) {
+            $.duration.textContent = '0m 0s';
+            return;
+        }
+        const endMs = jobEndMs || Date.now();
+        $.duration.textContent = formatDurationMs(endMs - jobStartMs);
+    }
 
     // ── Cancel button handler ───────────────────────────────────────────
     if ($.cancelBtn) {
         $.cancelBtn.addEventListener('click', () => {
             const scraped = previousValues.scraped > 0 ? previousValues.scraped : 0;
-            const batchSize = previousValues.batch > 0 ? previousValues.batch : 0;
-            const remaining = Math.max(0, batchSize - scraped);
-            const pct = batchSize > 0 ? Math.round((scraped / batchSize) * 100) : 0;
             showConfirmModal({
                 title: t('monitor.stopConfirmTitle'),
                 body: `
                     <p><strong>${t('monitor.stopConfirmBatch')}</strong> ${escapeHtml($.title.textContent)}</p>
-                    <p><strong>${t('monitor.stopConfirmProgress')}</strong> ${scraped}/${batchSize} ${t('monitor.companies')} (${pct}%)</p>
+                    <p><strong>${t('monitor.stopConfirmCollected')}</strong> ${scraped} ${t('monitor.companies')}</p>
                     <p style="color:var(--success)">${t('monitor.stopConfirmKept', { count: scraped })}</p>
-                    <p style="color:var(--warning)">${t('monitor.stopConfirmRemaining', { count: remaining })}</p>
+                    <p style="color:var(--warning)">${t('monitor.stopConfirmStopsSearching')}</p>
                 `,
                 confirmLabel: t('monitor.stopConfirmBtn'),
                 danger: true,
@@ -407,15 +426,31 @@ async function renderJobMonitor(container, batchId) {
         }
         if (!job || job.error) return;
 
-        const batchSize = job.batch_size || job.total_companies || 1;
+        // ── Duration tracking ──────────────────────────────────
+        // Initial render shows "0m 0s" from the template. First poll (~1.5s in)
+        // sets jobStartMs here, then calls tickDuration() SYNCHRONOUSLY so the
+        // Durée value is correct immediately — before the 1s setInterval ticker
+        // below would otherwise kick in. Prevents the stale "0m 0s" flash during
+        // the first poll cycle.
+        if (job.created_at && jobStartMs === null) {
+            jobStartMs = new Date(job.created_at).getTime();
+        }
+        const terminalStatuses = new Set(['completed', 'failed', 'interrupted', 'cancelled']);
+        if (terminalStatuses.has(job.status)) {
+            jobEndMs = job.updated_at ? new Date(job.updated_at).getTime() : Date.now();
+        } else {
+            jobEndMs = null;
+        }
+        tickDuration();
+
         const scraped = job.companies_scraped || 0;
         const qualified = job.companies_qualified || 0;
         const failed = job.companies_failed || 0;
         const replaced = job.replaced_count || 0;
-        // Progress = qualified companies / batch_size (only phone-confirmed count)
-        // If no qualified but triage_green exists (all-green batch), use green count for ring
-        const effectiveCompleted = qualified > 0 ? qualified : (job.triage_green || 0);
-        const pct = Math.min(100, Math.round((effectiveCompleted / Math.max(batchSize, 1)) * 100));
+        // Ring now shows qualification rate: qualified / scraped (of Maps results
+        // evaluated, how many passed the quality filter). Divide-by-zero guarded
+        // by null pct when scraped == 0 (Maps still searching).
+        const qualRate = scraped > 0 ? Math.round((qualified / scraped) * 100) : null;
         const isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
         const isUpload = job.mode === 'upload';
 
@@ -462,7 +497,14 @@ async function renderJobMonitor(container, batchId) {
                     html += `⏳ ${t('monitor.queueWaiting')}`;
                     html += `</div>`;
                     html += `<div style="font-size:var(--font-sm); margin-top:4px; color:var(--text-secondary)">`;
-                    html += `${escapeHtml(b.batch_name)} — ${b.progress}/${b.target}`;
+                    if (b.exhaustive_default) {
+                        // For Apr-17+ batches, target is a ceiling not a goal.
+                        // Show raw progress. "entité" singular for count=1, "entités" otherwise.
+                        const unit = b.progress === 1 ? 'entité' : 'entités';
+                        html += `${escapeHtml(b.batch_name)} — ${b.progress} ${unit}`;
+                    } else {
+                        html += `${escapeHtml(b.batch_name)} — ${b.progress}/${b.target}`;
+                    }
                     if (b.current_query) html += ` (${escapeHtml(b.current_query)})`;
                     html += `</div>`;
                     if (qi.estimated_wait_minutes != null) {
@@ -486,18 +528,34 @@ async function renderJobMonitor(container, batchId) {
             }
         }
 
-        // ── Progress Ring — only update if pct changed ──────────
-        if (pct !== previousValues.pct) {
-            previousValues.pct = pct;
+        // ── Progress Ring — only update if qualRate changed ─────
+        if (qualRate !== previousValues.pct) {
+            previousValues.pct = qualRate;
             const ringCircle = document.getElementById('progress-ring-circle');
             const ringPct = document.getElementById('progress-ring-pct');
+            const ringLabel = document.querySelector('.progress-ring-label');
             if (ringCircle && ringPct) {
-                // Update SVG dashoffset for smooth transition
                 const r = (140 - 6) / 2; // match renderProgressRing defaults
                 const circumference = 2 * Math.PI * r;
-                const offset = circumference - (pct / 100) * circumference;
-                ringCircle.setAttribute('stroke-dashoffset', offset);
-                ringPct.textContent = pct + '%';
+                if (qualRate === null) {
+                    // scraped == 0 — empty arc, em-dash value
+                    ringCircle.setAttribute('stroke-dashoffset', circumference);
+                    ringPct.textContent = '—';
+                } else {
+                    const offset = circumference - (qualRate / 100) * circumference;
+                    ringCircle.setAttribute('stroke-dashoffset', offset);
+                    ringPct.textContent = qualRate + '%';
+                }
+            }
+            // Label swap: when batch is terminal + scraped=0, show "Batch sans
+            // résultat" instead of the generic "Taux de qualification" (reads
+            // awkwardly on a finished batch with nothing found). On running batches
+            // the label stays "Taux de qualification".
+            if (ringLabel) {
+                const isTerminalNoResult = terminalStatuses.has(job.status) && scraped === 0;
+                ringLabel.textContent = isTerminalNoResult
+                    ? t('monitor.ringLabelNoResult')
+                    : t('monitor.ringLabelQualRate');
             }
         }
 
@@ -516,10 +574,6 @@ async function renderJobMonitor(container, batchId) {
         if (failed !== previousValues.failed) {
             previousValues.failed = failed;
             animateCounter($.failed, failed);
-        }
-        if (batchSize !== previousValues.batch) {
-            previousValues.batch = batchSize;
-            animateCounter($.batch, batchSize);
         }
         if (replaced !== previousValues.replaced) {
             previousValues.replaced = replaced;
@@ -734,11 +788,19 @@ async function renderJobMonitor(container, batchId) {
     // ── Auto-poll every 1.5s ────────────────────────────────────
     pollInterval = setInterval(update, 1500);
 
+    // Durée ticker — updates every 1s while running (separate from poll so it
+    // feels alive between 1.5s polls). The tick function is a no-op when frozen.
+    durationTickerInterval = setInterval(tickDuration, 1000);
+
     // ── Register cleanup ────────────────────────────────────────
     registerCleanup(() => {
         if (pollInterval) {
             clearInterval(pollInterval);
             pollInterval = null;
+        }
+        if (durationTickerInterval) {
+            clearInterval(durationTickerInterval);
+            durationTickerInterval = null;
         }
     });
 }

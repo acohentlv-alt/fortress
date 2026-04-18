@@ -54,6 +54,9 @@ async def list_jobs(request: Request):
     )
 
     # Parse exhaustive flag from filters_json (backend-computed — single source of truth)
+    # Also compute exhaustive_default: True when batch was created under Apr-17+
+    # exhaustive-default regime (batch_size hardcoded to 2000). Frontend uses this
+    # to hide the now-meaningless "Mode exhaustif" legacy badge.
     import json as _json
     for r in rows:
         fj = r.get("filters_json")
@@ -65,6 +68,7 @@ async def list_jobs(request: Request):
                 r["exhaustive"] = False
         else:
             r["exhaustive"] = False
+        r["exhaustive_default"] = bool((r.get("batch_size") or 0) >= 2000)
 
     # Watchdog: auto-resolve orphaned batches (in_progress but idle >10 min)
     # completed if scraped >= batch_size, interrupted if scraped < batch_size
@@ -507,6 +511,9 @@ async def get_job(batch_id: str, request: Request):
             job["exhaustive"] = False
     else:
         job["exhaustive"] = False
+    # Exhaustive-default regime (Apr 17+): batch_size hardcoded to 2000.
+    # Used by the frontend to hide the legacy "Mode exhaustif" badge.
+    job["exhaustive_default"] = bool((job.get("batch_size") or 0) >= 2000)
 
     # Watchdog: if batch is in_progress but no update in 10+ minutes, resolve status.
     # completed if scraped >= batch_size, interrupted if scraped < batch_size.
@@ -591,6 +598,7 @@ async def get_job(batch_id: str, request: Request):
                 "progress": scraped,
                 "target": target,
                 "current_query": blocking.get("current_query"),
+                "exhaustive_default": bool((target or 0) >= 2000),
             }
 
             # Estimate remaining time
@@ -682,6 +690,7 @@ async def get_job_summary(batch_id: str, request: Request):
             "no_sirene_match": no_sirene_match,
         },
         "shortfall_reason": job.get("shortfall_reason"),
+        "exhaustive_default": bool((job.get("batch_size") or 0) >= 2000),
     }
 
 

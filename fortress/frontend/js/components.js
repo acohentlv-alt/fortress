@@ -536,10 +536,22 @@ export function animateCounter(element, targetValue, duration = 600) {
 }
 
 // ── Progress Ring (SVG) ──────────────────────────────────────────
-export function renderProgressRing(pct, size = 120, strokeWidth = 6) {
+/**
+ * @param {number|null} pct   - Percentage 0..100, or null to show an em-dash
+ *                              and leave the arc empty (scraped=0 case).
+ * @param {number} size       - Outer diameter in px (default 120).
+ * @param {number} strokeWidth - Arc stroke width in px (default 6).
+ * @param {string} label      - Under-text label (default "Progression" for
+ *                              backward-compat). Pass "Taux de qualification"
+ *                              from the monitor.
+ */
+export function renderProgressRing(pct, size = 120, strokeWidth = 6, label = 'Progression') {
     const r = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * r;
-    const offset = circumference - (Math.min(100, Math.max(0, pct)) / 100) * circumference;
+    const isNull = pct === null || pct === undefined || Number.isNaN(pct);
+    const safePct = isNull ? 0 : Math.min(100, Math.max(0, pct));
+    const offset = circumference - (safePct / 100) * circumference;
+    const displayValue = isNull ? '—' : `${Math.round(safePct)}%`;
 
     return `
         <div class="progress-ring" style="width:${size}px;height:${size}px">
@@ -551,8 +563,8 @@ export function renderProgressRing(pct, size = 120, strokeWidth = 6) {
                     id="progress-ring-circle"></circle>
             </svg>
             <div class="progress-ring-text">
-                <div class="progress-ring-pct" id="progress-ring-pct">${Math.round(pct)}%</div>
-                <div class="progress-ring-label">Progression</div>
+                <div class="progress-ring-pct" id="progress-ring-pct">${displayValue}</div>
+                <div class="progress-ring-label">${label}</div>
             </div>
         </div>
     `;

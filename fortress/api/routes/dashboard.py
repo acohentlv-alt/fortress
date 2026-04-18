@@ -165,7 +165,9 @@ async def get_stats_by_job(request: Request):
             sj.batch_id, sj.batch_name,
             sj.status AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
-            sj.total_companies, sj.wave_current, sj.wave_total,
+            sj.total_companies,
+            COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
+            sj.wave_current, sj.wave_total,
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,
             sj.created_at, sj.updated_at
         FROM batch_data sj
@@ -174,6 +176,10 @@ async def get_stats_by_job(request: Request):
         ORDER BY sj.created_at DESC
         LIMIT 200
     """, ws_params if ws_params else None)
+
+    # Tag each batch with exhaustive_default for the frontend group timeline.
+    for b in all_batches:
+        b["exhaustive_default"] = bool((b.get("batch_size") or 0) >= 2000)
 
     batch_map: dict[str, list[dict]] = {}
     for b in all_batches:
@@ -583,6 +589,11 @@ async def get_analysis(request: Request):
     enrichers["outcomes"] = {r["outcome"]: r["count"] for r in (outcomes or [])}
 
     # ── Build pipeline_data ──────────────────────────────────────────────
+    # Tag each recent job with exhaustive_default so the frontend can switch
+    # the analysis-recent tile from "N/2000" to raw collected count. Same
+    # detection signal as jobs.py: batch_size >= 2000 = Apr 17+ regime.
+    for r in (recent_jobs or []):
+        r["exhaustive_default"] = bool((r.get("batch_size") or 0) >= 2000)
     pipeline_data = {
         **(pipeline_counts or {}),
         "weekly_trend": weekly_trend or [],

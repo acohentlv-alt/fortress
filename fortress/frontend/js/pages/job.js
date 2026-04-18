@@ -73,11 +73,28 @@ export async function renderJob(container, batchId) {
                 <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-md)">
                     Résumé du batch
                 </h3>
-                <p style="font-size:var(--font-lg); font-weight:700; margin-bottom:var(--space-md)">
-                    ${qual} entreprise${qual > 1 ? 's' : ''} qualifiée${qual > 1 ? 's' : ''} sur ${target} demandée${target > 1 ? 's' : ''}
-                </p>
                 ${(() => {
-                    const yieldPct = target > 0 ? Math.round((qual / target) * 100) : 0;
+                    // For exhaustive-default batches we evaluated `s.found` Maps results
+                    // (not a user-chosen target). Word it honestly.
+                    const isExhaustiveDefault = !!s.exhaustive_default;
+                    const evaluated = s.found || 0;
+                    if (isExhaustiveDefault) {
+                        return `<p style="font-size:var(--font-lg); font-weight:700; margin-bottom:var(--space-md)">
+                            ${qual} entreprise${qual > 1 ? 's' : ''} qualifiée${qual > 1 ? 's' : ''} sur ${evaluated} évaluée${evaluated > 1 ? 's' : ''}
+                        </p>`;
+                    }
+                    return `<p style="font-size:var(--font-lg); font-weight:700; margin-bottom:var(--space-md)">
+                        ${qual} entreprise${qual > 1 ? 's' : ''} qualifiée${qual > 1 ? 's' : ''} sur ${target} demandée${target > 1 ? 's' : ''}
+                    </p>`;
+                })()}
+                ${(() => {
+                    // Rendement = qualified / evaluated (s.found). For exhaustive-default
+                    // batches, dividing by target=2000 is meaningless; dividing by evaluated
+                    // gives the true yield quality.
+                    const isExhaustiveDefault = !!s.exhaustive_default;
+                    const denom = isExhaustiveDefault ? (s.found || 0) : target;
+                    const yieldPct = denom > 0 ? Math.round((qual / denom) * 100) : 0;
+                    if (denom === 0) return '';  // first seconds: no Maps results yet — skip bar
                     const yieldColor = yieldPct >= 70 ? '#10b981' : yieldPct >= 30 ? '#f59e0b' : '#ef4444';
                     return `
                     <div style="margin-bottom:var(--space-md)">
@@ -114,7 +131,7 @@ export async function renderJob(container, batchId) {
                 </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); margin-top:var(--space-sm)">
                     ${statusBadge(job.status)}
-                    ${job.exhaustive ? `<span class="badge badge-exhaustive">⚡ ${t('job.exhaustiveMode', { target: job.batch_size })}</span>` : ''}
+                    ${(job.exhaustive && !job.exhaustive_default) ? `<span class="badge badge-exhaustive">⚡ ${t('job.exhaustiveMode', { target: job.batch_size })}</span>` : ''}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
                         ${t('job.createdOn')} ${formatDateTime(job.created_at)}
                     </span>
@@ -145,14 +162,20 @@ export async function renderJob(container, batchId) {
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                <span style="font-weight:600">${t('job.progressEntitiesFound', { count: qualified, plural: qualified !== 1 ? 's' : '' })}</span>
+                <span style="font-weight:600">${t('job.progressEntitiesFoundOfEvaluated', {
+                    count: qualified,
+                    pluralCount: qualified !== 1 ? 's' : '',
+                    evaluated: scraped,
+                    pluralEval: scraped !== 1 ? 's' : '',
+                    entityWord: qualified !== 1 ? 'entities' : 'entity'
+                })}</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
                     <span style="color:var(--text-secondary); font-weight:500">${qualified} ${t('job.foundLabel', { plural: qualified !== 1 ? 's' : '' })}</span>
                     ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">${t('job.pendingLinks', { count: job.pending_links, plural: job.pending_links > 1 ? 's' : '' })}</span>` : ''}
                     <button id="toggle-provenance" title="${t('job.provenanceDetails')}" style="background:none;border:none;cursor:pointer;font-size:14px;opacity:0.4;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.4">ℹ️</button>
                 </div>
             </div>
-            ${job.status === 'in_progress' ? `
+            ${(job.status === 'in_progress' && !job.exhaustive_default) ? `
             <div class="progress-bar" style="height:10px">
                 <div class="progress-bar-fill progress-bar-accent animated" style="width:${progressPct}%"></div>
             </div>` : ''}

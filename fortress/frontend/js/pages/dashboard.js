@@ -1016,7 +1016,11 @@ function _renderGroupCard(g, idx) {
                     ${batches.map((b, bIdx) => {
         const bScraped = b.companies_scraped || 0;
         const bTotal = b.total_companies || 1;
-        const bPct = Math.round((bScraped / bTotal) * 100);
+        const bIsExhaustiveDefault = !!b.exhaustive_default;
+        const bPct = bIsExhaustiveDefault ? 100 : Math.round((bScraped / bTotal) * 100);
+        const countText = bIsExhaustiveDefault
+            ? `${bScraped} ${t('dashboard.entitiesCollected')}`
+            : `${bScraped}/${bTotal} ${t('dashboard.scrapedOf')}`;
         return `
                         <div class="job-timeline-item" onclick="event.stopPropagation(); window.location.hash='#/job/${encodeURIComponent(b.batch_id)}'">
                             <div class="timeline-dot ${bIdx === 0 ? 'latest' : ''}"></div>
@@ -1024,7 +1028,7 @@ function _renderGroupCard(g, idx) {
                                 <div class="timeline-batch-id">${escapeHtml(b.batch_id)}</div>
                                 <div class="timeline-meta">
                                     <span>${formatDateTime(b.created_at)}</span>
-                                    <span>${bScraped}/${bTotal} ${t('dashboard.scrapedOf')}</span>
+                                    <span>${countText}</span>
                                     ${b.wave_total ? `<span>Vague ${b.wave_current || 0}/${b.wave_total}</span>` : ''}
                                 </div>
                             </div>
@@ -1471,7 +1475,14 @@ function renderAnalysis(data, isAdmin, rootContainer, batchData, departments = [
                         <div class="analysis-recent-job" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
                             <span class="analysis-recent-name">${escapeHtml(j.batch_name)}</span>
                             ${statusBadge(j.status)}
-                            <span class="analysis-recent-count">${j.companies_scraped || 0}/${j.batch_size || 0}</span>
+                            <span class="analysis-recent-count">${(() => {
+                                const scraped = j.companies_scraped || 0;
+                                const batchSize = j.batch_size || 0;
+                                const isExhaustiveDefault = !!j.exhaustive_default;
+                                // For exhaustive-default batches the "target" is a safety
+                                // ceiling, not a goal. Show raw count instead of N/2000.
+                                return isExhaustiveDefault ? `${scraped}` : `${scraped}/${batchSize}`;
+                            })()}</span>
                             <span class="analysis-recent-date">${formatDateTime(j.created_at)}</span>
                         </div>
                     `).join('')}
