@@ -3,7 +3,9 @@
  *
  * User provides:
  *   1. Search queries (e.g. "camping Perpignan", "transport 66")
- *   2. Batch size via segmented control (10/20/30/50)
+ *
+ * Exhaustive-by-default: every batch runs until Google Maps is exhausted
+ * or the 2000-entity safety ceiling is hit.
  *
  * Rebuilt as Gemini-style prompt interface with suggestion chips,
  * inline warnings, live summary, and "Comment ça marche" expandable card.
@@ -70,16 +72,6 @@ export async function renderNewBatch(container) {
                 </div>
 
                 <div class="gemini-controls">
-                    <span class="gemini-controls-label">${t('newBatch.sizeSegmentLabel')}</span>
-                    <div class="segmented" id="batch-size-segmented" role="radiogroup">
-                        <button type="button" class="segment" data-size="10" role="radio" aria-checked="false">10</button>
-                        <button type="button" class="segment active" data-size="20" role="radio" aria-checked="true">20</button>
-                        <button type="button" class="segment" data-size="30" role="radio" aria-checked="false">30</button>
-                        <button type="button" class="segment" data-size="50" role="radio" aria-checked="false">50</button>
-                    </div>
-                </div>
-
-                <div class="gemini-controls">
                     <span class="gemini-controls-label">${t('newBatch.nafLabel')}</span>
                     <div class="naf-picker" id="naf-picker">
                         <input type="text" class="naf-picker-input" id="naf-picker-input"
@@ -89,12 +81,9 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
-                <div class="gemini-controls">
-                    <label class="exhaustive-toggle" for="exhaustive-toggle">
-                        <input type="checkbox" id="exhaustive-toggle">
-                        <span>${t('newBatch.exhaustiveLabel')}</span>
-                        <span class="exhaustive-hint">${t('newBatch.exhaustiveHint')}</span>
-                    </label>
+                <div class="duration-hint">
+                    <span class="duration-hint-icon">⏱</span>
+                    <span>${t('newBatch.durationHint')}</span>
                 </div>
 
                 <button type="button" class="btn-launch-hero" id="btn-launch-batch">
@@ -151,22 +140,6 @@ export async function renderNewBatch(container) {
         chipsContainer.innerHTML = '';
     }
 
-    // ── Segmented size control ────────────────────────────────────────
-    let currentBatchSize = 20;
-    const segmented = document.getElementById('batch-size-segmented');
-    segmented.querySelectorAll('.segment').forEach(btn => {
-        btn.addEventListener('click', () => {
-            segmented.querySelectorAll('.segment').forEach(b => {
-                b.classList.remove('active');
-                b.setAttribute('aria-checked', 'false');
-            });
-            btn.classList.add('active');
-            btn.setAttribute('aria-checked', 'true');
-            currentBatchSize = parseInt(btn.dataset.size, 10);
-            updateSummary();
-        });
-    });
-
     // ── NAF picker ────────────────────────────────────────────────────
     let _nafData = null;
     try {
@@ -209,22 +182,6 @@ export async function renderNewBatch(container) {
         if (picker && !picker.contains(e.target)) {
             nafDropdown.style.display = 'none';
         }
-    });
-
-    // ── Exhaustive toggle ─────────────────────────────────────────────
-    const exhaustiveToggle = document.getElementById('exhaustive-toggle');
-    exhaustiveToggle.addEventListener('change', () => {
-        if (exhaustiveToggle.checked) {
-            segmented.style.opacity = '0.5';
-            segmented.style.pointerEvents = 'none';
-            currentBatchSize = 500;
-        } else {
-            segmented.style.opacity = '1';
-            segmented.style.pointerEvents = 'auto';
-            const active = segmented.querySelector('.segment.active');
-            currentBatchSize = active ? parseInt(active.dataset.size, 10) : 20;
-        }
-        updateSummary();
     });
 
     // ── Subordinate query row creation ────────────────────────────────
@@ -302,10 +259,9 @@ export async function renderNewBatch(container) {
             summaryEl.textContent = t('newBatch.summaryEmptyState');
             return;
         }
-        summaryEl.textContent = t('newBatch.summaryLive', {
+        summaryEl.textContent = t('newBatch.summaryLiveExhaustive', {
             count: queries.length,
             plural: queries.length > 1 ? 's' : '',
-            size: currentBatchSize
         });
     }
 
@@ -348,7 +304,6 @@ export async function renderNewBatch(container) {
         }
 
         const btn = document.getElementById('btn-launch-batch');
-        const batchSize = currentBatchSize;
 
         // Extract sector name from first query (first word)
         const firstQuery = queries[0];
@@ -382,9 +337,7 @@ export async function renderNewBatch(container) {
             mode: 'discovery',
             strategy: 'maps',
             search_queries: queries,
-            size: batchSize,
             naf_code: nafValue.value || null,
-            exhaustive: exhaustiveToggle.checked,
         };
 
         btn.disabled = true;
@@ -445,19 +398,6 @@ export async function renderNewBatch(container) {
                 for (let i = 1; i < prefill.queries.length; i++) {
                     const newRow = createSubordinateQueryRow(prefill.queries[i]);
                     document.getElementById('additional-queries').appendChild(newRow);
-                }
-            }
-            if (prefill.size) {
-                const targetSize = parseInt(prefill.size, 10);
-                const targetSegment = document.querySelector(`.segment[data-size="${targetSize}"]`);
-                if (targetSegment) {
-                    segmented.querySelectorAll('.segment').forEach(b => {
-                        b.classList.remove('active');
-                        b.setAttribute('aria-checked', 'false');
-                    });
-                    targetSegment.classList.add('active');
-                    targetSegment.setAttribute('aria-checked', 'true');
-                    currentBatchSize = targetSize;
                 }
             }
             updateSummary();

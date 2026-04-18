@@ -40,6 +40,7 @@ export async function renderJob(container, batchId) {
     const batchSize = job.batch_size || job.total_companies || 1;
     const scraped = job.companies_scraped || 0;
     const qualified = job.companies_qualified || 0;
+    const isComplete = job.status === 'completed' || job.status === 'interrupted';
     const progressPct = Math.min(100, Math.round((qualified / batchSize) * 100));
     const q = quality || {};
 
@@ -144,7 +145,7 @@ export async function renderJob(container, batchId) {
         <!-- Progress -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-md)">
-                <span style="font-weight:600">${(job.status === 'completed' || job.status === 'interrupted') ? t('job.results') : t('job.progress')} — ${t('job.companiesCount', { count: batchSize, plural: batchSize > 1 ? 's' : '' })}</span>
+                <span style="font-weight:600">${t('job.progressEntitiesFound', { count: qualified, plural: qualified !== 1 ? 's' : '' })}</span>
                 <div style="display:flex; align-items:center; gap:var(--space-md)">
                     <span style="color:var(--text-secondary); font-weight:500">${qualified} ${t('job.foundLabel', { plural: qualified !== 1 ? 's' : '' })}</span>
                     ${(job.pending_links || 0) > 0 ? `<span class="badge" style="background:rgba(245,158,11,0.15); color:rgb(245,158,11); border:1px solid rgba(245,158,11,0.3)">${t('job.pendingLinks', { count: job.pending_links, plural: job.pending_links > 1 ? 's' : '' })}</span>` : ''}

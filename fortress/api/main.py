@@ -506,6 +506,7 @@ _PUBLIC_PATHS = {
     "/api/auth/login",
     "/api/auth/logout",
     "/api/contact",
+    "/api/internal/notify-batch-complete",
 }
 
 _COOKIE_NAME = "fortress_session"

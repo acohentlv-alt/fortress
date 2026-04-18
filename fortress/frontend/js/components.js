@@ -329,6 +329,41 @@ export function showToast(message, type = 'success') {
     }, 4000);
 }
 
+// ── Completion Sound ─────────────────────────────────────────────
+export function playCompletionSound() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.6);
+    } catch (e) { /* autoplay blocked, silent */ }
+}
+
+// ── Completion Banner ─────────────────────────────────────────────
+export function showCompletionBanner({ batchId, batchName, count }) {
+    if (document.querySelector(`[data-banner-batch="${batchId}"]`)) return;
+    const banner = document.createElement('div');
+    banner.className = 'completion-banner';
+    banner.dataset.bannerBatch = batchId;
+    banner.innerHTML = `
+        <span class="completion-banner-icon">✅</span>
+        <span class="completion-banner-text">Batch « ${batchName} » terminé — ${count} entités trouvées</span>
+        <a href="#/job/${encodeURIComponent(batchId)}" class="completion-banner-btn">Voir les résultats</a>
+        <button class="completion-banner-close" aria-label="Fermer">✕</button>
+    `;
+    banner.querySelector('.completion-banner-close').onclick = () => banner.remove();
+    banner.querySelector('.completion-banner-btn').onclick = () => banner.remove();
+    document.body.appendChild(banner);
+}
+
 // ── Breadcrumb ───────────────────────────────────────────────────
 export function breadcrumb(items) {
     return `

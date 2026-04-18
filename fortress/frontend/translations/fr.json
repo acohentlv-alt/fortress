@@ -532,7 +532,8 @@
     "gaugeWeb": "🌐 Web",
     "queueWaiting": "En attente — un autre batch est en cours",
     "queueWaitingGeneric": "En attente — démarrage imminent...",
-    "queueEstimate": "Temps d'attente estimé : ~{{minutes}} min"
+    "queueEstimate": "Temps d'attente estimé : ~{{minutes}} min",
+    "entitiesFound": "entités trouvées"
   },
   "job": {
     "title": "Détail du batch",
@@ -571,6 +572,7 @@
     "resumeError": "Impossible de reprendre ce batch",
     "progress": "Progression",
     "results": "Résultats",
+    "progressEntitiesFound": "Résultats — {{count}} entité{{plural}} trouvée{{plural}}",
     "companiesCount": "{{count}} entreprise{{plural}}",
     "foundLabel": "entreprise{{plural}} trouvée{{plural}}",
     "pendingLinks": "⏳ {{count}} lien{{plural}} en attente",
@@ -629,10 +631,10 @@
     "queryPlaceholderSecondary": "Ajouter une requête...",
     "addQueryBtn": "+ Ajouter une requête",
     "removeQuery": "Supprimer cette requête",
-    "sizeSegmentLabel": "Nombre d'entreprises",
     "launchHero": "Lancer la recherche →",
-    "summaryLive": "Vous allez lancer {{count}} requête{{plural}} × {{size}} entreprises",
+    "summaryLiveExhaustive": "{{count}} requête{{plural}} — exploration exhaustive de chaque requête",
     "summaryEmptyState": "Tapez une requête pour commencer",
+    "durationHint": "Chaque recherche explore Google Maps jusqu'à épuisement des résultats. Un batch peut durer de 10 à 90 minutes selon l'étendue de vos recherches. Limite de sécurité : 2000 entités par batch.",
     "suggestionsLabel": "Inspirations",
     "warningInline": "Requête trop large — ajoutez une ville ou un département",
     "launch": "🚀 Lancer la Recherche",
@@ -647,9 +649,7 @@
     "errorNetwork": "❌ Erreur de connexion : {{message}}",
     "sendingConfig": "⏳ Envoi de la configuration au serveur...",
     "nafLabel": "Filtre NAF (optionnel)",
-    "nafPlaceholder": "Saisissez une section (A–U), une division (ex : 55) ou un code (ex : 55.30Z)",
-    "exhaustiveLabel": "Mode exhaustif (jusqu'à 500 entités)",
-    "exhaustiveHint": "Un batch exhaustif dure 15 à 30 minutes."
+    "nafPlaceholder": "Saisissez une section (A–U), une division (ex : 55) ou un code (ex : 55.30Z)"
   },
   "upload": {
     "title": "Import / Export",

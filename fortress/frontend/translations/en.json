@@ -526,7 +526,8 @@
     "gaugeWeb": "🌐 Web",
     "queueWaiting": "Waiting — another batch is running",
     "queueWaitingGeneric": "Waiting — starting soon...",
-    "queueEstimate": "Estimated wait: ~{{minutes}} min"
+    "queueEstimate": "Estimated wait: ~{{minutes}} min",
+    "entitiesFound": "entities found"
   },
   "job": {
     "title": "Batch details",
@@ -564,6 +565,7 @@
     "resumeSuccess": "Batch resumed — opening live monitor",
     "resumeError": "Could not resume this batch",
     "progress": "Progress",
+    "progressEntitiesFound": "Results — {{count}} entit{{plural}} found",
     "companiesCount": "{{count}} companies",
     "foundLabel": "companies found",
     "results": "Results",
@@ -622,10 +624,10 @@
     "queryPlaceholderSecondary": "Add a query...",
     "addQueryBtn": "+ Add a query",
     "removeQuery": "Remove this query",
-    "sizeSegmentLabel": "Number of companies",
     "launchHero": "Launch search →",
-    "summaryLive": "You will launch {{count}} quer{{plural}} × {{size}} companies",
+    "summaryLiveExhaustive": "{{count}} quer{{plural}} — exhaustive exploration of each query",
     "summaryEmptyState": "Type a query to get started",
+    "durationHint": "Each search explores Google Maps until results are exhausted. A batch can take 10 to 90 minutes depending on the scope of your searches. Safety limit: 2000 entities per batch.",
     "suggestionsLabel": "Suggestions",
     "warningInline": "Query too broad — add a city or department",
     "launch": "🚀 Launch Search",
@@ -638,7 +640,9 @@
     "redirecting": "Redirecting to Live Pipeline in 3 seconds...",
     "errorLaunch": "❌ Error: {{message}}",
     "errorNetwork": "❌ Connection error: {{message}}",
-    "sendingConfig": "⏳ Sending configuration to server..."
+    "sendingConfig": "⏳ Sending configuration to server...",
+    "nafLabel": "NAF filter (optional)",
+    "nafPlaceholder": "Enter a section (A–U), division (e.g. 55), or code (e.g. 55.30Z)"
   },
   "upload": {
     "title": "Import / Export",

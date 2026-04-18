@@ -28,13 +28,11 @@ class BatchRunRequest(BaseModel):
     """JSON body for POST /api/batch/run."""
     sector: str = Field(..., min_length=1, description="Sector name, e.g. 'agriculture'")
     department: str = Field(..., min_length=1, max_length=10, description="Department code (e.g. '66') or 'FR'/'ALL' for France-wide")
-    size: int = Field(20, ge=1, le=500, description="1-50 for standard mode, up to 500 in exhaustive mode")
     mode: str = Field("discovery", description="Mode: discovery or enrichment")
     city: str | None = Field(None, description="Optional city filter")
     naf_code: str | None = Field(None, description="Optional NAF filter — section letter (A-U), 2-digit division (e.g. 55), or 5-char code (e.g. 55.30Z)")
     strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
     search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
-    exhaustive: bool = Field(False, description="Exhaustive mode — raises size cap to 500 and keeps scraping until target or NAF pool is exhausted")
 
 
 
@@ -53,13 +51,6 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
     Returns 202 with the batch_id for monitoring.
     """
-    # Server-side size cap: non-exhaustive batches max 50
-    if body.size > 50 and not body.exhaustive:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Taille maximale sans mode exhaustif : 50."}
-        )
-
     sector = body.sector.strip().lower()
     dept = body.department.strip()
     # Use the user's original search query as the display name if available,
@@ -87,8 +78,6 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["naf_code"] = body.naf_code.strip()
     if body.department:
         filters_dict["department"] = body.department.strip()
-    if body.exhaustive:
-        filters_dict["exhaustive"] = True
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
     # Build search_queries JSON for Maps-first mode
@@ -182,7 +171,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
                 """INSERT INTO batch_data
                    (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id)
                    VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (batch_id, batch_name, batch_number, batch_offset, body.size, body.size, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id),
+                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id),
             )
             await conn.commit()
     except Exception as exc:
@@ -241,7 +230,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
         action='batch_launched',
         target_type='batch',
         target_id=batch_id,
-        details=f"Recherche {sector} {dept} — {body.size} entreprises",
+        details=f"Recherche {sector} {dept} — jusqu'à 2000 entités",
     )
 
     return {
@@ -249,7 +238,7 @@ async def run_batch(body: BatchRunRequest, request: Request):
         "batch_name": batch_name,
         "batch_number": batch_number,
         "batch_offset": batch_offset,
-        "size": body.size,
+        "max_entities": 2000,
         "mode": body.mode,
         "pid": process.pid,
         "status": "launched",

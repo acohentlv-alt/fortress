@@ -32,7 +32,7 @@ import psycopg
 import psycopg_pool
 import structlog
 
-from fortress.config.departments import DEPARTMENTS, DEPT_CITIES
+from fortress.config.departments import DEPARTMENTS  # noqa: F401
 from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
 from fortress.config.settings import settings
 from fortress.models import Company, Contact, ContactSource
@@ -59,6 +59,42 @@ def _compute_naf_status(
         # Section letter: match if NAF starts with any division in whitelist
         return "verified" if any(candidate.startswith(d) for d in division_whitelist) else "mismatch"
     return "verified" if candidate.startswith(picked_naf) else "mismatch"
+
+
+async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) -> None:
+    """Copy SIRENE reference fields from the real SIREN row onto the MAPS entity.
+
+    Populates: siret_siege, naf_code, naf_libelle, forme_juridique,
+    code_postal, ville, date_creation, tranche_effectif.
+    denomination / enseigne / adresse intentionally kept from Google Maps.
+
+    Called on both pipeline auto-confirm and /link approve endpoint —
+    single source of truth for SIRENE→MAPS copy semantics.
+    """
+    sirene_cur = await conn.execute(
+        """SELECT siret_siege, naf_code, naf_libelle,
+                  forme_juridique, code_postal, ville,
+                  date_creation, tranche_effectif
+           FROM companies WHERE siren = %s""",
+        (target_siren,),
+    )
+    sirene_row = await sirene_cur.fetchone()
+    if not sirene_row:
+        return
+    await conn.execute(
+        """UPDATE companies
+           SET siret_siege      = %s,
+               naf_code         = %s,
+               naf_libelle      = %s,
+               forme_juridique  = %s,
+               code_postal      = %s,
+               ville            = %s,
+               date_creation    = %s,
+               tranche_effectif = COALESCE(tranche_effectif, %s)
+           WHERE siren = %s""",
+        (sirene_row[0], sirene_row[1], sirene_row[2], sirene_row[3],
+         sirene_row[4], sirene_row[5], sirene_row[6], sirene_row[7], maps_siren),
+    )
 
 
 # Graceful shutdown flag — set by SIGTERM handler
@@ -128,82 +164,6 @@ def _name_match_score(name_a: str, name_b: str) -> float:
     return overlap / max(len(ta), len(tb))
 
 
-def _expand_queries(
-    sector_word: str, dept_code: str, original_queries: list[str],
-    memory: list[dict] | None = None,
-) -> list[str]:
-    """Generate up to 5 expansion queries for a sector + department.
-
-    Uses query memory to skip exhausted queries (cards_found=0 in all past
-    runs) and prioritize productive ones. Never-tried queries come first.
-    """
-    original_lower = {q.lower().strip() for q in original_queries}
-
-    # ── Generate ALL candidates ──
-    all_candidates: list[str] = []
-
-    # Department name query
-    dept_name = DEPARTMENTS.get(dept_code)
-    if dept_name:
-        q = f"{sector_word} {dept_name}"
-        if q.lower() not in original_lower:
-            all_candidates.append(q)
-
-    # City queries from DEPT_CITIES
-    cities = DEPT_CITIES.get(dept_code, [])
-    for city in cities:
-        q = f"{sector_word} {city}"
-        if q.lower() not in original_lower:
-            all_candidates.append(q)
-
-    if not all_candidates:
-        return []
-
-    # ── No memory? Return first 5 candidates (original behavior) ──
-    if not memory:
-        return all_candidates[:5]
-
-    # ── Build memory lookup: query_text -> best result ──
-    mem_lookup: dict[str, dict] = {}
-    for m in memory:
-        key = m["query_text"].lower().strip()
-        if key not in mem_lookup:
-            mem_lookup[key] = {"cards_found": m["cards_found"], "new_companies": m["new_companies"]}
-        else:
-            if m["cards_found"] > mem_lookup[key]["cards_found"]:
-                mem_lookup[key] = {"cards_found": m["cards_found"], "new_companies": m["new_companies"]}
-
-    # ── Classify candidates ──
-    never_tried: list[str] = []
-    productive: list[tuple[int, str]] = []
-    exhausted: list[str] = []
-
-    for q in all_candidates:
-        key = q.lower().strip()
-        if key not in mem_lookup:
-            never_tried.append(q)
-        elif mem_lookup[key]["cards_found"] > 0:
-            productive.append((mem_lookup[key]["new_companies"], q))
-        else:
-            exhausted.append(q)
-
-    # ── Sort productive by new_companies desc ──
-    productive.sort(key=lambda x: x[0], reverse=True)
-
-    # ── Priority: never-tried first, then productive, skip exhausted ──
-    result: list[str] = []
-    for q in never_tried:
-        result.append(q)
-        if len(result) >= 5:
-            return result
-    for _, q in productive:
-        result.append(q)
-        if len(result) >= 5:
-            return result
-
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Smarter scoring — detect names/industries that need higher thresholds
 # ---------------------------------------------------------------------------
@@ -231,6 +191,10 @@ _INDUSTRY_WORDS = {
     "hotellerie", "restauration",
 }
 
+
+# Match methods strong enough for pipeline auto-confirm (with verified NAF).
+# Weak variants (enseigne_weak, phone_weak, surname, fuzzy_name) never auto-confirm.
+_STRONG_METHODS = frozenset({"inpi", "siren_website", "enseigne", "phone", "address"})
 
 _LEGAL_FORM_TOKENS = frozenset({
     "earl", "gaec", "scea", "scev", "sci", "sarl", "sas",
@@ -342,6 +306,55 @@ async def _match_to_sirene(
     # Extract postal code from Maps address early — used in multiple fallbacks
     maps_cp_match = re.search(r"\b(\d{5})\b", maps_address or "")
     maps_cp = maps_cp_match.group(1) if maps_cp_match else None
+
+    # ── Step 0: INPI name search (primary — fastest confirmed match) ──────────
+    try:
+        from fortress.matching.inpi import search_by_name as _inpi_search
+        _inpi_hit = await _inpi_search(
+            query=_normalize_name(maps_name),
+            dept=departement,
+            cp=maps_cp,
+        )
+        if _inpi_hit is not None:
+            _inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp = _inpi_hit
+            # Validate against local SIRENE database
+            _inpi_cur = await conn.execute(
+                """SELECT siren, denomination, enseigne, adresse, code_postal, ville, departement
+                   FROM companies
+                   WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                   LIMIT 1""",
+                (_inpi_siren,),
+            )
+            _inpi_row = await _inpi_cur.fetchone()
+            if _inpi_row:
+                _denom = _inpi_row[1] or ""
+                _enseigne = _inpi_row[2] or ""
+                _adresse = _inpi_row[3] or ""
+                _ville = _inpi_row[5] or ""
+                log.info(
+                    "discovery.inpi_primary_match",
+                    maps_name=maps_name,
+                    siren=_inpi_siren,
+                    denomination=_denom,
+                )
+                return {
+                    "siren": _inpi_siren,
+                    "denomination": _denom,
+                    "enseigne": _enseigne,
+                    "score": 0.92,
+                    "method": "inpi",
+                    "adresse": _adresse,
+                    "ville": _ville,
+                }
+            else:
+                log.debug(
+                    "inpi.siren_not_in_local_sirene",
+                    siren=_inpi_siren,
+                    maps_name=maps_name,
+                )
+                # Fall through to Steps 1-5
+    except Exception:
+        pass  # INPI outage — fall through to classic matcher
 
     normalized = _normalize_name(maps_name)
     search_terms = normalized.split()
@@ -1084,23 +1097,18 @@ async def run(batch_id: str) -> None:
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
 
-            # Parse optional department + NAF filter + exhaustive mode from filters
-            # (Parsed BEFORE the size cap so exhaustive_mode controls the ceiling.)
+            # Parse optional department + NAF filter from filters
             dept_filter = None
             picked_naf = None
-            exhaustive_mode = False
             if filters_raw:
                 try:
                     filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
                     dept_filter = filters.get("department")
                     picked_naf = (filters.get("naf_code") or "").strip() or None
-                    exhaustive_mode = bool(filters.get("exhaustive", False))
                 except Exception:
                     pass
 
-            # Conditional size cap: 500 in exhaustive mode, 50 otherwise
-            _max_target = 500 if exhaustive_mode else 50
-            batch_size = min(batch_size, _max_target) if batch_size > 0 else _max_target
+            batch_size = 2000  # Hard server-side ceiling — user-facing size control removed
 
             # Expand section letter → list of divisions (null if picked_naf is not a single letter)
             naf_division_whitelist: list[str] | None = None
@@ -1541,7 +1549,7 @@ async def run(batch_id: str) -> None:
                     _pending_link: dict | None = None
                     if candidate:
                         _pending_link = candidate
-                        if candidate["method"] in ("enseigne", "phone", "address", "siren_website"):
+                        if candidate["method"] in ("enseigne", "phone", "address", "siren_website", "inpi"):
                             log.info(
                                 "discovery.auto_linked",
                                 maps_name=maps_name,
@@ -1596,33 +1604,59 @@ async def run(batch_id: str) -> None:
                         await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
                         await upsert_contact(conn, contact)
 
-                        # All MAPS links start as pending — user must approve via /link endpoint
+                        # Default link state: pending. Auto-confirm if method is strong AND NAF verifies against user's picker.
                         if _pending_link:
-                            await conn.execute("""
-                                UPDATE companies
-                                SET linked_siren = %s, link_confidence = 'pending', link_method = %s
-                                WHERE siren = %s
-                            """, (_pending_link["siren"], _pending_link["method"], siren))
+                            method = _pending_link["method"]
+                            target_siren = _pending_link["siren"]
 
-                            # Compute naf_status if a NAF filter was applied
+                            # Compute naf_status first so we can decide on auto-confirm
+                            naf_status = None
                             if picked_naf:
                                 naf_cur = await conn.execute(
                                     "SELECT naf_code FROM companies WHERE siren = %s",
-                                    (_pending_link["siren"],)
+                                    (target_siren,),
                                 )
                                 sirene_naf_row = await naf_cur.fetchone()
                                 matched_naf = (sirene_naf_row[0] if sirene_naf_row else None) or ""
                                 naf_status = _compute_naf_status(matched_naf, picked_naf, naf_division_whitelist)
+
+                            auto_confirm = (method in _STRONG_METHODS) and (naf_status == "verified")
+                            link_state = "confirmed" if auto_confirm else "pending"
+
+                            await conn.execute(
+                                """UPDATE companies
+                                   SET linked_siren    = %s,
+                                       link_confidence = %s,
+                                       link_method     = %s
+                                   WHERE siren = %s""",
+                                (target_siren, link_state, method, siren),
+                            )
+
+                            if naf_status is not None:
                                 await conn.execute(
                                     "UPDATE companies SET naf_status = %s WHERE siren = %s",
-                                    (naf_status, siren)
+                                    (naf_status, siren),
+                                )
+
+                            if auto_confirm:
+                                # Copy SIRENE reference data onto the MAPS row — same semantics
+                                # as manual /link approve. Uses shared helper (single source of truth).
+                                await _copy_sirene_reference_data(conn, siren, target_siren)
+                                await log_audit(
+                                    conn,
+                                    batch_id=batch_id,
+                                    siren=siren,
+                                    action="auto_linked_verified",
+                                    result="success",
+                                    detail=f"Auto-confirmé → {target_siren} (method={method}, naf_status={naf_status})",
+                                    workspace_id=batch_workspace_id,
                                 )
 
                         # MAPS-only (no SIRENE candidate): mark naf_status if NAF filter was applied
                         if not _pending_link and picked_naf:
                             await conn.execute(
                                 "UPDATE companies SET naf_status = 'maps_only' WHERE siren = %s",
-                                (siren,)
+                                (siren,),
                             )
 
                         await log_audit(
@@ -1771,7 +1805,7 @@ async def run(batch_id: str) -> None:
 
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
                     # Fuzzy name matches wait for user confirmation before INPI call
-                    if _pending_link and _pending_link["method"] in ("enseigne", "phone", "address", "siren_website"):
+                    if _pending_link and _pending_link["method"] in ("enseigne", "phone", "address", "siren_website", "inpi"):
                         try:
                             from fortress.matching.inpi import fetch_dirigeants
                             from fortress.models import Officer, ContactSource as CS
@@ -2131,177 +2165,6 @@ async def run(batch_id: str) -> None:
                     if q_idx < total_queries:
                         await asyncio.sleep(3)
 
-                # ── Query Expansion Cascade ───────────────────────────
-                expansion_used: list[str] = []
-                pre_expansion_count = companies_discovered
-                if (
-                    batch_size > 0
-                    and companies_discovered < batch_size
-                    and dept_filter
-                    and re.match(r"^\d{2,3}$", dept_filter)
-                ):
-                    _first_q = search_queries[0] if search_queries else ""
-                    sector_word = re.sub(
-                        r'\b' + re.escape(dept_filter) + r'\b', '', _first_q
-                    ).strip()
-                    sector_word = re.sub(r'\s{2,}', ' ', sector_word).strip().rstrip(',').strip()
-
-                    if sector_word:  # Skip if query was just the dept code
-                        # ── Load query memory for this sector+dept ──
-                        _query_memory: list[dict] = []
-                        try:
-                            async with pool.connection() as qm_conn:
-                                if batch_workspace_id is not None:
-                                    qm_cur = await qm_conn.execute(
-                                        """SELECT query_text, cards_found, new_companies
-                                           FROM query_memory
-                                           WHERE workspace_id = %s
-                                             AND sector_word = %s
-                                             AND dept_code = %s
-                                             AND is_expansion = true""",
-                                        (batch_workspace_id, sector_word, dept_filter),
-                                    )
-                                else:
-                                    qm_cur = await qm_conn.execute(
-                                        """SELECT query_text, cards_found, new_companies
-                                           FROM query_memory
-                                           WHERE workspace_id IS NULL
-                                             AND sector_word = %s
-                                             AND dept_code = %s
-                                             AND is_expansion = true""",
-                                        (sector_word, dept_filter),
-                                    )
-                                for qm_row in await qm_cur.fetchall():
-                                    _query_memory.append({
-                                        "query_text": qm_row[0],
-                                        "cards_found": qm_row[1],
-                                        "new_companies": qm_row[2],
-                                    })
-                        except Exception:
-                            pass  # Memory is best-effort
-
-                        expansion_queries = _expand_queries(
-                            sector_word, dept_filter, search_queries,
-                            memory=_query_memory,
-                        )
-                        if expansion_queries:
-                            log.info(
-                                "discovery.expansion_start",
-                                sector=sector_word,
-                                dept=dept_filter,
-                                expansion_count=len(expansion_queries),
-                                companies_so_far=companies_discovered,
-                                target=batch_size,
-                            )
-
-                            # Update wave_total so monitor shows correct denominator
-                            await _update_job_safe(
-                                conn_holder, batch_id,
-                                wave_total=total_queries + len(expansion_queries),
-                            )
-
-                            # Delay before first expansion query
-                            await asyncio.sleep(3)
-
-                        for eq_idx, exp_query in enumerate(expansion_queries, 1):
-                            if _shutdown:
-                                break
-                            if batch_size > 0 and companies_discovered >= batch_size:
-                                break
-
-                            # Check for admin cancellation
-                            try:
-                                cancel_row = await (await conn_holder[0].execute(
-                                    "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
-                                    (batch_id,),
-                                )).fetchone()
-                                if cancel_row and cancel_row[0]:
-                                    break
-                            except Exception:
-                                pass
-
-                            log.info(
-                                "discovery.expansion_query",
-                                query=exp_query,
-                                progress=f"expansion {eq_idx}/{len(expansion_queries)}",
-                                companies_so_far=companies_discovered,
-                            )
-
-                            await _update_job_safe(
-                                conn_holder, batch_id,
-                                wave_current=total_queries + eq_idx,
-                                wave_total=total_queries + len(expansion_queries),
-                                current_query=exp_query,
-                            )
-
-                            # Clean the expansion query
-                            clean_exp = re.sub(
-                                r'\b' + re.escape(dept_filter) + r'\b', '', exp_query
-                            ).strip()
-                            clean_exp = re.sub(r'\s{2,}', ' ', clean_exp).strip().rstrip(',').strip()
-                            if not clean_exp:
-                                clean_exp = exp_query
-
-                            _current_search_query = exp_query
-
-                            _remaining = max(0, batch_size - companies_discovered) if batch_size > 0 else 0
-                            _max_cards = _remaining * 3 if _remaining > 0 else 0
-                            _query_dedup_count = 0
-                            _query_filtered_count = 0
-                            _pre_query_discovered = companies_discovered
-                            _query_start = time.monotonic()
-                            results = await maps_scraper.search_all(
-                                clean_exp, on_result=_persist_result,
-                                dept_code=dept_filter,
-                                max_results=_max_cards,
-                                sector_word=_sector_word,
-                                should_skip=_should_skip_card,
-                            )
-
-                            expansion_used.append(exp_query)
-
-                            log.info(
-                                "discovery.expansion_query_done",
-                                query=exp_query,
-                                results=len(results),
-                                total_saved=companies_discovered,
-                            )
-                            _query_stats.append({
-                                "query": exp_query,
-                                "cards_found": len(results),
-                                "new_companies": companies_discovered - _pre_query_discovered,
-                                "filtered_count": _query_filtered_count,
-                                "dedup_count": _query_dedup_count,
-                                "is_expansion": True,
-                                "duration_sec": round(time.monotonic() - _query_start, 1),
-                            })
-                            # ── Record expansion query in memory ──
-                            try:
-                                async with pool.connection() as qm_conn:
-                                    await qm_conn.execute(
-                                        """INSERT INTO query_memory
-                                           (workspace_id, sector_word, dept_code, query_text,
-                                            is_expansion, cards_found, new_companies, batch_id)
-                                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                                        (
-                                            batch_workspace_id,
-                                            _sector_word or "",
-                                            dept_filter or "",
-                                            exp_query,
-                                            True,
-                                            len(results),
-                                            companies_discovered - _pre_query_discovered,
-                                            batch_id,
-                                        ),
-                                    )
-                                    await qm_conn.commit()
-                            except Exception:
-                                pass  # Memory is best-effort
-
-                            # Delay between expansion queries
-                            if eq_idx < len(expansion_queries) and companies_discovered < batch_size:
-                                await asyncio.sleep(3)
-
                 # Web crawl skipped in Maps-first discovery mode.
                 # Maps provides phone + website with 90%+ hit rates.
                 # Email enrichment via website crawl can be triggered
@@ -2309,34 +2172,23 @@ async def run(batch_id: str) -> None:
 
                 # ── Shortfall detection ────────────────────────────────
                 shortfall_msg = None
-                if batch_size > 0 and companies_discovered < batch_size:
+                if companies_discovered >= 2000:
+                    shortfall_msg = (
+                        "Limite de sécurité atteinte (2000 entités). "
+                        "Affinez vos requêtes pour cibler plus précisément."
+                    )
+                elif batch_size > 0 and companies_discovered < batch_size:
                     already_known = len(prev_rows) if dept_filter and prev_rows else 0
-                    expansion_gained = companies_discovered - pre_expansion_count
-                    if expansion_used:
-                        expansion_list = ", ".join(expansion_used)
+                    if already_known > 0:
                         shortfall_msg = (
-                            f"{pre_expansion_count} avec la recherche principale"
-                            f" + {expansion_gained} avec recherches étendues"
-                            f" ({expansion_list})."
-                            f" Total : {companies_discovered}/{batch_size}."
-                        )
-                        if already_known > 0:
-                            shortfall_msg += (
-                                f" {already_known} entreprises de cette zone avaient"
-                                f" déjà été découvertes et ont été exclues."
-                            )
-                    elif already_known > 0:
-                        shortfall_msg = (
-                            f"{qualified} nouvelles entreprises qualifiées "
-                            f"(objectif : {batch_size}). "
+                            f"{qualified} nouvelles entités. "
                             f"{already_known} entreprises de cette zone avaient déjà été découvertes "
-                            f"et ont été exclues pour éviter les doublons."
+                            f"et ont été exclues."
                         )
                     else:
                         shortfall_msg = (
-                            f"Google Maps n'a trouvé que {qualified} entreprises "
-                            f"qualifiées pour cette recherche (objectif : {batch_size}). "
-                            f"Il n'y a pas plus de résultats disponibles."
+                            f"Google Maps a épuisé les résultats pour cette recherche. "
+                            f"{qualified} entités trouvées."
                         )
                     log.info(
                         "discovery.shortfall",
@@ -2402,6 +2254,24 @@ async def run(batch_id: str) -> None:
                     qualified=qualified,
                     shutdown=_shutdown,
                 )
+
+                # ── Workspace notification on batch complete ──────────────
+                if batch_workspace_id is not None and final_status == "completed":
+                    try:
+                        import os as _os, httpx as _httpx
+                        _port = int(_os.environ.get("PORT", "8080"))
+                        async with _httpx.AsyncClient(timeout=2.0) as _cli:
+                            await _cli.post(
+                                f"http://127.0.0.1:{_port}/api/internal/notify-batch-complete",
+                                json={
+                                    "workspace_id": batch_workspace_id,
+                                    "batch_id": batch_id,
+                                    "batch_name": batch_name,
+                                    "count": companies_discovered,
+                                },
+                            )
+                    except Exception:
+                        pass  # best-effort
 
         except Exception as exc:
             log.error(

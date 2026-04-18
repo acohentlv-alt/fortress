@@ -28,6 +28,76 @@ _TIMEOUT = 3.0  # seconds — best-effort, never block the pipeline
 _RATE_DELAY = 0.5  # ~2 req/s — the API claims 7/s but enforces stricter per-IP limits
 
 
+async def search_by_name(
+    query: str,
+    dept: str | None = None,
+    cp: str | None = None,
+) -> tuple[str, str | None, str | None, str | None] | None:
+    """Search for a company by name in Recherche Entreprises API.
+
+    Args:
+        query: Normalised company name to search for.
+        dept: Department code (e.g. '66') — used if cp is None.
+        cp: Postal code (e.g. '66300') — preferred over dept if provided.
+
+    Returns:
+        (siren, naf_code, nom_complet, cp) tuple on hit, or None.
+    """
+    params: list[str] = [f"q={query}", "per_page=3"]
+    if cp:
+        params.append(f"code_postal={cp}")
+    elif dept:
+        params.append(f"departement={dept}")
+    url = f"{_API_URL}?" + "&".join(params)
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as hx:
+            hx_resp = await hx.get(url)
+            if hx_resp.status_code == 429:
+                log.warning("inpi.rate_limited", query=query)
+                await asyncio.sleep(_RATE_DELAY)
+                return None
+            if hx_resp.status_code != 200:
+                log.debug("inpi.search_by_name_http_error", query=query, status=hx_resp.status_code)
+                await asyncio.sleep(_RATE_DELAY)
+                return None
+            data = hx_resp.json()
+
+        results = data.get("results", [])
+        if not results:
+            log.debug("inpi.search_by_name_miss", query=query, dept=dept, cp=cp)
+            await asyncio.sleep(_RATE_DELAY)
+            return None
+
+        hit = results[0]
+        siren = hit.get("siren") or ""
+        naf_code = hit.get("activite_principale") or None
+        nom_complet = hit.get("nom_complet") or hit.get("nom_raison_sociale") or None
+        # Try to get a postal code from the hit for local SIRENE lookup
+        hit_cp: str | None = None
+        try:
+            matching = hit.get("matching_etablissements") or hit.get("siege") or {}
+            if isinstance(matching, list) and matching:
+                matching = matching[0]
+            hit_cp = (matching.get("code_postal") or "").strip() or None
+        except Exception:
+            hit_cp = None
+
+        if not siren or len(siren) != 9:
+            log.debug("inpi.search_by_name_miss", query=query, reason="invalid_siren")
+            await asyncio.sleep(_RATE_DELAY)
+            return None
+
+        log.info("inpi.search_by_name_hit", query=query, siren=siren, nom=nom_complet, naf=naf_code)
+        await asyncio.sleep(_RATE_DELAY)
+        return (siren, naf_code, nom_complet, hit_cp or cp)
+
+    except Exception as exc:
+        log.debug("inpi.search_by_name_error", query=query, error=str(exc))
+        return None
+
+
 async def fetch_dirigeants(
     siren: str,
     *,

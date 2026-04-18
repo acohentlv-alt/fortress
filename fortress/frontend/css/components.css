@@ -3799,3 +3799,54 @@
 .chip-mismatch  { background: rgba(251, 146, 60, 0.15);  color: rgb(251, 146, 60);  padding: 4px 10px; border-radius: 999px; font-size: var(--font-xs); font-weight: 600; }
 .chip-maps-only { background: rgba(148, 163, 184, 0.15); color: rgb(148, 163, 184); padding: 4px 10px; border-radius: 999px; font-size: var(--font-xs); font-weight: 600; }
 .chip-no-filter { background: rgba(100, 116, 139, 0.10); color: rgb(100, 116, 139); padding: 4px 10px; border-radius: 999px; font-size: var(--font-xs); }
+
+/* ── Completion Banner ────────────────────────────────────────────── */
+.completion-banner {
+    position: fixed; top: 20px; right: 20px; z-index: 10000;
+    background: var(--bg-secondary); border: 1px solid var(--success);
+    border-left: 4px solid var(--success); border-radius: var(--radius-md);
+    padding: var(--space-md) var(--space-lg);
+    display: flex; align-items: center; gap: var(--space-md);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3); max-width: 420px;
+    animation: banner-slide-in 0.4s ease-out;
+}
+.completion-banner-icon { font-size: 1.4em; }
+.completion-banner-text { flex: 1; color: var(--text-primary); font-size: var(--font-sm); }
+.completion-banner-btn {
+    background: var(--success); color: white; padding: 6px 12px;
+    border-radius: var(--radius-sm); text-decoration: none;
+    font-weight: 600; font-size: var(--font-xs);
+}
+.completion-banner-close {
+    background: none; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 1.2em; padding: 0 4px;
+}
+@keyframes banner-slide-in {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* ── Duration Hint (new-batch page) ──────────────────────────────── */
+.duration-hint {
+    display: flex; align-items: center; gap: var(--space-sm);
+    padding: var(--space-md);
+    background: rgba(240, 173, 78, 0.08);
+    border-left: 3px solid var(--warning, #f0ad4e);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--font-sm); line-height: 1.5;
+    margin: var(--space-lg) 0;
+}
+.duration-hint-icon { font-size: 1.3em; flex-shrink: 0; }
+
+/* ── Activity Pulse Dot (running batch indicator in monitor list) ── */
+.activity-pulse {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--accent, #3b82f6);
+    animation: pulse-ring 1.4s ease-in-out infinite;
+}
+@keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); opacity: 1; }
+    70%  { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); opacity: 0.7; }
+    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); opacity: 1; }
+}

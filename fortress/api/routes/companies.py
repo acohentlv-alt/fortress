@@ -1753,31 +1753,9 @@ async def link_entity(siren: str, body: LinkBody, background_tasks: BackgroundTa
         """, (body.target_siren, siren))
 
         # Copy SIRENE reference data into the MAPS entity.
-        # Populates NAF, legal form, postal code, etc. for a complete company card.
-        # denomination, enseigne, adresse are intentionally kept from Google Maps.
-        sirene_cur = await conn.execute(
-            """SELECT siret_siege, naf_code, naf_libelle,
-                      forme_juridique, code_postal, ville,
-                      date_creation, tranche_effectif
-               FROM companies WHERE siren = %s""",
-            (body.target_siren,)
-        )
-        sirene_row = await sirene_cur.fetchone()
-        if sirene_row:
-            await conn.execute(
-                """UPDATE companies
-                   SET siret_siege      = %s,
-                       naf_code         = %s,
-                       naf_libelle      = %s,
-                       forme_juridique  = %s,
-                       code_postal      = %s,
-                       ville            = %s,
-                       date_creation    = %s,
-                       tranche_effectif = COALESCE(tranche_effectif, %s)
-                   WHERE siren = %s""",
-                (sirene_row[0], sirene_row[1], sirene_row[2], sirene_row[3],
-                 sirene_row[4], sirene_row[5], sirene_row[6], sirene_row[7], siren)
-            )
+        # Uses shared helper — same semantics as pipeline auto-confirm.
+        from fortress.discovery import _copy_sirene_reference_data
+        await _copy_sirene_reference_data(conn, siren, body.target_siren)
 
         await conn.execute("""
             INSERT INTO batch_log (batch_id, siren, action, result, source_url, timestamp, detail)

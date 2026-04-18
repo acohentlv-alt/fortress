@@ -103,17 +103,16 @@ async function renderMonitorList(container) {
                                 <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                                 <div class="job-card-meta">
                                     <span>${formatDateTime(j.created_at)}</span>
-                                    <span>${scraped}/${batchSize} ${t('monitor.companies')}</span>
-                                    ${j.exhaustive ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
+                                    <span>${scraped} ${t('monitor.entitiesFound')}</span>
                                     ${j.wave_total ? `<span>${t('monitor.wavechip', { current: j.wave_current || 0, total: j.wave_total })}</span>` : ''}
                                 </div>
                             </div>
                             <div class="job-card-stats" style="display:flex;align-items:center;gap:var(--space-sm)">
                                 ${statusBadge(j.status)}
-                                <div style="width:100px">
-                                    <div class="progress-bar">
-                                        <div class="progress-bar-fill animated" style="width:${pct}%"></div>
-                                    </div>
+                                <div style="display:flex;align-items:center">
+                                    ${j.status === 'in_progress' || j.status === 'queued' || j.status === 'triage'
+                                        ? `<span class="activity-pulse" title="${t('monitor.running')}"></span>`
+                                        : `<span style="color:var(--success);font-size:1.1em">✓</span>`}
                                 </div>
                                 ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-running="true" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
                             </div>

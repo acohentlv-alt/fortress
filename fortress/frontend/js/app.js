@@ -300,6 +300,51 @@ function _setupRunningJobs() {
     _runningJobsInterval = setInterval(checkRunningJobs, 30000);
 }
 
+// ── Workspace completion notifications (WebSocket) ──────────────
+let _wsWorkspace = null;
+
+function _subscribeWorkspaceNotifications(user) {
+    if (!user) return;
+
+    const wsId = (user.role === 'admin' || !user.workspace_id) ? 'all' : String(user.workspace_id);
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${wsProtocol}://${window.location.host}/ws/workspace/${wsId}`;
+
+    function _connect() {
+        if (_wsWorkspace) {
+            try { _wsWorkspace.close(); } catch (_) {}
+        }
+        _wsWorkspace = new WebSocket(wsUrl);
+
+        _wsWorkspace.onmessage = async (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'batch_complete') {
+                    const { playCompletionSound, showCompletionBanner } = await import('./components.js');
+                    playCompletionSound();
+                    showCompletionBanner({
+                        batchId: msg.batch_id,
+                        batchName: msg.batch_name,
+                        count: msg.count,
+                    });
+                }
+            } catch (_) {}
+        };
+
+        _wsWorkspace.onclose = () => {
+            // Auto-reconnect after 5s
+            setTimeout(_connect, 5000);
+        };
+
+        _wsWorkspace.onerror = () => {
+            // Close triggers onclose which schedules reconnect
+            try { _wsWorkspace.close(); } catch (_) {}
+        };
+    }
+
+    _connect();
+}
+
 // ── Bug Report Modal ────────────────────────────────────────────
 
 function _wireBugReportButton() {
@@ -474,6 +519,7 @@ async function initApp() {
     }
     navigate();
     _setupRunningJobs();
+    _subscribeWorkspaceNotifications(user);
     _wireBugReportButton();
     _revealApp();
 }
