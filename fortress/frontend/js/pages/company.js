@@ -34,7 +34,10 @@ function effectifLabel(code) {
     return EFFECTIF_LABELS[code] || code;
 }
 
-function nafStatusBadge(status) {
+function nafStatusBadge(status, ctx) {
+    // ctx = { link_confidence, link_method, link_signals } — optional, from company detail API
+    const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address']);
+
     const map = {
         verified:  { cls: 'glass-badge--green',  icon: '✓', labelKey: 'company.nafVerified' },
         mismatch:  { cls: 'glass-badge--amber',  icon: '⚠', labelKey: 'company.nafMismatch' },
@@ -43,6 +46,35 @@ function nafStatusBadge(status) {
     };
     const m = map[status];
     if (!m) return '';
+
+    // Context-aware tooltip for mismatch badges
+    if (status === 'mismatch' && ctx) {
+        const { link_confidence, link_method, link_signals } = ctx;
+
+        // Case 1: confirmed + strong method + link_signals present → rich tooltip with signal list
+        if (link_confidence === 'confirmed' && _STRONG_METHODS.has(link_method) && link_signals) {
+            const signalKeys = {
+                siren_website_match: 'company.signalSirenWebsite',
+                phone_match:         'company.signalPhone',
+                address_match:       'company.signalAddress',
+                enseigne_match:      'company.signalEnseigne',
+            };
+            const agreed = Object.entries(link_signals)
+                .filter(([, v]) => v === true)
+                .map(([k]) => `<li>${t(signalKeys[k] || k)}</li>`)
+                .join('');
+            const signalList = agreed
+                ? `<br><strong>${t('company.signalsAgreed')} :</strong><ul style="margin:4px 0 0 12px; padding:0">${agreed}</ul>`
+                : '';
+            const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchStrongTitle')}</strong><br>${t('company.nafMismatchStrongBody')}${signalList}</span></span>`;
+            return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${tooltip}</span>`;
+        }
+
+        // Case 2: pending + mismatch OR confirmed without link_signals (manual /link, NULL signals) → terse tooltip
+        const terse = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card">${t('company.nafMismatchTerse')}</span></span>`;
+        return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${terse}</span>`;
+    }
+
     return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}</span>`;
 }
 
@@ -200,6 +232,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         if (method === 'fuzzy_name') return t('company.linkReasonFuzzy');
         if (method === 'manual') return t('company.linkReasonManual');
         if (method === 'surname') return t('company.linkReasonSurname');
+        if (method === 'inpi') return t('company.linkReasonInpi');
         return t('company.linkReasonAuto');
     };
 
@@ -604,7 +637,7 @@ export async function renderCompany(container, siren) {
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
                     </span>` : ''}
-                    ${co.naf_status ? nafStatusBadge(co.naf_status) : ''}
+                    ${co.naf_status ? nafStatusBadge(co.naf_status, { link_confidence: data.link_confidence, link_method: data.link_method, link_signals: data.link_signals }) : ''}
                     ${effectifLabel(co.tranche_effectif) ? `<span class="glass-badge glass-badge--green">👥 ${effectifLabel(co.tranche_effectif)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.trancheEffectif')}</strong><br>${t('company.effectifTooltip')}<span class="info-tip-source">${t('company.effectifTooltipSource')}</span></span></span>
                     </span>` : ''}

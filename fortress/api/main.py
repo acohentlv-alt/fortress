@@ -219,6 +219,7 @@ async def lifespan(app: FastAPI):
                     ("link_method", "TEXT"),
                     ("resultat_net", "BIGINT"),
                     ("naf_status", "TEXT"),  # 'verified' | 'mismatch' | 'maps_only' | 'no_filter' | NULL (legacy)
+                    ("link_signals", "JSONB"),  # {siren_website_match, phone_match, address_match, enseigne_match} — NULL for pre-Phase-A rows
                 ]:
                     await conn.execute(
                         f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col} {col_type} DEFAULT NULL"

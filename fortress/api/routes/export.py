@@ -120,6 +120,7 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+          AND (co.naf_status IS DISTINCT FROM 'mismatch')
         ORDER BY co.denomination
     """, (batch_id, batch_id))
 
@@ -145,6 +146,7 @@ async def export_master_csv(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+          AND (co.naf_status IS DISTINCT FROM 'mismatch')
         ORDER BY co.denomination
     """)
     if not rows:
@@ -184,6 +186,7 @@ async def export_master_xlsx(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+          AND (co.naf_status IS DISTINCT FROM 'mismatch')
         ORDER BY co.denomination
     """)
     return _to_xlsx(rows, "fortress_master.xlsx")
@@ -255,6 +258,8 @@ async def export_contacts_filtered_csv(
 
     # Exclude pending MAPS rows — they have no confirmed SIRENE data and are not export-ready
     where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')")
+    # Exclude NAF-mismatch rows — MAPS entity matched a SIREN in a different sector than the user's filter
+    where_parts.append("(co.naf_status IS DISTINCT FROM 'mismatch')")
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
@@ -426,6 +431,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
             WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+              AND (co.naf_status IS DISTINCT FROM 'mismatch')
             ORDER BY co.denomination
         """, (user.workspace_id, body.sirens))
     else:
@@ -436,6 +442,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
               AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+              AND (co.naf_status IS DISTINCT FROM 'mismatch')
             ORDER BY co.denomination
         """, (body.sirens, body.sirens))
 

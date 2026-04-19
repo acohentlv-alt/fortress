@@ -1166,7 +1166,7 @@ async def _get_company_impl(siren: str, request=None):
             co.extra_data,
             co.created_at, co.updated_at,
             co.linked_siren, co.link_confidence, co.link_method,
-            co.naf_status,
+            co.naf_status, co.link_signals,
             co.workspace_id
         FROM companies co
         WHERE co.siren = %s
@@ -1397,6 +1397,7 @@ async def _get_company_impl(siren: str, request=None):
         "sirene_denomination": linked_company.get("denomination") if linked_company else None,
         "link_method": company.get("link_method"),
         "link_confidence": company.get("link_confidence"),
+        "link_signals": company.get("link_signals"),
         "suggested_matches": suggested_matches,
         "matching_available": siren.startswith("MAPS") and not company.get("linked_siren") and company.get("link_confidence") is None,
         "data_conflicts": merged.get("data_conflicts", []),

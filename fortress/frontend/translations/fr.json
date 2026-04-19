@@ -273,6 +273,7 @@
     "linkReasonManual": "Lien établi manuellement",
     "linkReasonAuto": "Correspondance automatique",
     "linkReasonSurname": "Nom de famille détecté",
+    "linkReasonInpi": "Correspondance par recherche INPI",
     "methodLabelAddress": "Même adresse",
     "methodLabelFuzzy": "Nom similaire",
     "methodLabelPhone": "Même téléphone",
@@ -349,7 +350,15 @@
     "websiteCrawlLabel": "Données site web",
     "nafVerified": "NAF vérifié",
     "nafMismatch": "NAF incompatible",
-    "nafMapsOnly": "NAF non vérifié"
+    "nafMapsOnly": "NAF non vérifié",
+    "nafMismatchTerse": "Le code NAF ne correspond pas au filtre demandé.",
+    "nafMismatchStrongTitle": "NAF incompatible — lien validé par signaux",
+    "nafMismatchStrongBody": "Le code NAF ne correspond pas, mais plusieurs signaux forts confirment qu'il s'agit bien de la même entreprise.",
+    "signalsAgreed": "Signaux concordants",
+    "signalSirenWebsite": "SIREN extrait du site",
+    "signalPhone": "Téléphone identique",
+    "signalAddress": "Adresse identique",
+    "signalEnseigne": "Enseigne identique"
   },
   "contacts": {
     "title": "Contacts",

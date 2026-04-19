@@ -120,6 +120,97 @@ async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) 
     )
 
 
+def _normalize_phone_for_comparison_local(phone: str) -> str:
+    """Normalize French phone to 0XXXXXXXXX for comparison only.
+
+    Mirrors _normalize_phone_for_comparison from api/routes/companies.py.
+    Defined here to avoid circular import (companies.py imports from discovery.py).
+    """
+    if not phone:
+        return ""
+    digits = ''.join(c for c in phone if c.isdigit() or c == '+')
+    digits = digits.replace(" ", "").replace(".", "").replace("-", "")
+    if digits.startswith("+33") and len(digits) >= 12:
+        digits = "0" + digits[3:]
+    if digits.startswith("0033") and len(digits) >= 13:
+        digits = "0" + digits[4:]
+    return digits
+
+
+async def _verify_signals(
+    conn,
+    target_siren: str,
+    maps_name: str | None,
+    maps_phone: str | None,
+    maps_address: str | None,
+    extracted_siren: str | None,
+) -> dict:
+    """Check how many independent signals agree that the MAPS entity matches target_siren.
+
+    Returns a dict with boolean (or None) per signal:
+        siren_website_match — True if the SIREN extracted from the website matches target_siren
+        phone_match         — True if the phone from SIRENE matches the Maps phone
+        address_match       — True if the SIRENE address key matches the Maps address key
+        enseigne_match      — True if the SIRENE enseigne/denomination strongly matches the Maps name
+
+    None means the signal could not be computed (missing data).
+    """
+    from fortress.matching.entities import normalize_address, _extract_street_key
+
+    signals: dict[str, bool | None] = {
+        "siren_website_match": None,
+        "phone_match": None,
+        "address_match": None,
+        "enseigne_match": None,
+    }
+
+    # Signal 1: SIREN extracted from website
+    if extracted_siren:
+        signals["siren_website_match"] = (extracted_siren == target_siren)
+
+    # Fetch SIRENE row for phone / address / enseigne comparison
+    cur = await conn.execute(
+        "SELECT enseigne, adresse, siren FROM companies WHERE siren = %s",
+        (target_siren,),
+    )
+    row = await cur.fetchone()
+    sirene_enseigne = (row[0] if row else None) or ""
+    sirene_adresse = (row[1] if row else None) or ""
+
+    # Fetch phone from contacts table (best available phone for this SIREN)
+    phone_cur = await conn.execute(
+        """SELECT phone FROM contacts
+           WHERE siren = %s AND phone IS NOT NULL
+           ORDER BY collected_at DESC LIMIT 1""",
+        (target_siren,),
+    )
+    phone_row = await phone_cur.fetchone()
+    sirene_phone = (phone_row[0] if phone_row else None) or ""
+
+    # Signal 2: Phone match
+    if maps_phone and sirene_phone:
+        maps_ph_norm = _normalize_phone_for_comparison_local(maps_phone)
+        sirene_ph_norm = _normalize_phone_for_comparison_local(sirene_phone)
+        if maps_ph_norm and sirene_ph_norm:
+            signals["phone_match"] = (maps_ph_norm == sirene_ph_norm)
+
+    # Signal 3: Address match (street key comparison)
+    if maps_address and sirene_adresse:
+        maps_norm = normalize_address(maps_address)
+        sirene_norm = normalize_address(sirene_adresse)
+        maps_key = _extract_street_key(maps_norm)
+        sirene_key = _extract_street_key(sirene_norm)
+        if maps_key and sirene_key and len(maps_key) >= 5:
+            signals["address_match"] = (maps_key == sirene_key)
+
+    # Signal 4: Enseigne/name match — reuse existing _name_match_score
+    if maps_name and sirene_enseigne:
+        score = _name_match_score(maps_name, sirene_enseigne)
+        signals["enseigne_match"] = (score >= 0.8)
+
+    return signals
+
+
 # Graceful shutdown flag — set by SIGTERM handler
 _shutdown = False
 
@@ -1639,13 +1730,18 @@ async def run(batch_id: str) -> None:
                         await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
                         await upsert_contact(conn, contact)
 
-                        # Default link state: pending. Auto-confirm if method is strong AND NAF verifies against user's picker.
+                        # Default link state: pending. Auto-confirm logic (Phase A):
+                        # - Strong method + NAF verified → always auto-confirm
+                        # - Strong method + NAF mismatch but 2+ signals agree → auto-confirm
+                        # - Strong method + no NAF filter (empty picker) → auto-confirm
+                        # - Weak methods → never auto-confirm
                         if _pending_link:
                             method = _pending_link["method"]
                             target_siren = _pending_link["siren"]
 
                             # Compute naf_status first so we can decide on auto-confirm
                             naf_status = None
+                            matched_naf = ""
                             if picked_nafs:
                                 naf_cur = await conn.execute(
                                     "SELECT naf_code FROM companies WHERE siren = %s",
@@ -1655,16 +1751,36 @@ async def run(batch_id: str) -> None:
                                 matched_naf = (sirene_naf_row[0] if sirene_naf_row else None) or ""
                                 naf_status = _compute_naf_status(matched_naf, picked_nafs, naf_division_whitelist)
 
-                            auto_confirm = (method in _STRONG_METHODS) and (naf_status == "verified")
+                            # Phase A auto-confirm gate: multi-signal approach
+                            link_signals = None
+                            if method in _STRONG_METHODS:
+                                link_signals = await _verify_signals(
+                                    conn, target_siren, maps_name, maps_phone, maps_address, extracted_siren
+                                )
+                                agree_count = sum(1 for v in link_signals.values() if v is True)
+                                if naf_status == "verified":
+                                    auto_confirm = True
+                                elif naf_status == "mismatch" and agree_count >= 2:
+                                    auto_confirm = True
+                                elif picked_nafs == []:
+                                    auto_confirm = True
+                                else:
+                                    auto_confirm = False
+                            else:
+                                auto_confirm = False
+
                             link_state = "confirmed" if auto_confirm else "pending"
 
                             await conn.execute(
                                 """UPDATE companies
                                    SET linked_siren    = %s,
                                        link_confidence = %s,
-                                       link_method     = %s
+                                       link_method     = %s,
+                                       link_signals    = %s
                                    WHERE siren = %s""",
-                                (target_siren, link_state, method, siren),
+                                (target_siren, link_state, method,
+                                 json.dumps(link_signals) if link_signals is not None else None,
+                                 siren),
                             )
 
                             if naf_status is not None:
@@ -1677,14 +1793,20 @@ async def run(batch_id: str) -> None:
                                 # Copy SIRENE reference data onto the MAPS row — same semantics
                                 # as manual /link approve. Uses shared helper (single source of truth).
                                 await _copy_sirene_reference_data(conn, siren, target_siren)
-                                # Distinguish strict/section match from sibling-expansion match for audit.
+                                # 4-branch audit: distinguish by NAF filter state and outcome
                                 strict_prefix = bool(
                                     matched_naf and any(matched_naf.startswith(p) for p in picked_nafs)
                                 )
-                                if strict_prefix or naf_division_whitelist is not None:
-                                    audit_action = "auto_linked_verified"
+                                if picked_nafs == []:
+                                    audit_action = "auto_linked_strong_no_filter"
+                                elif naf_status == "verified":
+                                    if strict_prefix or naf_division_whitelist is not None:
+                                        audit_action = "auto_linked_verified"
+                                    else:
+                                        audit_action = "auto_linked_expanded"
                                 else:
-                                    audit_action = "auto_linked_expanded"
+                                    # naf_status == "mismatch" AND agree_count >= 2
+                                    audit_action = "auto_linked_mismatch_accepted"
                                 await log_audit(
                                     conn,
                                     batch_id=batch_id,
