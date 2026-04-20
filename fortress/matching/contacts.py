@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 
 import structlog
 
+from fortress.utils.phone import normalize_phone_e164
+
 log = structlog.get_logger("fortress.matching.contacts")
 
 # ---------------------------------------------------------------------------
@@ -40,13 +42,11 @@ _PHONE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(?<!\d)08(?:0[0-9]|[1-9]\d)[\s.\-]?\d{3}[\s.\-]?\d{3}(?!\d)"),
 ]
 
-_PHONE_NORMALISE_RE = re.compile(r"[\s.\-()]")  # also strip parentheses from +33(0) format
-
 # ---------------------------------------------------------------------------
 # Phone validation
 # ---------------------------------------------------------------------------
 
-# Slightly broader than _PHONE_NORMALISE_RE: also strips parentheses.
+# Strips spaces, dots, dashes, and parentheses for digit extraction.
 _PHONE_DIGITS_RE = re.compile(r"[\s.\-()]")
 
 # French phone prefixes that represent useful business numbers:
@@ -321,7 +321,7 @@ def extract_phones(html: str) -> list[str]:
     for pattern in _PHONE_PATTERNS:
         for match in pattern.finditer(html):
             raw = match.group(0)
-            normalised = _normalise_phone(raw)
+            normalised = normalize_phone_e164(raw)
             if normalised:
                 found.add(normalised)
     return sorted(found)
@@ -770,26 +770,6 @@ def synthesize_email(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-
-def _normalise_phone(raw: str) -> str:
-    """Convert a raw French phone match to a compact format.
-
-    Returns E.164 for international (+33...), national 10-digit for others.
-    """
-    digits = _PHONE_NORMALISE_RE.sub("", raw)
-
-    if digits.startswith("+33"):
-        # +33 6 12 34 56 78 → +33612345678
-        return digits
-
-    if digits.startswith("0") and len(digits) == 10:
-        return digits
-
-    if digits.startswith("33") and len(digits) == 11:
-        return "+" + digits
-
-    # Fallback — return as-is
-    return digits if len(digits) >= 9 else ""
 
 
 # ---------------------------------------------------------------------------

@@ -109,7 +109,12 @@ _SCAFFOLD_PHONES = {"0999999977", "0261676083", "0261676921"}
 
 
 def _clean_phone(raw: str) -> str | None:
-    """Clean and validate a phone number. Returns None if fake/scaffold."""
+    """Validate a raw Maps phone string. Returns the original string (trimmed) or None.
+
+    This is validation-only — it does NOT normalise to a canonical format.
+    Callers that need 0XXXXXXXXX / +33XXXXXXXXX form should use
+    fortress.utils.phone.normalize_phone() / normalize_phone_e164() separately.
+    """
     cleaned = raw.strip().replace(" ", "").replace(".", "").replace("-", "")
     if cleaned in _SCAFFOLD_PHONES:
         return None

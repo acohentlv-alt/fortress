@@ -17,6 +17,7 @@ import datetime
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
+from fortress.utils.phone import normalize_phone
 
 router = APIRouter(prefix="/api/companies", tags=["companies"])
 
@@ -1406,18 +1407,6 @@ async def _get_company_impl(siren: str, request=None):
     }
 
 
-def _normalize_phone_for_comparison(phone: str) -> str:
-    """Normalize French phone to 0XXXXXXXXX for comparison only."""
-    if not phone:
-        return ""
-    digits = ''.join(c for c in phone if c.isdigit() or c == '+')
-    digits = digits.replace(" ", "").replace(".", "").replace("-", "")
-    if digits.startswith("+33") and len(digits) >= 12:
-        digits = "0" + digits[3:]
-    if digits.startswith("0033") and len(digits) >= 13:
-        digits = "0" + digits[4:]
-    return digits
-
 
 def _merge_contacts(contacts: list[dict]) -> dict:
     """Merge all contact rows into a single best-of dict with per-field provenance.
@@ -1587,8 +1576,8 @@ def _merge_contacts(contacts: list[dict]) -> dict:
         if alt and alt.get("value"):
             # For phone: normalize before comparing to avoid false conflicts
             if field == "phone":
-                cur_norm = _normalize_phone_for_comparison(merged.get(field) or "")
-                alt_norm = _normalize_phone_for_comparison(alt["value"] or "")
+                cur_norm = normalize_phone(merged.get(field) or "")
+                alt_norm = normalize_phone(alt["value"] or "")
                 if cur_norm == alt_norm:
                     continue  # Same number, different format — not a conflict
             cur_src = merged.get(f"{field}_source") or "?"

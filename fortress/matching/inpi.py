@@ -98,6 +98,47 @@ async def search_by_name(
         return None
 
 
+async def lookup_siren_by_name(
+    name: str,
+    departement: str | None = None,
+) -> str | None:
+    """Return a single best SIREN for the given company name, or None.
+
+    Thin wrapper around search_by_name used exclusively by the Step 5
+    inpi_fuzzy_agree arbitration gate in discovery.py. Normalisation is
+    done here so callers can pass the raw Maps name.
+
+    Uses the same _TIMEOUT as fetch_dirigeants (3.0 s) — best-effort,
+    never blocks the pipeline.
+
+    Logs:
+        inpi.lookup_siren.hit — SIREN found
+        inpi.lookup_siren.miss — no result
+        inpi.lookup_siren.error — exception during call
+    """
+    # Normalise: uppercase, strip accents
+    import unicodedata as _ud
+    def _norm(s: str) -> str:
+        s = _ud.normalize("NFD", s)
+        s = "".join(c for c in s if _ud.category(c) != "Mn")
+        return s.upper().strip()
+
+    try:
+        result = await search_by_name(
+            query=_norm(name),
+            dept=departement,
+        )
+        if result is not None:
+            siren = result[0]
+            log.info("inpi.lookup_siren.hit", name=name, siren=siren)
+            return siren
+        log.debug("inpi.lookup_siren.miss", name=name)
+        return None
+    except Exception as exc:
+        log.debug("inpi.lookup_siren.error", name=name, error=str(exc))
+        return None
+
+
 async def fetch_dirigeants(
     siren: str,
     *,

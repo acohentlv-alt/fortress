@@ -274,6 +274,7 @@
     "linkReasonAuto": "Automatic match",
     "linkReasonSurname": "Surname detected",
     "linkReasonInpi": "INPI search match",
+    "linkReasonInpiFuzzyAgree": "Name + INPI agreement",
     "methodLabelAddress": "Same address",
     "methodLabelFuzzy": "Similar name",
     "methodLabelPhone": "Same phone",

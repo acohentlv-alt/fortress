@@ -178,6 +178,13 @@ export function companyCard(company, opts = {}) {
             style="position:relative; z-index:2">
     ` : '';
 
+    // For confirmed MAPS entities: display the real SIREN prominently, MAPS ID as secondary.
+    const isConfirmedMaps = siren.startsWith('MAPS') && company.link_confidence === 'confirmed' && company.linked_siren;
+    const displaySiren = isConfirmedMaps ? company.linked_siren : siren;
+    const mapsSecondary = isConfirmedMaps
+        ? `<span style="color:var(--text-muted); font-size:var(--font-xs)"> · ${siren}</span>`
+        : '';
+
     // Detect if company has ANY enrichment data
     const hasData = company.phone || company.email || company.website;
 
@@ -192,7 +199,7 @@ export function companyCard(company, opts = {}) {
                     <div style="min-width:0; flex:1">
                         <div style="display:flex; align-items:baseline; gap:var(--space-sm); min-width:0">
                             <span class="company-card-name" style="font-size:var(--font-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1">${escapeHtml(company.denomination || '—')}</span>
-                            <span style="color:var(--text-muted); font-size:var(--font-xs); white-space:nowrap; flex-shrink:0">${formatSiren(siren)}</span>
+                            <span style="color:var(--text-muted); font-size:var(--font-xs); white-space:nowrap; flex-shrink:0">${formatSiren(displaySiren)}${mapsSecondary}</span>
                         </div>
                         <div style="display:flex; gap:var(--space-sm); margin-top:2px; font-size:var(--font-xs); color:var(--text-secondary)">
                             <span style="white-space:nowrap">📍 ${escapeHtml(company.ville || '—')}${company.departement ? ` (${company.departement})` : ''}</span>
@@ -220,7 +227,7 @@ export function companyCard(company, opts = {}) {
                     ${checkbox}
                     <div style="min-width:0">
                         <div class="company-card-name">${escapeHtml(company.denomination || '—')}</div>
-                        <div class="company-card-siren">${formatSiren(siren)}</div>
+                        <div class="company-card-siren">${formatSiren(displaySiren)}${mapsSecondary}</div>
                     </div>
                 </div>
                 <div style="display:flex; gap:6px; align-items:center; flex-shrink:0; position:relative; z-index:2">

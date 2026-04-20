@@ -45,6 +45,7 @@ from fortress.processing.dedup import (
     upsert_company,
     upsert_contact,
 )
+from fortress.utils.phone import normalize_phone, PHONE_NORMALIZE_SQL
 
 log = structlog.get_logger()
 
@@ -120,22 +121,6 @@ async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) 
     )
 
 
-def _normalize_phone_for_comparison_local(phone: str) -> str:
-    """Normalize French phone to 0XXXXXXXXX for comparison only.
-
-    Mirrors _normalize_phone_for_comparison from api/routes/companies.py.
-    Defined here to avoid circular import (companies.py imports from discovery.py).
-    """
-    if not phone:
-        return ""
-    digits = ''.join(c for c in phone if c.isdigit() or c == '+')
-    digits = digits.replace(" ", "").replace(".", "").replace("-", "")
-    if digits.startswith("+33") and len(digits) >= 12:
-        digits = "0" + digits[3:]
-    if digits.startswith("0033") and len(digits) >= 13:
-        digits = "0" + digits[4:]
-    return digits
-
 
 async def _verify_signals(
     conn,
@@ -169,13 +154,16 @@ async def _verify_signals(
         signals["siren_website_match"] = (extracted_siren == target_siren)
 
     # Fetch SIRENE row for phone / address / enseigne comparison
+    # Fix B: also fetch denomination — restaurants often have denomination="SARL XXX"
+    # while enseigne holds the trade name; we must score against BOTH.
     cur = await conn.execute(
-        "SELECT enseigne, adresse, siren FROM companies WHERE siren = %s",
+        "SELECT enseigne, adresse, siren, denomination FROM companies WHERE siren = %s",
         (target_siren,),
     )
     row = await cur.fetchone()
     sirene_enseigne = (row[0] if row else None) or ""
     sirene_adresse = (row[1] if row else None) or ""
+    sirene_denomination = (row[3] if row else None) or ""
 
     # Fetch phone from contacts table (best available phone for this SIREN)
     phone_cur = await conn.execute(
@@ -189,8 +177,8 @@ async def _verify_signals(
 
     # Signal 2: Phone match
     if maps_phone and sirene_phone:
-        maps_ph_norm = _normalize_phone_for_comparison_local(maps_phone)
-        sirene_ph_norm = _normalize_phone_for_comparison_local(sirene_phone)
+        maps_ph_norm = normalize_phone(maps_phone)
+        sirene_ph_norm = normalize_phone(sirene_phone)
         if maps_ph_norm and sirene_ph_norm:
             signals["phone_match"] = (maps_ph_norm == sirene_ph_norm)
 
@@ -204,9 +192,14 @@ async def _verify_signals(
             signals["address_match"] = (maps_key == sirene_key)
 
     # Signal 4: Enseigne/name match — reuse existing _name_match_score
-    if maps_name and sirene_enseigne:
-        score = _name_match_score(maps_name, sirene_enseigne)
-        signals["enseigne_match"] = (score >= 0.8)
+    # Fix B: check BOTH enseigne (trade name) and denomination (legal name),
+    # take the max. Restaurants especially often have maps_name matching enseigne
+    # while denomination is "SARL X Y Z". Without this we miss real matches.
+    if maps_name and (sirene_enseigne or sirene_denomination):
+        score_enseigne = _name_match_score(maps_name, sirene_enseigne) if sirene_enseigne else 0.0
+        score_denom = _name_match_score(maps_name, sirene_denomination) if sirene_denomination else 0.0
+        best_score = max(score_enseigne, score_denom)
+        signals["enseigne_match"] = (best_score >= 0.8)
 
     return signals
 
@@ -306,9 +299,43 @@ _INDUSTRY_WORDS = {
 }
 
 
+# =========================================================================
+# Name-tier thresholds — APPLIES ONLY TO STEP 5's inpi_fuzzy_agree GATE.
+#
+# These thresholds are used SOLELY by the inpi_fuzzy_agree agreement check
+# in Step 5. They determine whether a fuzzy_name candidate is strong enough
+# to COMBINE with an agreeing INPI SIREN result to earn auto-confirmation.
+#
+# The existing `_get_match_threshold()` at line 382 continues to serve all
+# other weak-match paths (fuzzy_name pending threshold, phone_weak, surname,
+# enseigne_weak). It is NOT replaced by this tier system — the two live
+# side-by-side by design.
+# =========================================================================
+NAME_TIER_THRESHOLDS = {
+    "person": 0.90,
+    "industry_generic": 0.90,
+    "short": 0.85,
+    "default": 0.75,
+}
+
+def get_name_threshold(maps_name: str, name_tokens: list[str], city_match: bool) -> float:
+    """Threshold for Step 5's inpi_fuzzy_agree upgrade ONLY."""
+    if _is_person_name(maps_name):
+        return NAME_TIER_THRESHOLDS["person"]
+    if _is_industry_generic(maps_name):
+        return NAME_TIER_THRESHOLDS["industry_generic"]
+    if len(name_tokens) <= 2 and not city_match:
+        return NAME_TIER_THRESHOLDS["short"]
+    return NAME_TIER_THRESHOLDS["default"]
+
+
 # Match methods strong enough for pipeline auto-confirm (with verified NAF).
 # Weak variants (enseigne_weak, phone_weak, surname, fuzzy_name) never auto-confirm.
-_STRONG_METHODS = frozenset({"inpi", "siren_website", "enseigne", "phone", "address"})
+# inpi_fuzzy_agree = fuzzy_name candidate confirmed by agreeing INPI SIREN result.
+_STRONG_METHODS = frozenset({
+    "inpi", "siren_website", "enseigne", "phone", "address",
+    "inpi_fuzzy_agree",
+})
 
 _LEGAL_FORM_TOKENS = frozenset({
     "earl", "gaec", "scea", "scev", "sci", "sarl", "sas",
@@ -420,55 +447,6 @@ async def _match_to_sirene(
     # Extract postal code from Maps address early — used in multiple fallbacks
     maps_cp_match = re.search(r"\b(\d{5})\b", maps_address or "")
     maps_cp = maps_cp_match.group(1) if maps_cp_match else None
-
-    # ── Step 0: INPI name search (primary — fastest confirmed match) ──────────
-    try:
-        from fortress.matching.inpi import search_by_name as _inpi_search
-        _inpi_hit = await _inpi_search(
-            query=_normalize_name(maps_name),
-            dept=departement,
-            cp=maps_cp,
-        )
-        if _inpi_hit is not None:
-            _inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp = _inpi_hit
-            # Validate against local SIRENE database
-            _inpi_cur = await conn.execute(
-                """SELECT siren, denomination, enseigne, adresse, code_postal, ville, departement
-                   FROM companies
-                   WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
-                   LIMIT 1""",
-                (_inpi_siren,),
-            )
-            _inpi_row = await _inpi_cur.fetchone()
-            if _inpi_row:
-                _denom = _inpi_row[1] or ""
-                _enseigne = _inpi_row[2] or ""
-                _adresse = _inpi_row[3] or ""
-                _ville = _inpi_row[5] or ""
-                log.info(
-                    "discovery.inpi_primary_match",
-                    maps_name=maps_name,
-                    siren=_inpi_siren,
-                    denomination=_denom,
-                )
-                return {
-                    "siren": _inpi_siren,
-                    "denomination": _denom,
-                    "enseigne": _enseigne,
-                    "score": 0.92,
-                    "method": "inpi",
-                    "adresse": _adresse,
-                    "ville": _ville,
-                }
-            else:
-                log.debug(
-                    "inpi.siren_not_in_local_sirene",
-                    siren=_inpi_siren,
-                    maps_name=maps_name,
-                )
-                # Fall through to Steps 1-5
-    except Exception:
-        pass  # INPI outage — fall through to classic matcher
 
     normalized = _normalize_name(maps_name)
     search_terms = normalized.split()
@@ -708,28 +686,22 @@ async def _match_to_sirene(
 
     # ── Step 3: Phone match (unique identifier, no postal code) ──────────
     # A phone number is unique to one business — postal code check not needed.
+    # Both sides are normalised to 0XXXXXXXXX before comparison so format
+    # differences (+33/0033/0X) never produce false mismatches or duplicates.
     if maps_phone:
-        norm_phone = re.sub(r'[\s\-\.]', '', maps_phone)
-        if norm_phone.startswith('0') and len(norm_phone) == 10:
-            norm_phone = '+33' + norm_phone[1:]
-
-        alt_phone = None
-        if norm_phone.startswith('+33'):
-            alt_phone = '0' + norm_phone[3:]
-        elif norm_phone.startswith('0') and len(norm_phone) == 10:
-            alt_phone = '+33' + norm_phone[1:]
-
-        for phone_val in filter(None, [norm_phone, alt_phone]):
+        maps_phone_norm = normalize_phone(maps_phone)
+        if maps_phone_norm:
+            phone_sql = PHONE_NORMALIZE_SQL.format(col="c.phone")
             phone_row = await (await conn.execute(
-                """SELECT c.siren, co.denomination, co.enseigne, co.adresse, co.ville, co.code_postal
+                f"""SELECT c.siren, co.denomination, co.enseigne, co.adresse, co.ville, co.code_postal
                    FROM contacts c
                    JOIN companies co ON co.siren = c.siren
-                   WHERE c.phone = %s
+                   WHERE ({phone_sql}) = %s
                      AND c.source != 'google_maps'
                      AND co.siren NOT LIKE 'MAPS%%'
                      AND co.statut = 'A'
                    LIMIT 1""",
-                (phone_val,),
+                (maps_phone_norm,),
             )).fetchone()
             if phone_row:
                 # Verify names are compatible — shared phone with unrelated
@@ -791,7 +763,7 @@ async def _match_to_sirene(
                                 maps_name=maps_name,
                                 siren=phone_row[0],
                                 sirene_denom=sirene_denom,
-                                phone=phone_val,
+                                phone=maps_phone_norm,
                                 name_score=round(best_score, 2),
                                 maps_cp=maps_cp,
                                 sirene_ville=sirene_ville,
@@ -811,7 +783,7 @@ async def _match_to_sirene(
                         "maps_discovery.phone_match",
                         maps_name=maps_name,
                         siren=phone_row[0],
-                        phone=phone_val,
+                        phone=maps_phone_norm,
                         name_score=round(best_score, 2),
                     )
                     return {
@@ -829,7 +801,7 @@ async def _match_to_sirene(
                         maps_name=maps_name,
                         siren=phone_row[0],
                         sirene_denom=sirene_denom,
-                        phone=phone_val,
+                        phone=maps_phone_norm,
                         name_score=round(best_score, 2),
                         threshold=threshold,
                     )
@@ -927,13 +899,6 @@ async def _match_to_sirene(
         best_surname_match = None
         best_surname_signals = 1  # S1 surname always counts; need >= 2 total
 
-        def _norm_phone_local(p: str) -> str:
-            """Normalize a French phone number to 0XXXXXXXXX for comparison."""
-            p = re.sub(r'[\s\-\.]', '', p or "")
-            if p.startswith('+33') and len(p) == 12:
-                return '0' + p[3:]
-            return p
-
         for row in surname_rows:
             db_siren = row[0]
             db_cp = row[8] or ""
@@ -967,7 +932,7 @@ async def _match_to_sirene(
                 )
                 db_phones = [r[0] for r in await phone_cur2.fetchall()]
                 for db_phone in db_phones:
-                    if _norm_phone_local(db_phone) == _norm_phone_local(maps_phone):
+                    if normalize_phone(db_phone) == normalize_phone(maps_phone):
                         signals_met.append("phone")
                         break
 
@@ -1000,6 +965,17 @@ async def _match_to_sirene(
             }
 
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
+    # INPI prefetch: call INPI only now (no strong match found yet). Skip if
+    # earlier steps already returned (they return early, so reaching here means
+    # Steps 1-4 all missed). Cache result keyed by maps_name for arbitration.
+    _inpi_cache: dict[str, str | None] = {}
+    try:
+        from fortress.matching.inpi import lookup_siren_by_name as _lookup_siren
+        _inpi_siren_hit = await _lookup_siren(maps_name, departement)
+        _inpi_cache[maps_name] = _inpi_siren_hit  # None or a 9-digit SIREN string
+    except Exception:
+        pass  # INPI outage — cache stays empty, arbitration skipped
+
     # Each term needs 2 params: one for enseigne LIKE, one for denomination LIKE
     name_clauses = " OR ".join(
         ["(LOWER(enseigne) LIKE %s OR LOWER(denomination) LIKE %s)"] * len(meaningful_terms)
@@ -1028,11 +1004,32 @@ async def _match_to_sirene(
         params,
     )
     rows = await cur.fetchall()
-    name_candidate, _ = _score_rows(rows)
+    name_candidate, name_score = _score_rows(rows)  # capture score, was discarded
 
     if name_candidate:
-        # Force method to fuzzy_name — this step always produces pending
-        name_candidate["method"] = "fuzzy_name"
+        name_candidate["method"] = "fuzzy_name"  # default: weak, pending
+
+        # INPI arbitration: if fuzzy_name candidate AND INPI both point to same SIREN
+        inpi_siren = _inpi_cache.get(maps_name)
+        if inpi_siren and inpi_siren == name_candidate["siren"]:
+            name_tokens = _normalize_name(maps_name).split()
+            # Compute city_match inline — candidate's ville vs maps address tokens
+            candidate_ville = name_candidate.get("ville") or ""
+            city_match = False
+            if maps_city_tokens and candidate_ville:
+                cand_ville_tokens = {t for t in _normalize_name(candidate_ville).split() if len(t) > 3}
+                city_match = bool(cand_ville_tokens & maps_city_tokens)
+            tier_threshold = get_name_threshold(maps_name, name_tokens, city_match)
+            if name_score >= tier_threshold:
+                name_candidate["method"] = "inpi_fuzzy_agree"
+                log.info(
+                    "discovery.inpi_fuzzy_agree",
+                    maps_name=maps_name,
+                    siren=name_candidate["siren"],
+                    name_score=name_score,
+                    tier_threshold=tier_threshold,
+                )
+
         log.info(
             "maps_discovery.sirene_candidate",
             maps_name=maps_name,
@@ -1381,7 +1378,7 @@ async def run(batch_id: str) -> None:
                                 if _dom:
                                     seen_websites.add(_dom)
                             if _phone:
-                                _p = re.sub(r'\D', '', _phone)
+                                _p = normalize_phone(_phone)
                                 if _p:
                                     seen_phones.add(_p)
 
@@ -1516,12 +1513,13 @@ async def run(batch_id: str) -> None:
 
                     # ── Level 5: Phone dedup ──────────────────────────────
                     if maps_phone:
-                        clean_phone = re.sub(r'\D', '', maps_phone)
-                        if clean_phone in seen_phones:
+                        clean_phone = normalize_phone(maps_phone)
+                        if clean_phone and clean_phone in seen_phones:
                             log.info("discovery.phone_dedup_skip", name=maps_name, phone=maps_phone)
                             _query_dedup_count += 1
                             return
-                        seen_phones.add(clean_phone)
+                        if clean_phone:
+                            seen_phones.add(clean_phone)
 
                     # ── France country filter ────────────────────────────
                     if not _is_in_france(maps_address):
@@ -1675,7 +1673,7 @@ async def run(batch_id: str) -> None:
                     _pending_link: dict | None = None
                     if candidate:
                         _pending_link = candidate
-                        if candidate["method"] in ("enseigne", "phone", "address", "siren_website", "inpi"):
+                        if candidate["method"] in _STRONG_METHODS:
                             log.info(
                                 "discovery.auto_linked",
                                 maps_name=maps_name,
@@ -1760,10 +1758,19 @@ async def run(batch_id: str) -> None:
                                 agree_count = sum(1 for v in link_signals.values() if v is True)
                                 if naf_status == "verified":
                                     auto_confirm = True
+                                elif naf_status == "mismatch" and method == "siren_website" and link_signals.get("siren_website_match"):
+                                    # Fix A: self-declared SIREN on website footer is deterministic proof.
+                                    # 1 signal (the siren_website_match itself) is enough, even with NAF mismatch.
+                                    auto_confirm = True
                                 elif naf_status == "mismatch" and agree_count >= 2:
                                     auto_confirm = True
                                 elif picked_nafs == []:
-                                    auto_confirm = True
+                                    # Phase B safeguard: inpi_fuzzy_agree with no NAF filter requires
+                                    # ≥1 secondary signal to prevent false-confirms on generic names.
+                                    if method == "inpi_fuzzy_agree":
+                                        auto_confirm = agree_count >= 1
+                                    else:
+                                        auto_confirm = True
                                 else:
                                     auto_confirm = False
                             else:
@@ -1793,11 +1800,13 @@ async def run(batch_id: str) -> None:
                                 # Copy SIRENE reference data onto the MAPS row — same semantics
                                 # as manual /link approve. Uses shared helper (single source of truth).
                                 await _copy_sirene_reference_data(conn, siren, target_siren)
-                                # 4-branch audit: distinguish by NAF filter state and outcome
+                                # 5-branch audit: distinguish by method, NAF filter state and outcome
                                 strict_prefix = bool(
                                     matched_naf and any(matched_naf.startswith(p) for p in picked_nafs)
                                 )
-                                if picked_nafs == []:
+                                if method == "inpi_fuzzy_agree":
+                                    audit_action = "auto_linked_inpi_agree"
+                                elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
                                     if strict_prefix or naf_division_whitelist is not None:
@@ -1970,7 +1979,7 @@ async def run(batch_id: str) -> None:
 
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
                     # Fuzzy name matches wait for user confirmation before INPI call
-                    if _pending_link and _pending_link["method"] in ("enseigne", "phone", "address", "siren_website", "inpi"):
+                    if _pending_link and _pending_link["method"] in _STRONG_METHODS:
                         try:
                             from fortress.matching.inpi import fetch_dirigeants
                             from fortress.models import Officer, ContactSource as CS

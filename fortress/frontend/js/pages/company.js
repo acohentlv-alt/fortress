@@ -233,6 +233,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         if (method === 'manual') return t('company.linkReasonManual');
         if (method === 'surname') return t('company.linkReasonSurname');
         if (method === 'inpi') return t('company.linkReasonInpi');
+        if (method === 'inpi_fuzzy_agree') return t('company.linkReasonInpiFuzzyAgree');
         return t('company.linkReasonAuto');
     };
 

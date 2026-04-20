@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from fortress.api.auth import decode_session_token, hash_password
 from fortress.api.db import fetch_all, fetch_one, get_conn
+from fortress.utils.phone import normalize_phone, PHONE_NORMALIZE_SQL
 
 logger = logging.getLogger("fortress.api.admin")
 
@@ -461,13 +462,6 @@ async def get_system_log(
     return {"entries": rows or [], "total": total, "period": period}
 
 
-def _normalize_phone(phone: str) -> str:
-    """Normalize French phone: +33467658567 -> 0467658567"""
-    digits = ''.join(c for c in phone if c.isdigit())
-    if digits.startswith('33') and len(digits) == 11:
-        return '0' + digits[2:]
-    return phone.strip()
-
 
 @router.get("/rgpd/oppositions")
 async def list_rgpd_oppositions(request: Request):
@@ -535,10 +529,11 @@ async def submit_rgpd_opposition(request: Request):
             deleted_officers += result.rowcount
 
         if telephone:
-            phone_norm = _normalize_phone(telephone)
+            phone_norm = normalize_phone(telephone)
+            officers_phone_sql = PHONE_NORMALIZE_SQL.format(col="ligne_directe")
             result = await conn.execute(
-                "DELETE FROM officers WHERE ligne_directe = %s OR ligne_directe = %s RETURNING siren, nom, prenom",
-                (telephone, phone_norm)
+                f"DELETE FROM officers WHERE ({officers_phone_sql}) = %s RETURNING siren, nom, prenom",
+                (phone_norm,)
             )
             deleted_officers += result.rowcount
 
@@ -550,10 +545,11 @@ async def submit_rgpd_opposition(request: Request):
             stripped_contacts += result.rowcount
 
         if telephone:
-            phone_norm = _normalize_phone(telephone)
+            phone_norm = normalize_phone(telephone)
+            contacts_phone_sql = PHONE_NORMALIZE_SQL.format(col="phone")
             result = await conn.execute(
-                "UPDATE contacts SET phone = NULL WHERE phone = %s OR phone = %s",
-                (telephone, phone_norm)
+                f"UPDATE contacts SET phone = NULL WHERE ({contacts_phone_sql}) = %s",
+                (phone_norm,)
             )
             stripped_contacts += result.rowcount
 

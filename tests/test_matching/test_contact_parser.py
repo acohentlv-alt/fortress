@@ -44,31 +44,31 @@ def test_extract_phones_international_compact():
 
 
 def test_extract_phones_national_mobile():
-    """French national mobile format 06 12 34 56 78 is extracted."""
+    """French national mobile format 06 12 34 56 78 is extracted as E.164."""
     html = "<p>Mobile: 06 12 34 56 78</p>"
     result = extract_phones(html)
-    assert "0612345678" in result
+    assert "+33612345678" in result
 
 
 def test_extract_phones_national_landline():
-    """French national landline format 04 68 53 21 09 is extracted."""
+    """French national landline format 04 68 53 21 09 is extracted as E.164."""
     html = "<p>Téléphone: 04 68 53 21 09</p>"
     result = extract_phones(html)
-    assert "0468532109" in result
+    assert "+33468532109" in result
 
 
 def test_extract_phones_national_compact():
-    """National format without spaces 0468532109 is extracted."""
+    """National format without spaces 0468532109 is extracted as E.164."""
     html = "<span>Tél: 0468532109</span>"
     result = extract_phones(html)
-    assert "0468532109" in result
+    assert "+33468532109" in result
 
 
 def test_extract_phones_with_dots():
-    """Dot-separated format 04.68.53.21.09 is extracted."""
+    """Dot-separated format 04.68.53.21.09 is extracted as E.164."""
     html = "<p>04.68.53.21.09</p>"
     result = extract_phones(html)
-    assert "0468532109" in result
+    assert "+33468532109" in result
 
 
 def test_extract_phones_freephone():
@@ -81,10 +81,10 @@ def test_extract_phones_freephone():
 
 
 def test_extract_phones_deduplicates():
-    """Same phone number appearing twice is returned only once."""
+    """Same phone number appearing twice is returned only once (in E.164 form)."""
     html = "<p>Tel: 06 12 34 56 78. Rappel: 06 12 34 56 78.</p>"
     result = extract_phones(html)
-    assert result.count("0612345678") == 1
+    assert result.count("+33612345678") == 1
 
 
 def test_extract_phones_returns_sorted():
