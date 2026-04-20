@@ -18,11 +18,15 @@ def test_token_subset_roberto_stari():
 
 
 def test_token_subset_cafe_cosmos():
-    assert _name_match_score("Café Cosmos", "COSMOS") == 1.0
+    # Single-token SIRENE "COSMOS" vs "Café Cosmos" — no longer 1.0 under
+    # the tightened rule (only 1 meaningful token on shorter side).
+    # Falls to Jaccard: overlap 1 / max 2 = 0.5.
+    assert _name_match_score("Café Cosmos", "COSMOS") == 0.5
 
 
 def test_token_subset_boulangerie_dupont():
-    assert _name_match_score("BOULANGERIE DUPONT", "DUPONT") == 1.0
+    # Single-token SIRENE "DUPONT" vs 2-token Maps name — falls to Jaccard.
+    assert _name_match_score("BOULANGERIE DUPONT", "DUPONT") == 0.5
 
 
 def test_accent_normalized():
@@ -30,7 +34,9 @@ def test_accent_normalized():
 
 
 def test_apostrophe_split():
-    assert _name_match_score("L'Atelier", "ATELIER") == 1.0
+    # "L'Atelier" normalizes to ["l","atelier"]; SIRENE "ATELIER" is 1 token.
+    # shorter={atelier}, 1 meaningful token → fails ≥2 check → Jaccard 0.5.
+    assert _name_match_score("L'Atelier", "ATELIER") == 0.5
 
 
 def test_no_overlap():
@@ -51,10 +57,26 @@ def test_all_legal_forms_stripped():
     assert _name_match_score("SARL", "SAS") == 0.0
 
 
-def test_known_not_fixed_token_subset_common_surname():
-    # Documents expected behavior — common surname matches any name containing it.
-    # NAF gate catches unrelated businesses at a later stage.
-    assert _name_match_score("GIBON", "CHARLOTTE GIBON") == 1.0
+def test_single_token_subset_common_surname_rejected():
+    # Formerly known as test_known_not_fixed_token_subset_common_surname.
+    # GIBON bar (Maps) was matching CHARLOTTE GIBON (lawyer) with score 1.0
+    # under the old subset shortcut. The tightened rule now rejects this
+    # (shorter={gibon} has only 1 meaningful token) — Jaccard 1/2 = 0.5.
+    assert _name_match_score("GIBON", "CHARLOTTE GIBON") == 0.5
+
+
+def test_single_token_subset_rejected_celeste():
+    # From Apr 20 Paris batch: "Café Céleste" restaurant (75011) was matching
+    # CELESTE hotel (75001) with 1.0 via 1-token subset. Now Jaccard 0.5.
+    assert _name_match_score("Café Céleste", "CELESTE") == 0.5
+
+
+def test_single_token_subset_rejected_poulet():
+    # From Apr 20 Paris batch: "O'poulet Grillé" restaurant (75011) was matching
+    # POULET real-estate holding (75018). Tokens: {o, poulet, grille} vs {poulet}.
+    # Single-token shorter fails ≥2 check → Jaccard 1/3 ≈ 0.333.
+    score = _name_match_score("O'poulet Grillé", "POULET")
+    assert 0.30 < score < 0.40
 
 
 from fortress.discovery import _validate_inpi_step0_hit

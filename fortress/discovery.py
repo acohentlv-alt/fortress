@@ -261,9 +261,15 @@ def _normalize_name(name: str) -> str:
 def _name_match_score(name_a: str, name_b: str) -> float:
     """Compute similarity between two normalized names (0.0 to 1.0).
 
-    Uses TOKEN-set matching — "alluma" does NOT match "allumage" here.
-    Inflection variants like SAINT/SAINTE are NOT accommodated in v1;
-    rely on the 0.8/0.85 thresholds downstream to flag uncertainty.
+    Subset rule (score=1.0) requires either:
+      - token sets are EQUAL, OR
+      - shorter has ≥ 2 meaningful tokens (length ≥ 4) AND shorter ⊂ longer.
+
+    Single-token containment like {"poulet"} ⊂ {"o", "poulet", "grille"}
+    does NOT return 1.0 — it falls to Jaccard overlap. This blocks the
+    false-positive pattern that dominates dense SIRENE populations (Paris),
+    where a 1-token denomination like "POULET" would otherwise match any
+    business whose name contains that token.
     """
     if not name_a or not name_b:
         return 0.0
@@ -272,9 +278,13 @@ def _name_match_score(name_a: str, name_b: str) -> float:
     if not ta or not tb:
         return 0.0
     set_a, set_b = set(ta), set(tb)
-    # Full token-set containment (every token of shorter name is a complete token in longer) → 1.0
+    # Equal token sets → 1.0 (exact match after normalization)
+    if set_a == set_b:
+        return 1.0
+    # Proper subset: require the shorter side to carry enough semantic content
     shorter, longer = (set_a, set_b) if len(set_a) <= len(set_b) else (set_b, set_a)
-    if shorter and shorter.issubset(longer):
+    meaningful_in_shorter = [t for t in shorter if len(t) >= 4]
+    if len(meaningful_in_shorter) >= 2 and shorter.issubset(longer):
         return 1.0
     # Jaccard-like overlap on token sets
     overlap = len(set_a & set_b)
