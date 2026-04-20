@@ -125,3 +125,43 @@ def test_step0_validation_good_overlap_accepts():
         local_denom="GESTION2COIFFURE", local_enseigne="ROBERTO STARI",
         local_cp="69003", local_dept="69",
     ) is True
+
+
+from fortress.discovery import _naf_section_matches, _normalize_name
+
+
+def test_naf_section_matches_same_section():
+    # Giclette case: bar 56.30Z vs restaurant picker 56.10A → both section I
+    assert _naf_section_matches("56.30Z", ["56.10A"]) is True
+
+
+def test_naf_section_matches_different_section():
+    # Les Tontons case: arts 90.02Z vs restaurant picker 56.10A → section R vs I
+    assert _naf_section_matches("90.02Z", ["56.10A"]) is False
+
+
+def test_naf_section_matches_multi_picker():
+    # Any match across multiple pickers
+    assert _naf_section_matches("10.71C", ["56.10A", "10.71B"]) is True
+
+
+def test_naf_section_matches_empty():
+    assert _naf_section_matches(None, ["56.10A"]) is False
+    assert _naf_section_matches("", ["56.10A"]) is False
+
+
+def test_ordinal_normalization_29e_coiffure():
+    # Point 3: "29e Coiffure" vs "29EME RUE COIFFURE" — ordinal fix + token subset = 1.0
+    assert _name_match_score("29e Coiffure", "29EME RUE COIFFURE") == 1.0
+
+
+def test_ordinal_normalization_variants():
+    # "1er", "1ere", "1e" all collapse to "1eme"
+    assert _normalize_name("1er Café") == _normalize_name("1eme Cafe")
+    assert _normalize_name("1ere boutique") == _normalize_name("1eme boutique")
+
+
+def test_ordinal_does_not_affect_plain_numbers():
+    # Street/address numbers without ordinal suffix should be preserved
+    assert "1" in _normalize_name("Lyon 1 Terreaux").split()
+    assert "29" in _normalize_name("Boulevard 29").split()

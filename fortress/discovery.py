@@ -33,6 +33,7 @@ import psycopg_pool
 import structlog
 
 from fortress.config.departments import DEPARTMENTS  # noqa: F401
+from fortress.config.naf_codes import get_section_for_code
 from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
 from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
 from fortress.config.settings import settings
@@ -134,7 +135,7 @@ async def _verify_signals(
     maps_phone: str | None,
     maps_address: str | None,
     extracted_siren: str | None,
-) -> dict:
+) -> tuple[dict, str]:
     """Check how many independent signals agree that the MAPS entity matches target_siren.
 
     Returns a dict with boolean (or None) per signal:
@@ -162,13 +163,14 @@ async def _verify_signals(
     # Fix B: also fetch denomination — restaurants often have denomination="SARL XXX"
     # while enseigne holds the trade name; we must score against BOTH.
     cur = await conn.execute(
-        "SELECT enseigne, adresse, siren, denomination FROM companies WHERE siren = %s",
+        "SELECT enseigne, adresse, siren, denomination, code_postal FROM companies WHERE siren = %s",
         (target_siren,),
     )
     row = await cur.fetchone()
     sirene_enseigne = (row[0] if row else None) or ""
     sirene_adresse = (row[1] if row else None) or ""
     sirene_denomination = (row[3] if row else None) or ""
+    sirene_cp = (row[4] if row else None) or ""
 
     # Fetch phone from contacts table (best available phone for this SIREN)
     phone_cur = await conn.execute(
@@ -206,7 +208,7 @@ async def _verify_signals(
         best_score = max(score_enseigne, score_denom)
         signals["enseigne_match"] = (best_score >= 0.8)
 
-    return signals
+    return signals, sirene_cp
 
 
 # Graceful shutdown flag — set by SIGTERM handler
@@ -247,6 +249,9 @@ def _normalize_name(name: str) -> str:
     ascii_name = ascii_name.replace("'", " ").replace("\u2019", " ")
     # Remove punctuation except spaces
     cleaned = re.sub(r"[^a-z0-9\s]", "", ascii_name)
+    # Normalize French ordinal abbreviations: "29e", "1er", "3ere" → "29eme", "1eme", "3eme"
+    # Helps match Maps "29e Coiffure" against SIRENE "29EME RUE COIFFURE".
+    cleaned = re.sub(r"(\d+)(?:er|ere|e)(?=\s|$)", r"\1eme", cleaned)
     # Remove common legal forms
     _LEGAL = {
         "sarl", "sas", "sasu", "eurl", "sa", "sci", "snc",
@@ -351,6 +356,20 @@ _INDUSTRY_WORDS = {
     "ferme", "auberge", "gite", "relais",
     "hotellerie", "restauration",
 }
+
+
+def _naf_section_matches(sirene_naf: str | None, picked_nafs: list[str]) -> bool:
+    """True if SIRENE NAF shares an INSEE section letter with ANY picked NAF.
+
+    Used by Giclette/LES TONTONS recovery path — allows auto-confirm when
+    enseigne + exact postal match in dense-urban dept AND the sector distance
+    is 'soft' (same INSEE section letter, e.g. 56.30Z bar ↔ 56.10A restaurant
+    both in section I).
+    """
+    sirene_section = get_section_for_code(sirene_naf) if sirene_naf else None
+    if not sirene_section:
+        return False
+    return any(get_section_for_code(p) == sirene_section for p in picked_nafs)
 
 
 # =========================================================================
@@ -1569,6 +1588,8 @@ async def run(batch_id: str) -> None:
                     maps_address = maps_result.get("address")
                     maps_phone = maps_result.get("phone")
                     maps_website = maps_result.get("website")
+                    _maps_cp_match = re.search(r"\b(\d{5})\b", maps_address or "")
+                    maps_cp = _maps_cp_match.group(1) if _maps_cp_match else None
 
                     # ── Level 1: Name+Address dedup ───────────────────────
                     name_key = maps_name.lower().strip()
@@ -1895,7 +1916,7 @@ async def run(batch_id: str) -> None:
                             # Phase A auto-confirm gate: multi-signal approach
                             link_signals = None
                             if method in _STRONG_METHODS:
-                                link_signals = await _verify_signals(
+                                link_signals, sirene_cp = await _verify_signals(
                                     conn, target_siren, maps_name, maps_phone, maps_address, extracted_siren
                                 )
                                 agree_count = sum(1 for v in link_signals.values() if v is True)
@@ -1916,6 +1937,24 @@ async def run(batch_id: str) -> None:
                                         auto_confirm = True
                                 else:
                                     auto_confirm = False
+                                # Giclette/LES TONTONS recovery: enseigne + exact CP in dense-urban dept
+                                # + NAF section-letter match → treat as implicit 2nd signal.
+                                # Reuses auto_linked_mismatch_accepted audit action.
+                                if (
+                                    not auto_confirm
+                                    and method == "enseigne"
+                                    and naf_status == "mismatch"
+                                    and agree_count == 1
+                                    and link_signals.get("enseigne_match") is True
+                                    and (_company_dept or "")[:2] in _DENSE_URBAN_DEPTS
+                                    and maps_cp and sirene_cp and maps_cp == sirene_cp
+                                    and _naf_section_matches(matched_naf, picked_nafs)
+                                ):
+                                    auto_confirm = True
+                                    log.info("discovery.giclette_recovery",
+                                             maps_name=maps_name, siren=target_siren,
+                                             maps_cp=maps_cp, sirene_cp=sirene_cp,
+                                             sirene_naf=matched_naf, picked_nafs=picked_nafs)
                             else:
                                 auto_confirm = False
 
