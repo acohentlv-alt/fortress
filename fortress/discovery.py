@@ -49,6 +49,11 @@ from fortress.utils.phone import normalize_phone, PHONE_NORMALIZE_SQL
 
 log = structlog.get_logger()
 
+# Depts where postal code MUST match exactly — arrondissements are different neighborhoods.
+# V1 scope: Paris only. Dept 69 (Lyon/Villeurbanne) and 13 (Marseille/Aix) deferred
+# pending data on edge cases (registered-vs-operational-address mismatches).
+_DENSE_URBAN_DEPTS = frozenset({"75"})
+
 
 def _compute_naf_status(
     matched_naf: str | None,
@@ -254,21 +259,26 @@ def _normalize_name(name: str) -> str:
 
 
 def _name_match_score(name_a: str, name_b: str) -> float:
-    """Compute similarity between two normalized names (0.0 to 1.0)."""
+    """Compute similarity between two normalized names (0.0 to 1.0).
+
+    Uses TOKEN-set matching — "alluma" does NOT match "allumage" here.
+    Inflection variants like SAINT/SAINTE are NOT accommodated in v1;
+    rely on the 0.8/0.85 thresholds downstream to flag uncertainty.
+    """
     if not name_a or not name_b:
         return 0.0
     ta = _normalize_name(name_a).split()
     tb = _normalize_name(name_b).split()
     if not ta or not tb:
         return 0.0
-    # Full containment
-    ja = " ".join(ta)
-    jb = " ".join(tb)
-    if ja in jb or jb in ja:
+    set_a, set_b = set(ta), set(tb)
+    # Full token-set containment (every token of shorter name is a complete token in longer) → 1.0
+    shorter, longer = (set_a, set_b) if len(set_a) <= len(set_b) else (set_b, set_a)
+    if shorter and shorter.issubset(longer):
         return 1.0
-    # Token overlap
-    overlap = sum(1 for t in ta if t in tb)
-    return overlap / max(len(ta), len(tb))
+    # Jaccard-like overlap on token sets
+    overlap = len(set_a & set_b)
+    return overlap / max(len(set_a), len(set_b))
 
 
 # ---------------------------------------------------------------------------
@@ -623,8 +633,12 @@ async def _match_to_sirene(
                  AND statut = 'A'
                  AND departement = %s
                  AND siren NOT LIKE 'MAPS%%'
-               LIMIT 20""",
-            ens_params,
+               ORDER BY GREATEST(
+                 similarity(COALESCE(enseigne,''), %s),
+                 similarity(COALESCE(denomination,''), %s)
+               ) DESC
+               LIMIT 100""",
+            ens_params + [maps_name, maps_name],
         )
         ens_rows = await ens_cur.fetchall()
         if ens_rows:
@@ -651,33 +665,37 @@ async def _match_to_sirene(
             if best_ens:
                 ens_cp = best_ens.get("code_postal", "")
                 postal_match = bool(maps_cp and ens_cp and maps_cp == ens_cp)
+                dept_prefix = maps_cp[:2] if maps_cp else ""
+                strict_postal = dept_prefix in _DENSE_URBAN_DEPTS
 
                 if postal_match:
-                    # Same postal code → confirmed
                     log.info("maps_discovery.enseigne_match", maps_name=maps_name,
                              siren=best_ens["siren"], enseigne=best_ens["enseigne"],
                              score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp,
                              postal_match=postal_match)
                     best_ens.pop("code_postal", None)
                     return best_ens
-                elif maps_cp and ens_cp and maps_cp[:2] == ens_cp[:2] and best_ens_score >= 0.85:
-                    # Same department, good score → confirmed
+                elif (
+                    not strict_postal
+                    and maps_cp and ens_cp
+                    and maps_cp[:2] == ens_cp[:2]
+                    and best_ens_score >= 0.85
+                ):
                     log.info("maps_discovery.enseigne_match_nearby", maps_name=maps_name,
                              siren=best_ens["siren"], enseigne=best_ens["enseigne"],
                              score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp)
                     best_ens.pop("code_postal", None)
                     return best_ens
                 elif maps_cp and ens_cp and maps_cp != ens_cp:
-                    # Different postal code + score < 0.85 → downgrade to pending
                     log.warning("maps_discovery.enseigne_match_downgraded", maps_name=maps_name,
                                 siren=best_ens["siren"], enseigne=best_ens["enseigne"],
                                 score=best_ens["score"], maps_cp=maps_cp, enseigne_cp=ens_cp,
-                                reason="postal_mismatch_weak_score")
+                                strict_postal=strict_postal,
+                                reason="postal_mismatch_or_dense_urban")
                     best_ens["method"] = "enseigne_weak"
                     best_ens.pop("code_postal", None)
                     return best_ens
                 else:
-                    # No postal data available → confirmed (benefit of the doubt)
                     log.info("maps_discovery.enseigne_match_no_postal", maps_name=maps_name,
                              siren=best_ens["siren"], enseigne=best_ens["enseigne"],
                              score=best_ens["score"])
@@ -1000,8 +1018,13 @@ async def _match_to_sirene(
                    forme_juridique, adresse, code_postal, ville, departement,
                    region, statut, date_creation, tranche_effectif,
                    latitude, longitude, fortress_id
-            FROM companies WHERE {where_clause} LIMIT 50""",  # noqa: S608
-        params,
+            FROM companies WHERE {where_clause}
+            ORDER BY GREATEST(
+              similarity(COALESCE(enseigne,''), %s),
+              similarity(COALESCE(denomination,''), %s)
+            ) DESC
+            LIMIT 100""",  # noqa: S608
+        params + [maps_name, maps_name],
     )
     rows = await cur.fetchall()
     name_candidate, name_score = _score_rows(rows)  # capture score, was discarded

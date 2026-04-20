@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
                     CREATE INDEX IF NOT EXISTS idx_companies_denomination_trgm
                     ON companies USING gin (denomination gin_trgm_ops)
                 """)
+                await conn.execute(
+                    """CREATE INDEX IF NOT EXISTS idx_companies_enseigne_trgm
+                       ON companies USING gin (enseigne gin_trgm_ops)"""
+                )
                 await conn.commit()
                 logger.info("✅ pg_trgm extension + trigram index ready")
         except Exception as e:
