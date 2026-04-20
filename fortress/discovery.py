@@ -281,6 +281,40 @@ def _name_match_score(name_a: str, name_b: str) -> float:
     return overlap / max(len(set_a), len(set_b))
 
 
+def _validate_inpi_step0_hit(
+    maps_cp: str | None,
+    departement: str | None,
+    meaningful_terms: list[str],
+    local_denom: str,
+    local_enseigne: str,
+    local_cp: str,
+    local_dept: str,
+) -> bool:
+    """Validate an INPI Step 0 hit before accepting it as method='inpi'.
+
+    Returns True when:
+      - dept check passes (strict CP match for _DENSE_URBAN_DEPTS, else dept prefix ok)
+      - at least one meaningful Maps token is a complete token of SIRENE
+        denomination or enseigne (_INDUSTRY_WORDS already filtered from meaningful_terms)
+    """
+    dept_prefix = (maps_cp or "")[:2]
+    strict_postal = dept_prefix in _DENSE_URBAN_DEPTS
+
+    if strict_postal:
+        dept_ok = bool(maps_cp and local_cp and maps_cp == local_cp)
+    else:
+        dept_ok = (not departement) or (not local_dept) or (departement == local_dept)
+
+    if not dept_ok:
+        return False
+
+    sirene_tokens = (
+        set(_normalize_name(local_denom).split())
+        | set(_normalize_name(local_enseigne).split())
+    )
+    return bool(set(meaningful_terms) & sirene_tokens)
+
+
 # ---------------------------------------------------------------------------
 # Smarter scoring — detect names/industries that need higher thresholds
 # ---------------------------------------------------------------------------
@@ -458,6 +492,10 @@ async def _match_to_sirene(
     maps_cp_match = re.search(r"\b(\d{5})\b", maps_address or "")
     maps_cp = maps_cp_match.group(1) if maps_cp_match else None
 
+    # INPI result cache — populated by Step 0 (primary) or Step 5 (fallback).
+    # Shape: maps_name -> (siren, naf, nom, cp) tuple or None (miss).
+    _inpi_cache: dict[str, tuple | None] = {}
+
     normalized = _normalize_name(maps_name)
     search_terms = normalized.split()
     if not search_terms:
@@ -555,6 +593,73 @@ async def _match_to_sirene(
                 }
 
         return best, best_sc
+
+    # ── Step 0: INPI primary matcher (Recherche Entreprises API) ──────────
+    # Fires only when it has a chance of a useful result:
+    #   - No website-footer SIREN (Step 1 will handle that — deterministic)
+    #   - At least one meaningful search term (name isn't all industry/city words)
+    #   - Have SOME location context (dept or CP)
+    # On miss or validation fail: falls through to Steps 1-5 unchanged.
+    # Populates `_inpi_cache` so Step 5 inpi_fuzzy_agree arbitration can reuse it.
+    if (
+        not extracted_siren
+        and meaningful_terms
+        and (departement or maps_cp)
+    ):
+        try:
+            from fortress.matching.inpi import search_by_name as _inpi_search
+            _inpi_hit = await _inpi_search(
+                query=_normalize_name(maps_name),
+                dept=departement,
+                cp=maps_cp,
+            )
+            _inpi_cache[maps_name] = _inpi_hit
+        except Exception:
+            _inpi_cache[maps_name] = None
+            _inpi_hit = None
+
+        if _inpi_hit:
+            inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp = _inpi_hit
+            local_cur = await conn.execute(
+                """SELECT siren, denomination, enseigne, adresse, code_postal, ville, departement
+                   FROM companies
+                   WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                   LIMIT 1""",
+                (inpi_siren,),
+            )
+            local_row = await local_cur.fetchone()
+            if local_row:
+                local_denom = local_row[1] or ""
+                local_enseigne = local_row[2] or ""
+                local_cp = local_row[4] or ""
+                local_dept = local_row[6] or ""
+
+                if _validate_inpi_step0_hit(
+                    maps_cp=maps_cp,
+                    departement=departement,
+                    meaningful_terms=meaningful_terms,
+                    local_denom=local_denom,
+                    local_enseigne=local_enseigne,
+                    local_cp=local_cp,
+                    local_dept=local_dept,
+                ):
+                    log.info("discovery.inpi_primary_match",
+                             maps_name=maps_name, siren=inpi_siren,
+                             local_denom=local_denom, local_enseigne=local_enseigne)
+                    return {
+                        "siren": inpi_siren,
+                        "denomination": local_denom,
+                        "enseigne": local_enseigne,
+                        "score": 0.92,
+                        "method": "inpi",
+                        "adresse": local_row[3] or "",
+                        "ville": local_row[5] or "",
+                    }
+                else:
+                    log.info("discovery.inpi_primary_rejected",
+                             maps_name=maps_name, siren=inpi_siren,
+                             reason="dept_or_overlap_fail")
+        # fall through to Steps 1-5
 
     # ── Step 1: SIREN from website (validated) ────────────────────────────
     # The SIREN from a company's own website is the strongest possible signal.
@@ -983,16 +1088,20 @@ async def _match_to_sirene(
             }
 
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
-    # INPI prefetch: call INPI only now (no strong match found yet). Skip if
-    # earlier steps already returned (they return early, so reaching here means
-    # Steps 1-4 all missed). Cache result keyed by maps_name for arbitration.
-    _inpi_cache: dict[str, str | None] = {}
-    try:
-        from fortress.matching.inpi import lookup_siren_by_name as _lookup_siren
-        _inpi_siren_hit = await _lookup_siren(maps_name, departement)
-        _inpi_cache[maps_name] = _inpi_siren_hit  # None or a 9-digit SIREN string
-    except Exception:
-        pass  # INPI outage — cache stays empty, arbitration skipped
+    # Step 5 fallback INPI prefetch — fires only when Step 0 was skipped
+    # (e.g., extracted_siren was set but Step 1 rejected it and fell through).
+    # Uses the same search_by_name as Step 0 for cache-shape consistency.
+    if maps_name not in _inpi_cache:
+        try:
+            from fortress.matching.inpi import search_by_name as _inpi_search
+            _inpi_hit = await _inpi_search(
+                query=_normalize_name(maps_name),
+                dept=departement,
+                cp=maps_cp,
+            )
+            _inpi_cache[maps_name] = _inpi_hit
+        except Exception:
+            _inpi_cache[maps_name] = None
 
     # Each term needs 2 params: one for enseigne LIKE, one for denomination LIKE
     name_clauses = " OR ".join(
@@ -1033,7 +1142,8 @@ async def _match_to_sirene(
         name_candidate["method"] = "fuzzy_name"  # default: weak, pending
 
         # INPI arbitration: if fuzzy_name candidate AND INPI both point to same SIREN
-        inpi_siren = _inpi_cache.get(maps_name)
+        _cached_hit = _inpi_cache.get(maps_name)
+        inpi_siren = _cached_hit[0] if _cached_hit else None
         if inpi_siren and inpi_siren == name_candidate["siren"]:
             name_tokens = _normalize_name(maps_name).split()
             # Compute city_match inline — candidate's ville vs maps address tokens
@@ -1788,9 +1898,9 @@ async def run(batch_id: str) -> None:
                                 elif naf_status == "mismatch" and agree_count >= 2:
                                     auto_confirm = True
                                 elif picked_nafs == []:
-                                    # Phase B safeguard: inpi_fuzzy_agree with no NAF filter requires
-                                    # ≥1 secondary signal to prevent false-confirms on generic names.
-                                    if method == "inpi_fuzzy_agree":
+                                    # Safeguard: INPI-based strong methods with no NAF filter
+                                    # require ≥ 1 secondary signal for auto-confirm
+                                    if method in {"inpi", "inpi_fuzzy_agree"}:
                                         auto_confirm = agree_count >= 1
                                     else:
                                         auto_confirm = True
