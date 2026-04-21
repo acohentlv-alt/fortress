@@ -95,7 +95,16 @@ async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) 
     """Copy SIRENE reference fields from the real SIREN row onto the MAPS entity.
 
     Populates: siret_siege, naf_code, naf_libelle, forme_juridique,
-    code_postal, ville, date_creation, tranche_effectif.
+    code_postal (fill-if-null), ville (fill-if-null), date_creation, tranche_effectif.
+
+    code_postal and ville use COALESCE so the Maps-derived location is preserved
+    when already set (Frankenstein fix, Apr 22 — prevents SIRENE siège address
+    overwriting the actual storefront location found on Google Maps).
+
+    siret_siege, naf_code, naf_libelle, forme_juridique, date_creation are always
+    overwritten from SIRENE — they are legal/identity fields with no Maps equivalent.
+    tranche_effectif is fill-if-null (same as before).
+
     denomination / enseigne / adresse intentionally kept from Google Maps.
 
     Called on both pipeline auto-confirm and /link approve endpoint —
@@ -117,8 +126,8 @@ async def _copy_sirene_reference_data(conn, maps_siren: str, target_siren: str) 
                naf_code         = %s,
                naf_libelle      = %s,
                forme_juridique  = %s,
-               code_postal      = %s,
-               ville            = %s,
+               code_postal      = COALESCE(code_postal, %s),
+               ville            = COALESCE(ville, %s),
                date_creation    = %s,
                tranche_effectif = COALESCE(tranche_effectif, %s)
            WHERE siren = %s""",
@@ -508,6 +517,31 @@ _FOREIGN_INDICATORS = frozenset({
     "andorra", "andorre",
     "united kingdom", "royaume-uni",
 })
+
+
+def _parse_maps_address(addr: str | None) -> tuple[str | None, str | None]:
+    """Extract (code_postal, ville) from a Google Maps address string.
+
+    Strategy:
+      - Strip trailing ", France" (99.8% of real Maps addresses have it)
+      - Take the LAST 5-digit match, not the first (streets may start with 5 digits,
+        e.g. "63200 Chem. des Coteaux, 63200 Riom, France" — last is the real CP)
+      - Ville is the text AFTER the last CP, stripped of whitespace/punctuation
+
+    Returns (None, None) gracefully when no CP present.
+    Cedex suffix is PRESERVED in ville (matches SIRENE libelle_commune convention).
+    """
+    if not addr:
+        return None, None
+    _addr_clean = re.sub(r",\s*France\s*$", "", addr.strip(), flags=re.IGNORECASE)
+    _cp_matches = list(re.finditer(r"\b(\d{5})\b", _addr_clean))
+    if not _cp_matches:
+        return None, None
+    _last = _cp_matches[-1]
+    _cp = _last.group(1)
+    _tail = _addr_clean[_last.end():].strip(" ,\t")
+    _ville = _tail or None
+    return _cp, _ville
 
 
 def _is_in_france(address: str | None) -> bool:
@@ -2077,18 +2111,19 @@ async def run(batch_id: str) -> None:
                         cur = await id_conn.execute("SELECT nextval('maps_id_seq')")
                         next_id = (await cur.fetchone())[0]
                     siren = f"MAPS{next_id:05d}"
-                    # Derive department from Maps address postal code if dept_filter is missing
-                    _company_dept = dept_filter
-                    if not _company_dept and maps_address:
-                        _cp = re.search(r"\b(\d{5})\b", maps_address)
-                        if _cp:
-                            _company_dept = _cp.group(1)[:2]
+                    # NEW: use _parse_maps_address helper so CP/ville are populated at insert time,
+                    # enabling _copy_sirene_reference_data's COALESCE to preserve the Maps location
+                    # instead of being overwritten by the SIRENE siège (Frankenstein fix, Apr 22).
+                    _company_cp, _company_ville = _parse_maps_address(maps_address)
+                    _company_dept = dept_filter or (_company_cp[:2] if _company_cp else None)
 
                     company = Company(
                         siren=siren,
                         denomination=maps_name,
                         enseigne=maps_name,
                         adresse=maps_address,
+                        code_postal=_company_cp,
+                        ville=_company_ville,
                         departement=_company_dept,
                         statut="A",
                         workspace_id=batch_workspace_id,
