@@ -272,7 +272,7 @@ async def log_audit(
 ) -> None:
     """Write one row to the batch_log table.
 
-    action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup' | 'officers_found' | 'financial_data' | 'siren_verified' | 'siren_mismatch'
+    action: 'inpi_lookup' | 'web_search' | 'website_crawl' | 'maps_lookup' | 'officers_found' | 'financial_data' | 'siren_verified' | 'siren_mismatch' | 'gemini_shadow_yes' | 'gemini_shadow_no' | 'gemini_shadow_ambiguous' | 'gemini_shadow_no_candidates' | 'gemini_budget_exceeded'
     result: 'success' | 'fail' | 'blocked' | 'skipped' | 'filtered'
     search_query: the exact Maps search term that found this entity (optional)
     """
