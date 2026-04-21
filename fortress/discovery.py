@@ -24,7 +24,6 @@ import signal
 import sys
 import time
 import unicodedata
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -32,7 +31,6 @@ import psycopg
 import psycopg_pool
 import structlog
 
-from fortress.config.departments import DEPARTMENTS  # noqa: F401
 from fortress.config.naf_codes import get_section_for_code
 from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
 from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
@@ -1650,7 +1648,7 @@ async def run(batch_id: str) -> None:
                         )
                         contact_rows = await contacts_cur.fetchall()
                         for crow in contact_rows:
-                            _siren, _website, _phone = crow[0], crow[1], crow[2]
+                            _website, _phone = crow[1], crow[2]
                             if _website:
                                 _d = re.sub(r'^https?://(www\.)?', '', _website.strip().lower())
                                 _dom = _d.split('/')[0].split('?')[0]
@@ -1695,7 +1693,7 @@ async def run(batch_id: str) -> None:
                 # already-saved businesses are retained.
 
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
-                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count
+                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
@@ -1971,7 +1969,6 @@ async def run(batch_id: str) -> None:
 
                     # ── Triage: classify before expensive work ────────────
                     triage_bucket = "RED"  # Default: full pipeline
-                    missing_fields = {"phone": True, "email": True, "website": True}
 
                     # BLACK check: no usable name
                     if not maps_name or len(maps_name.strip()) < 2:
@@ -2056,15 +2053,9 @@ async def run(batch_id: str) -> None:
                         else:
                             triage_bucket = "YELLOW"
                             triage_counts["yellow"] += 1
-                            missing_fields = {
-                                "phone": not has_phone,
-                                "email": not has_email,
-                                "website": not has_website,
-                            }
                     else:
                         triage_bucket = "RED"
                         triage_counts["red"] += 1
-                        missing_fields = {"phone": True, "email": True, "website": True}
 
                     companies_discovered += 1
                     idx = companies_discovered
@@ -2700,19 +2691,18 @@ async def run(batch_id: str) -> None:
                     )
 
                 # ── Build pre-dedup name set (for skipping cards before page visit) ──
-                import unicodedata as _ud
                 _known_names: set[str] = set()
                 for entry in seen_names:
                     name_part = entry.split("|")[0].strip()
                     if name_part:
-                        _nfkd = _ud.normalize("NFKD", name_part)
-                        _known_names.add("".join(c for c in _nfkd if not _ud.combining(c)))
+                        _nfkd = unicodedata.normalize("NFKD", name_part)
+                        _known_names.add("".join(c for c in _nfkd if not unicodedata.combining(c)))
 
                 def _should_skip_card(card_label: str) -> bool:
                     """Return True if this card name is already known in the workspace."""
                     label_lower = card_label.lower().strip()
-                    nfkd = _ud.normalize("NFKD", label_lower)
-                    clean = "".join(c for c in nfkd if not _ud.combining(c))
+                    nfkd = unicodedata.normalize("NFKD", label_lower)
+                    clean = "".join(c for c in nfkd if not unicodedata.combining(c))
                     return clean in _known_names
 
                 log.info(
