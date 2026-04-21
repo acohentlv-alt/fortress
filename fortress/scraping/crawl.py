@@ -33,11 +33,18 @@ _CONTACT_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-# Seed paths tried on every site (relative to root_url)
+# Seed paths tried on every site (relative to root_url).
+# Mentions-légales variants first — A2 (legal-name extraction) relies on them.
+# Order matters: budget truncation is positional (see line 266).
 _SEED_PATHS = [
     "/contact",
     "/mentions-legales",
     "/mentions-legales.html",
+    "/mentions",
+    "/mention-legale",
+    "/legal",
+    "/legal-notice",
+    "/notice-legale",
     "/cgu",
     "/a-propos",
 ]
@@ -146,7 +153,7 @@ async def crawl_website(
     department: str = "",
     siren: str = "",
     pre_fetched: dict[str, str] | None = None,
-    max_pages: int = 10,
+    max_pages: int = 13,  # homepage + 10 seeds + 2 discovered nav links
     wall_clock_limit: float = 13.0,
 ) -> CrawlResult:
     """Crawl a website and extract contact/legal information.
