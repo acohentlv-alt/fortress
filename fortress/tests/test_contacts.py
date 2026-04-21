@@ -1,4 +1,9 @@
-from fortress.matching.contacts import extract_legal_denomination
+from fortress.matching.contacts import (
+    _accept_siren,
+    _HOSTING_SIRENS,
+    extract_legal_denomination,
+    extract_siret,
+)
 
 SAMPLE_MENTIONS_SARL = """
 <html><body>
@@ -77,3 +82,51 @@ def test_hebergeur_not_captured():
 def test_empty_html():
     assert extract_legal_denomination("") is None
     assert extract_legal_denomination(None) is None
+
+
+# ── _HOSTING_SIRENS blacklist (hosting providers + franchise umbrellas) ──
+
+def test_hosting_sirens_blocks_hosting_providers():
+    # Existing entries from 2026-04-09
+    assert _accept_siren("424761419") is None  # OVH
+    assert _accept_siren("431303775") is None  # IONOS
+    assert _accept_siren("423093459") is None  # Gandi
+    assert _accept_siren("433115904") is None  # Scaleway
+    assert _accept_siren("510909807") is None  # o2switch
+
+
+def test_hosting_sirens_blocks_franchise_umbrellas():
+    # Phase 1 blacklist added 2026-04-21 from Gemini D1a disagreement data
+    assert _accept_siren("479273161") is None  # SIBLU
+    assert _accept_siren("321737736") is None  # SIBLU FRANCE
+    assert _accept_siren("388269078") is None  # FRANCE LOCATION / CAPFUN
+    assert _accept_siren("424562890") is None  # HUTTOPIA
+    assert _accept_siren("790303838") is None  # FONCIERE HUTTOPIA EUROPE
+
+
+def test_accept_siren_passes_unknown_siren_through():
+    assert _accept_siren("123456789") == "123456789"
+
+
+def test_accept_siren_handles_none_and_empty():
+    assert _accept_siren(None) is None
+    assert _accept_siren("") is None
+
+
+def test_hosting_sirens_frozenset_size():
+    # Sanity: 5 hosting + 5 franchise umbrella = 10 entries.
+    # When adding a new entry, bump this count and document the source above.
+    assert len(_HOSTING_SIRENS) == 10
+
+
+def test_extract_siret_rejects_franchise_footer():
+    # Camping franchise site with Siblu HQ SIREN in footer should NOT link
+    # the local storefront to Siblu's parent SIREN.
+    html = """
+    <html><body>
+    <h1>Camping Les Mathes</h1>
+    <p>SIREN : 479273161</p>
+    <p>© 2026 Siblu</p>
+    </body></html>
+    """
+    assert extract_siret(html) is None

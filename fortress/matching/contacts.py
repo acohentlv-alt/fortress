@@ -401,17 +401,26 @@ _SIREN_RE = re.compile(
 )
 
 
-# Hosting providers and domain registrars whose SIRENs commonly appear in
-# website footers as the TLS/DNS/hosting operator, NOT the actual business.
+# Hosting providers, domain registrars, AND franchise-umbrella SIRENs
+# whose SIRENs appear in website footers as the hosting operator or
+# corporate parent — NOT the actual local business.
 # When extract_siret() or extract_siren_from_html() pick one of these up,
 # we treat it as "no SIREN found" and leave the MAPS entity unlinked.
-# Sources verified on annuaire-entreprises.data.gouv.fr on 2026-04-09.
+# Hosting sources verified on annuaire-entreprises.data.gouv.fr on 2026-04-09.
+# Franchise umbrellas added from Gemini D1a disagreement data on 2026-04-21.
 _HOSTING_SIRENS: frozenset[str] = frozenset({
+    # Hosting providers / domain registrars
     "424761419",  # OVH
     "431303775",  # IONOS / 1&1 (IONOS SARL)
     "423093459",  # Gandi
     "433115904",  # Scaleway / Online.net / Dedibox / BookMyName
     "510909807",  # o2switch
+    # Franchise umbrellas (Phase 1 blacklist, 2026-04-21)
+    "479273161",  # SIBLU (Pessac)
+    "321737736",  # SIBLU FRANCE (Pessac subsidiary)
+    "388269078",  # FRANCE LOCATION / enseigne CAPFUN (Mouans-Sartoux)
+    "424562890",  # HUTTOPIA (Saint-Genis-les-Ollières)
+    "790303838",  # FONCIERE HUTTOPIA EUROPE (Saint-Genis-les-Ollières holding)
 })
 
 
