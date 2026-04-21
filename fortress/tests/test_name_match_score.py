@@ -165,3 +165,32 @@ def test_ordinal_does_not_affect_plain_numbers():
     # Street/address numbers without ordinal suffix should be preserved
     assert "1" in _normalize_name("Lyon 1 Terreaux").split()
     assert "29" in _normalize_name("Boulevard 29").split()
+
+
+def test_normalize_name_ampersand_no_spaces():
+    from fortress.discovery import _normalize_name
+    assert _normalize_name("PIC&MIE") == "pic mie"
+    assert _normalize_name("Pic & Mie") == "pic mie"
+    assert _normalize_name("J&F BOULANGERIE") == "j f boulangerie"
+
+
+def test_normalize_name_hyphen():
+    from fortress.discovery import _normalize_name
+    assert _normalize_name("coca-cola") == "coca cola"
+
+
+def test_normalize_name_apostrophe_preserved():
+    from fortress.discovery import _normalize_name
+    assert _normalize_name("L'Atelier") == "l atelier"
+
+
+def test_normalize_name_ampersand_invariant():
+    from fortress.discovery import _normalize_name
+    assert _normalize_name("PIC&MIE") == _normalize_name("PIC & MIE") == _normalize_name("Pic & Mie")
+
+
+def test_normalize_name_empty_and_whitespace():
+    from fortress.discovery import _normalize_name
+    assert _normalize_name("") == ""
+    assert _normalize_name("   ") == ""
+    assert _normalize_name("&&&") == ""

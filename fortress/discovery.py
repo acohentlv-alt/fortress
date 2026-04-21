@@ -249,8 +249,10 @@ def _normalize_name(name: str) -> str:
     # Split on apostrophes BEFORE removing punctuation
     # so "d'agriculture" → "d agriculture" not "dagriculture"
     ascii_name = ascii_name.replace("'", " ").replace("\u2019", " ")
-    # Remove punctuation except spaces
-    cleaned = re.sub(r"[^a-z0-9\s]", "", ascii_name)
+    # Replace punctuation with space so "PIC&MIE" → "pic mie" (2 tokens),
+    # not "picmie" (1 token). Enables validator to see token overlap when
+    # one side uses & / - / . without surrounding spaces.
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", ascii_name)
     # Normalize French ordinal abbreviations: "29e", "1er", "3ere" → "29eme", "1eme", "3eme"
     # Helps match Maps "29e Coiffure" against SIRENE "29EME RUE COIFFURE".
     cleaned = re.sub(r"(\d+)(?:er|ere|e)(?=\s|$)", r"\1eme", cleaned)
