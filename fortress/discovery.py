@@ -709,17 +709,24 @@ async def _match_to_sirene(
     #   - Have SOME location context (dept or CP)
     # On miss or validation fail: falls through to Steps 1-5 unchanged.
     # Populates `_inpi_cache` so Step 5 inpi_fuzzy_agree arbitration can reuse it.
+    # Guard: require dept, OR dense-urban CP (where CP is kept as location filter).
+    # Prevents firing a global INPI name-search when dept is unknown and CP is stripped.
+    _step0_dept_prefix = (maps_cp or "")[:2]
     if (
         not extracted_siren
         and meaningful_terms
-        and (departement or maps_cp)
+        and (departement or (maps_cp and _step0_dept_prefix in _DENSE_URBAN_DEPTS))
     ):
         try:
             from fortress.matching.inpi import search_by_name as _inpi_search
+            # Pass CP only for dense-urban depts (arrondissements are distinct neighborhoods).
+            # For other depts, CP would over-narrow — SIREN siège can be at any CP in dept.
+            # Aligns with _validate_inpi_step0_hit's strict_postal logic.
+            _inpi_cp = maps_cp if _step0_dept_prefix in _DENSE_URBAN_DEPTS else None
             _inpi_hit = await _inpi_search(
                 query=_normalize_name(maps_name),
                 dept=departement,
-                cp=maps_cp,
+                cp=_inpi_cp,
             )
             _inpi_cache[maps_name] = _inpi_hit
         except Exception:
@@ -1201,13 +1208,19 @@ async def _match_to_sirene(
     # Step 5 fallback INPI prefetch — fires only when Step 0 was skipped
     # (e.g., extracted_siren was set but Step 1 rejected it and fell through).
     # Uses the same search_by_name as Step 0 for cache-shape consistency.
-    if maps_name not in _inpi_cache:
+    # Same dense-urban gating as Step 0 — require dept or dense-urban CP.
+    _step5_dept_prefix = (maps_cp or "")[:2]
+    if (
+        maps_name not in _inpi_cache
+        and (departement or (maps_cp and _step5_dept_prefix in _DENSE_URBAN_DEPTS))
+    ):
         try:
             from fortress.matching.inpi import search_by_name as _inpi_search
+            _inpi_cp = maps_cp if _step5_dept_prefix in _DENSE_URBAN_DEPTS else None
             _inpi_hit = await _inpi_search(
                 query=_normalize_name(maps_name),
                 dept=departement,
-                cp=maps_cp,
+                cp=_inpi_cp,
             )
             _inpi_cache[maps_name] = _inpi_hit
         except Exception:
@@ -1833,10 +1846,12 @@ async def run(batch_id: str) -> None:
                                         _a2_query = " ".join(_legal_query_terms)
                                         try:
                                             from fortress.matching.inpi import search_by_name as _a2_search
+                                            _a2_dept_prefix = (maps_cp or "")[:2]
+                                            _a2_cp = maps_cp if _a2_dept_prefix in _DENSE_URBAN_DEPTS else None
                                             _a2_hit = await _a2_search(
                                                 query=_a2_query,
                                                 dept=dept_filter,
-                                                cp=maps_cp,
+                                                cp=_a2_cp,
                                             )
                                         except Exception as _a2_exc:
                                             log.warning(
