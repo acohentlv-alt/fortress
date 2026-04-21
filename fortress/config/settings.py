@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # Lever A2 — legal name from mentions-légales → INPI retry
     a2_mentions_legales_enabled: bool = True
 
+    # Agent B — chain/franchise detector (Paul, Franck Provost, McDonald's, etc.)
+    chain_detector_enabled: bool = True
+
     # Batch processing
     wave_size: int = 50
     max_concurrent_scrapers: int = 3

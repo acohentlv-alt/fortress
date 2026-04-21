@@ -488,6 +488,7 @@ _STRONG_METHODS = frozenset({
     "inpi", "siren_website", "enseigne", "phone", "address",
     "inpi_fuzzy_agree",
     "inpi_mentions_legales",  # Lever A2
+    "chain",  # Agent B — franchise/chain detector
 })
 
 _LEGAL_FORM_TOKENS = frozenset({
@@ -778,7 +779,27 @@ async def _match_to_sirene(
                              reason="dept_or_overlap_fail")
                     if rejected_siren_sink is not None:
                         rejected_siren_sink[maps_name] = inpi_siren
-        # fall through to Steps 1-5
+        # fall through to Steps 0.5, 1-5
+
+    # ── Step 0.5: Chain/franchise detector (Agent B, v2 — moved from Step 4.5) ──
+    # Fires BEFORE Step 1 (siren_website) to prevent the franchise HQ-leak bug:
+    # a national brand's HQ SIREN appears in the website footer, Step 1 validates
+    # via name-overlap, and every local storefront gets linked to HQ. Chain detector
+    # matches on (brand + maps_cp) and finds the specific storefront before Step 1
+    # can misfire. CP required — dept-only would over-match across franchisees.
+    # Evidence (2026-04-21, camping 83): Siblu/Capfun/Huttopia/Sandaya all HQ-leaked
+    # via Step 1. This placement catches them.
+    if settings.chain_detector_enabled and maps_cp:
+        from fortress.matching.chains import match_chain, find_chain_siret
+        chain_hit = match_chain(maps_name)
+        if chain_hit:
+            chain_candidate = await find_chain_siret(conn, chain_hit, maps_cp)
+            if chain_candidate:
+                log.info("discovery.chain_match",
+                         maps_name=maps_name, chain=chain_hit.chain_name,
+                         siren=chain_candidate["siren"], maps_cp=maps_cp,
+                         sector=chain_hit.sector)
+                return chain_candidate
 
     # ── Step 1: SIREN from website (validated) ────────────────────────────
     # The SIREN from a company's own website is the strongest possible signal.
@@ -2181,7 +2202,7 @@ async def run(batch_id: str) -> None:
                                 elif picked_nafs == []:
                                     # Safeguard: INPI-based strong methods with no NAF filter
                                     # require ≥ 1 secondary signal for auto-confirm
-                                    if method in {"inpi", "inpi_fuzzy_agree", "inpi_mentions_legales"}:
+                                    if method in {"inpi", "inpi_fuzzy_agree", "inpi_mentions_legales", "chain"}:
                                         auto_confirm = agree_count >= 1
                                     else:
                                         auto_confirm = True
@@ -2205,6 +2226,22 @@ async def run(batch_id: str) -> None:
                                              maps_name=maps_name, siren=target_siren,
                                              maps_cp=maps_cp, sirene_cp=sirene_cp,
                                              sirene_naf=matched_naf, picked_nafs=picked_nafs)
+                                # Chain post-else override: franchise storefronts only ever
+                                # produce 1 agreeing signal (enseigne). The (brand + CP +
+                                # sector-aligned NAF) triple already makes the match
+                                # high-confidence — section-letter NAF alignment is the
+                                # final safeguard. Independent of Giclette (different method).
+                                if (
+                                    not auto_confirm
+                                    and method == "chain"
+                                    and naf_status == "mismatch"
+                                    and agree_count >= 1
+                                    and _naf_section_matches(matched_naf, picked_nafs)
+                                ):
+                                    auto_confirm = True
+                                    log.info("discovery.chain_section_match_auto_confirm",
+                                             maps_name=maps_name, siren=target_siren,
+                                             matched_naf=matched_naf, picked_nafs=picked_nafs)
                             else:
                                 auto_confirm = False
 
@@ -2240,6 +2277,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_inpi_agree"
                                 elif method == "inpi_mentions_legales":
                                     audit_action = "auto_linked_mentions_legales"
+                                elif method == "chain":
+                                    audit_action = "auto_linked_chain"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
@@ -2528,8 +2567,11 @@ async def run(batch_id: str) -> None:
                     )
 
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
-                    # Fuzzy name matches wait for user confirmation before INPI call
-                    if _pending_link and _pending_link["method"] in _STRONG_METHODS:
+                    # Fuzzy name matches wait for user confirmation before INPI call.
+                    if (
+                        _pending_link
+                        and _pending_link["method"] in _STRONG_METHODS
+                    ):
                         try:
                             from fortress.matching.inpi import fetch_dirigeants
                             from fortress.models import Officer, ContactSource as CS
