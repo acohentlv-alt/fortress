@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     inpi_password: str = ""
     inpi_daily_limit: int = 10_000
 
+    # Gemini shadow judge (Wave D1a) — observer only, never modifies linking.
+    # Patch A/B (April 21): judge fires on strong-method rows (observation-mode)
+    # and on zero-candidate rows (seeds trigram pool). Verdict never influences linking.
+    gemini_api_key: str = ""
+    gemini_enabled: bool = False
+    gemini_model_fallback: str = ""  # e.g. "gemini-2.5-flash" — see R12
+    gemini_batch_budget_usd: float = 0.50
+
+    # Lever A2 — legal name from mentions-légales → INPI retry
+    a2_mentions_legales_enabled: bool = True
+
     # Batch processing
     wave_size: int = 50
     max_concurrent_scrapers: int = 3

@@ -840,6 +840,80 @@ _NAME_RE = re.compile(
 _SIREN_RE = re.compile(r"\b(\d{3}\s?\d{3}\s?\d{3})\b")
 _SIRET_RE = re.compile(r"\b(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})\b")
 
+# Legal forms for French business entities — used by Lever A2 to gate
+# the legal-denomination extraction (no legal form = don't capture).
+_LEGAL_FORMS_RE = re.compile(
+    r"\b(SARL|SAS|SASU|EURL|SA|SCI|SNC|SCS|SCA|EI|EIRL|SCP|SELARL|SELAS|"
+    r"Association|Micro-entreprise|Auto-entreprise|EARL|GAEC|SCEA|SCEV)\b",
+    re.IGNORECASE,
+)
+
+_RAISON_SOCIALE_RE = re.compile(
+    r"(?:raison\s+sociale|d[ée]nomination(?:\s+sociale)?)\s*:?\s*"
+    r"([A-ZÀ-ÜÉÈÊ][^<\n,;]{2,80})",
+    re.IGNORECASE,
+)
+
+_SOCIETE_PREAMBLE_RE = re.compile(
+    r"(?:soci[ée]t[ée]|[ée]diteur|entreprise)\s*:?\s*"
+    r"((?:SARL|SAS|SASU|EURL|SA|SCI|SNC|EI|EIRL|Association|Micro-entreprise|EARL|GAEC|SCEA)"
+    r"\s+[A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)"
+    r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|capital|au\s+capital|siret|siren|rcs|sis|situ[ée])|$)",
+    re.IGNORECASE,
+)
+
+_LEGAL_FORM_PREFIX_RE = re.compile(
+    r"\b(SARL|SAS|SASU|EURL|EI|EIRL|SCI|EARL|GAEC|SCEA|SA|SNC|SELARL|SELAS)\s+"
+    r"([A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)"
+    r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|capital|au\s+capital|siret|siren|rcs)|$)",
+)
+
+
+def extract_legal_denomination(html: str | None) -> str | None:
+    """Extract the registered legal name from a mentions-légales page.
+
+    Used by Lever A2 to recover maps_only entities where Maps name ≠ legal name.
+    Returns the full legal name including form (e.g., "SARL IBTISSAM COIFFURE").
+
+    Only returns names containing a legal-form token (SARL, SAS, etc.) to
+    prevent spurious re-querying of the Maps name. Slices off the hébergeur
+    section first to avoid capturing hosting provider names.
+    """
+    if not html:
+        return None
+    # Strip HTML tags and collapse whitespace
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text).strip()
+    # Slice off hébergeur section — everything after is hosting provider.
+    # Uses _HEBERGEUR_KEYWORDS plus a bare "hébergeur" word-boundary match
+    # to handle simple section headings like "<h2>Hébergeur</h2>".
+    _hebergeur_extended = re.compile(
+        _HEBERGEUR_KEYWORDS.pattern + r"|\bh[ée]bergeur\b",
+        re.IGNORECASE,
+    )
+    hebergeur_match = _hebergeur_extended.search(text)
+    company_section = text[:hebergeur_match.start()] if hebergeur_match else text
+
+    # Try patterns in priority order
+    # Pattern 1: explicit "raison sociale :" or "dénomination :" preamble
+    m = _RAISON_SOCIALE_RE.search(company_section)
+    if m:
+        candidate = m.group(1).strip()
+        if _LEGAL_FORMS_RE.search(candidate):
+            return candidate[:100]
+
+    # Pattern 2: "société :" / "éditeur :" with legal form
+    m = _SOCIETE_PREAMBLE_RE.search(company_section)
+    if m:
+        return m.group(1).strip()[:100]
+
+    # Pattern 3: direct "SARL XYZ" / "SAS XYZ" prefix
+    m = _LEGAL_FORM_PREFIX_RE.search(company_section)
+    if m:
+        return f"{m.group(1)} {m.group(2).strip()}"[:100]
+
+    return None
+
 
 def extract_mentions_legales(
     html: str,

@@ -47,6 +47,8 @@ from fortress.processing.dedup import (
     upsert_contact,
 )
 from fortress.utils.phone import normalize_phone, PHONE_NORMALIZE_SQL
+from fortress.matching.budget_tracker import BudgetTracker
+from fortress.matching import gemini as _gemini_judge
 
 log = structlog.get_logger()
 
@@ -402,12 +404,88 @@ def get_name_threshold(maps_name: str, name_tokens: list[str], city_match: bool)
     return NAME_TIER_THRESHOLDS["default"]
 
 
+async def _fetch_trigram_candidates(
+    conn,
+    maps_name: str,
+    dept: str | None,
+    *,
+    limit: int = 10,
+    min_sim: float = 0.3,
+) -> list[dict]:
+    """Fetch top-N SIRENE candidates by trigram similarity.
+
+    Uses the canonical ILIKE + similarity() pattern that works with the
+    existing GIN trigram indexes at api/main.py:67-75 (gin_trgm_ops).
+    Same pattern as discovery.py:766-782 (enseigne step) and
+    discovery.py:1160-1172 (fuzzy_name step).
+
+    Post-filters similarity >= min_sim (default 0.3). Returns at most `limit` rows.
+    Excludes MAPS%% entities.
+    """
+    # Extract a 4+-char token from maps_name for the ILIKE prefilter.
+    # The token is the longest "word" in the name, length >= 4.
+    tokens = [t for t in re.findall(r"[a-zA-Z0-9]{4,}", maps_name) if len(t) >= 4]
+    if not tokens:
+        # Nothing long enough — fall back to full name with fuzzy similarity only
+        like_pattern = f"%{maps_name.lower()}%"
+    else:
+        # Use the longest token for the LIKE prefilter (most selective)
+        token = max(tokens, key=len).lower()
+        like_pattern = f"%{token}%"
+
+    base_sql = """
+        SELECT siren, denomination, enseigne, adresse, ville, naf_code,
+               GREATEST(
+                 similarity(COALESCE(enseigne, ''), %s),
+                 similarity(COALESCE(denomination, ''), %s)
+               ) AS sim_score
+          FROM companies
+         WHERE (LOWER(COALESCE(enseigne, '')) LIKE %s
+                OR LOWER(COALESCE(denomination, '')) LIKE %s)
+           AND statut = 'A'
+           AND siren NOT LIKE 'MAPS%%'
+           {dept_clause}
+         ORDER BY sim_score DESC
+         LIMIT %s
+    """
+    params: list = [maps_name, maps_name, like_pattern, like_pattern]
+    if dept and re.match(r"^\d{2,3}$", dept):
+        sql = base_sql.replace("{dept_clause}", "AND departement = %s")
+        params.append(dept)
+    else:
+        sql = base_sql.replace("{dept_clause}", "")
+    params.append(limit * 3)  # Fetch 3x limit; Python post-filter will cut to `limit`
+
+    cur = await conn.execute(sql, params)
+    rows = await cur.fetchall()
+
+    candidates: list[dict] = []
+    for r in rows:
+        sim = float(r[6])
+        if sim < min_sim:
+            continue
+        candidates.append({
+            "siren": r[0],
+            "denomination": r[1] or "",
+            "enseigne": r[2] or "",
+            "adresse": r[3] or "",
+            "ville": r[4] or "",
+            "naf_code": r[5] or "",
+            "method": "trigram_pool",
+            "score": round(sim, 3),
+        })
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
 # Match methods strong enough for pipeline auto-confirm (with verified NAF).
 # Weak variants (enseigne_weak, phone_weak, surname, fuzzy_name) never auto-confirm.
 # inpi_fuzzy_agree = fuzzy_name candidate confirmed by agreeing INPI SIREN result.
 _STRONG_METHODS = frozenset({
     "inpi", "siren_website", "enseigne", "phone", "address",
     "inpi_fuzzy_agree",
+    "inpi_mentions_legales",  # Lever A2
 })
 
 _LEGAL_FORM_TOKENS = frozenset({
@@ -504,6 +582,7 @@ async def _match_to_sirene(
     departement: str | None,
     maps_phone: str | None = None,
     extracted_siren: str | None = None,
+    rejected_siren_sink: dict[str, str] | None = None,
 ) -> dict | None:
     """Try to find a matching company in the SIRENE database.
 
@@ -688,6 +767,8 @@ async def _match_to_sirene(
                     log.info("discovery.inpi_primary_rejected",
                              maps_name=maps_name, siren=inpi_siren,
                              reason="dept_or_overlap_fail")
+                    if rejected_siren_sink is not None:
+                        rejected_siren_sink[maps_name] = inpi_siren
         # fall through to Steps 1-5
 
     # ── Step 1: SIREN from website (validated) ────────────────────────────
@@ -1696,7 +1777,159 @@ async def run(batch_id: str) -> None:
                     async with pool.connection() as conn:
                         candidate = await _match_to_sirene(
                             conn, maps_name, maps_address, dept_filter, maps_phone, extracted_siren,
+                            rejected_siren_sink=_inpi_step0_rejected,
                         )
+
+                    # ── Lever A2 — Legal name from mentions-légales → INPI retry ──────────
+                    # Fires only when Step 0-5 all missed (candidate is None). Extracts the
+                    # registered legal name from the website's mentions-légales page and
+                    # retries INPI with that name. Reuses Step 0's validator for safety.
+                    if (
+                        candidate is None
+                        and settings.a2_mentions_legales_enabled
+                        and crawl_result is not None
+                        and getattr(crawl_result, "all_html", None)
+                    ):
+                        # Find mentions-légales HTML (URL containing "mention" or "legal")
+                        _mentions_html = None
+                        for _url, _html in crawl_result.all_html.items():
+                            if "mention" in _url.lower() or "legal" in _url.lower():
+                                _mentions_html = _html
+                                break
+
+                        if _mentions_html:
+                            try:
+                                from fortress.matching.contacts import extract_legal_denomination
+                                _legal_name = extract_legal_denomination(_mentions_html)
+                            except Exception:
+                                _legal_name = None
+
+                            if _legal_name:
+                                # Skip if legal name is effectively the same as Maps name
+                                # (Step 0 already tried that — no point re-querying)
+                                _maps_tokens = set(_normalize_name(maps_name).split())
+                                _legal_tokens = set(_normalize_name(_legal_name).split())
+                                _overlap = len(_maps_tokens & _legal_tokens)
+                                _max_len = max(len(_maps_tokens), len(_legal_tokens))
+                                _overlap_ratio = (_overlap / _max_len) if _max_len else 0.0
+
+                                if _overlap_ratio < 0.8:
+                                    log.info(
+                                        "discovery.a2_retry_start",
+                                        maps_name=maps_name,
+                                        legal_name=_legal_name,
+                                        overlap_ratio=round(_overlap_ratio, 2),
+                                    )
+                                    # Compute meaningful terms from legal name — same filter
+                                    # semantics as Step 0's validator expects
+                                    _legal_meaningful = [
+                                        t for t in _normalize_name(_legal_name).split()
+                                        if len(t) >= 3 and t not in _INDUSTRY_WORDS
+                                    ]
+                                    # Trim to first 5 meaningful tokens for INPI query (avoids
+                                    # rate-limit pressure from long query strings)
+                                    _legal_query_terms = _legal_meaningful[:5]
+                                    if _legal_query_terms:
+                                        _a2_query = " ".join(_legal_query_terms)
+                                        try:
+                                            from fortress.matching.inpi import search_by_name as _a2_search
+                                            _a2_hit = await _a2_search(
+                                                query=_a2_query,
+                                                dept=dept_filter,
+                                                cp=maps_cp,
+                                            )
+                                        except Exception as _a2_exc:
+                                            log.warning(
+                                                "discovery.a2_inpi_error",
+                                                maps_name=maps_name,
+                                                error=str(_a2_exc),
+                                            )
+                                            _a2_hit = None
+
+                                        if _a2_hit:
+                                            _a2_siren, _a2_naf, _a2_nom, _a2_cp = _a2_hit
+                                            async with pool.connection() as conn:
+                                                _a2_local_cur = await conn.execute(
+                                                    """SELECT siren, denomination, enseigne, adresse,
+                                                              code_postal, ville, departement
+                                                       FROM companies
+                                                       WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                                                       LIMIT 1""",
+                                                    (_a2_siren,),
+                                                )
+                                                _a2_local_row = await _a2_local_cur.fetchone()
+                                            if _a2_local_row:
+                                                _a2_local_denom = _a2_local_row[1] or ""
+                                                _a2_local_enseigne = _a2_local_row[2] or ""
+                                                _a2_local_cp = _a2_local_row[4] or ""
+                                                _a2_local_dept = _a2_local_row[6] or ""
+
+                                                if _validate_inpi_step0_hit(
+                                                    maps_cp=maps_cp,
+                                                    departement=dept_filter,
+                                                    meaningful_terms=_legal_meaningful,
+                                                    local_denom=_a2_local_denom,
+                                                    local_enseigne=_a2_local_enseigne,
+                                                    local_cp=_a2_local_cp,
+                                                    local_dept=_a2_local_dept,
+                                                ):
+                                                    log.info(
+                                                        "discovery.a2_match_confirmed",
+                                                        maps_name=maps_name,
+                                                        legal_name=_legal_name,
+                                                        siren=_a2_siren,
+                                                    )
+                                                    candidate = {
+                                                        "siren": _a2_siren,
+                                                        "denomination": _a2_local_denom,
+                                                        "enseigne": _a2_local_enseigne,
+                                                        "score": 0.92,
+                                                        "method": "inpi_mentions_legales",
+                                                        "adresse": _a2_local_row[3] or "",
+                                                        "ville": _a2_local_row[5] or "",
+                                                    }
+                                                else:
+                                                    log.info(
+                                                        "discovery.a2_match_rejected",
+                                                        maps_name=maps_name,
+                                                        legal_name=_legal_name,
+                                                        siren=_a2_siren,
+                                                        reason="dept_or_overlap_fail",
+                                                    )
+
+                    # ── Edit C: inpi_fuzzy_agree demotion + shadow-judge eligibility ──
+                    # DETERMINISTIC — does NOT use Gemini. Demotes when Step 5
+                    # re-proposes a SIREN that Step 0 already rejected for this entity.
+                    # This prevents silent override of Step 0's rejection.
+                    _step0_rejected_for_this = _inpi_step0_rejected.get(maps_name)
+                    if (
+                        candidate
+                        and candidate.get("method") == "inpi_fuzzy_agree"
+                        and _step0_rejected_for_this
+                        and candidate.get("siren") == _step0_rejected_for_this
+                    ):
+                        log.info(
+                            "discovery.inpi_fuzzy_agree_rejected_by_step0",
+                            maps_name=maps_name,
+                            siren=candidate["siren"],
+                        )
+                        candidate["method"] = "inpi_fuzzy_agree_rejected_by_step0"
+
+                    # Shadow-judge eligibility (D1a observer):
+                    # Patch A (April 21): observe ALL rows with a candidate (strong + weak)
+                    #   as well as no-candidate rows. Broader scope means more ground truth for
+                    #   D1b threshold tuning. Verdict is still purely informational.
+                    # Patch B (April 21): also observe zero-candidate rows with no Step 0
+                    #   rejection — a trigram pool will be seeded at call site.
+                    if settings.gemini_enabled and settings.gemini_api_key:
+                        if candidate is None and _step0_rejected_for_this:
+                            _shadow_judge_needed.add((maps_name, maps_address or ""))
+                        elif candidate is not None:
+                            # Observe ALL rows with a candidate (strong + weak).
+                            _shadow_judge_needed.add((maps_name, maps_address or ""))
+                        elif candidate is None and not _step0_rejected_for_this:
+                            # Patch B: trigram pool will be fetched at call site.
+                            _shadow_judge_needed.add((maps_name, maps_address or ""))
 
                     # ── Triage: classify before expensive work ────────────
                     triage_bucket = "RED"  # Default: full pipeline
@@ -1931,7 +2164,7 @@ async def run(batch_id: str) -> None:
                                 elif picked_nafs == []:
                                     # Safeguard: INPI-based strong methods with no NAF filter
                                     # require ≥ 1 secondary signal for auto-confirm
-                                    if method in {"inpi", "inpi_fuzzy_agree"}:
+                                    if method in {"inpi", "inpi_fuzzy_agree", "inpi_mentions_legales"}:
                                         auto_confirm = agree_count >= 1
                                     else:
                                         auto_confirm = True
@@ -1988,6 +2221,8 @@ async def run(batch_id: str) -> None:
                                 )
                                 if method == "inpi_fuzzy_agree":
                                     audit_action = "auto_linked_inpi_agree"
+                                elif method == "inpi_mentions_legales":
+                                    audit_action = "auto_linked_mentions_legales"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
@@ -2014,6 +2249,122 @@ async def run(batch_id: str) -> None:
                                 "UPDATE companies SET naf_status = 'maps_only' WHERE siren = %s",
                                 (siren,),
                             )
+
+                        # ── Edit D: Gemini shadow judge (Wave D1a, observer only) ──
+                        # Verdict is LOGGED; linking state is NEVER modified by this block.
+                        if (maps_name, maps_address or "") in _shadow_judge_needed:
+                            try:
+                                _cost = _gemini_judge._COST_PER_CALL_USD
+                                if await _gemini_budget.would_exceed(_cost):
+                                    if not _gemini_cap_logged:
+                                        _gemini_cap_logged = True
+                                        await log_audit(
+                                            conn,
+                                            batch_id=batch_id,
+                                            siren=siren,
+                                            action="gemini_budget_exceeded",
+                                            result="skipped",
+                                            detail=json.dumps({
+                                                "cap_usd": settings.gemini_batch_budget_usd,
+                                                "calls_so_far": _gemini_budget.calls,
+                                            }),
+                                            workspace_id=batch_workspace_id,
+                                        )
+                                else:
+                                    # RGPD-strip phone only (email is never in prompt).
+                                    _maps_phone_norm = normalize_phone(maps_phone) if maps_phone else None
+                                    if _maps_phone_norm and _maps_phone_norm in _opposition_phones:
+                                        _maps_phone_for_prompt = None
+                                    else:
+                                        _maps_phone_for_prompt = maps_phone
+                                    _rejected_for_this = _inpi_step0_rejected.get(maps_name)
+
+                                    # Decide candidate list:
+                                    #  (a) matcher returned candidate → list of that one
+                                    #  (b) no candidate + Step 0 rejection → empty list (Gemini sees "no candidate")
+                                    #  (c) no candidate + no Step 0 rejection → trigram pool
+                                    _trigram_path_needed = (
+                                        candidate is None and not _rejected_for_this
+                                    )
+                                    if candidate is not None:
+                                        _candidates_for_prompt = [candidate]
+                                    elif _trigram_path_needed:
+                                        try:
+                                            _candidates_for_prompt = await _fetch_trigram_candidates(
+                                                conn,
+                                                maps_name,
+                                                dept_filter,  # USE dept_filter, NOT maps_dept
+                                                limit=10,
+                                            )
+                                        except Exception as _trg_exc:
+                                            log.warning("discovery.trigram_pool_failed",
+                                                        maps_name=maps_name, error=str(_trg_exc))
+                                            _candidates_for_prompt = []
+                                        if not _candidates_for_prompt:
+                                            await log_audit(
+                                                conn,
+                                                batch_id=batch_id,
+                                                siren=siren,
+                                                action="gemini_shadow_no_candidates",
+                                                result="skipped",
+                                                detail="trigram_pool_empty",
+                                                workspace_id=batch_workspace_id,
+                                            )
+                                            raise _gemini_judge._SkipGemini()
+                                    else:
+                                        _candidates_for_prompt = []
+
+                                    _verdict = await _gemini_judge.judge_match(
+                                        api_key=settings.gemini_api_key,
+                                        maps_name=maps_name,
+                                        maps_address=maps_address,
+                                        maps_phone=_maps_phone_for_prompt,
+                                        candidates=_candidates_for_prompt,
+                                        rejected_siren=_rejected_for_this,
+                                        fallback_model=(settings.gemini_model_fallback or None),
+                                    )
+                                    if _verdict is not None:
+                                        await _gemini_budget.spend(_cost)
+                                        _v = _verdict.get("verdict")
+                                        if _v == "match":
+                                            _action = "gemini_shadow_yes"
+                                        elif _v == "no_match":
+                                            _action = "gemini_shadow_no"
+                                        else:
+                                            _action = "gemini_shadow_ambiguous"
+                                        await log_audit(
+                                            conn,
+                                            batch_id=batch_id,
+                                            siren=siren,
+                                            action=_action,
+                                            result="success",
+                                            detail=json.dumps({
+                                                "verdict": _v,
+                                                "confidence": _verdict.get("confidence"),
+                                                "picked_siren": _verdict.get("picked_siren"),
+                                                "reasoning": (_verdict.get("reasoning") or "")[:200],
+                                                "candidate_count": len(_candidates_for_prompt),
+                                                "candidate_method": (
+                                                    _candidates_for_prompt[0].get("method")
+                                                    if _candidates_for_prompt else None
+                                                ),
+                                                "path": ("trigram_pool" if _trigram_path_needed
+                                                         else ("strong" if candidate and candidate.get("method") in _STRONG_METHODS
+                                                               else "weak_or_none")),
+                                                "rejected_siren": _rejected_for_this,
+                                                "model": _gemini_judge._MODEL_NAME,
+                                            }, ensure_ascii=False),
+                                            workspace_id=batch_workspace_id,
+                                        )
+                            except _gemini_judge._SkipGemini:
+                                pass  # already logged gemini_shadow_no_candidates
+                            except Exception as _gem_exc:
+                                # Shadow judge must NEVER crash the pipeline.
+                                log.warning(
+                                    "discovery.gemini_shadow_exception",
+                                    maps_name=maps_name,
+                                    error=str(_gem_exc),
+                                )
 
                         await log_audit(
                             conn,
@@ -2343,6 +2694,14 @@ async def run(batch_id: str) -> None:
                         workspace_id=batch_workspace_id,
                     )
 
+                # ── Gemini shadow judge state (Wave D1a) ─────────────────
+                # Per-batch mutable state. Shadow-only: these structures
+                # never modify candidate/link decisions.
+                _gemini_budget = BudgetTracker(cap_usd=settings.gemini_batch_budget_usd)
+                _inpi_step0_rejected: dict[str, str] = {}   # maps_name → rejected SIREN
+                _shadow_judge_needed: set[tuple[str, str]] = set()
+                _gemini_cap_logged = False  # one 'gemini_budget_exceeded' row per batch
+
                 # ── RGPD opposition list (preloaded for in-memory checks) ──
                 _opposition_emails: set[str] = set()
                 _opposition_phones: set[str] = set()
@@ -2525,6 +2884,16 @@ async def run(batch_id: str) -> None:
                 # Maps provides phone + website with 90%+ hit rates.
                 # Email enrichment via website crawl can be triggered
                 # separately per-company or as a follow-up batch.
+
+                # ── Gemini shadow judge summary (Wave D1a) ────────────
+                log.info(
+                    "discovery.gemini_shadow_summary",
+                    batch_id=batch_id,
+                    calls=_gemini_budget.calls,
+                    spent_usd=round(_gemini_budget.spent, 6),
+                    cap_hit=_gemini_budget.hit_cap,
+                    cap_usd=settings.gemini_batch_budget_usd,
+                )
 
                 # ── Shortfall detection ────────────────────────────────
                 shortfall_msg = None
