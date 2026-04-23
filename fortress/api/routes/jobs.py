@@ -566,6 +566,80 @@ async def get_job(batch_id: str, request: Request):
     """, (batch_id,))
     pending_links = (pending_row or {}).get("pending_links", 0)
 
+    # Link stats — the two rates that map to the 99% north star goal:
+    #   (1) auto-confirm rate = confirmed / total_found
+    #   (2) NAF accuracy rate = naf_verified / total_found  (hidden when no NAF filter was set)
+    # Plus a state breakdown + per-method breakdown for the [▸ détail] disclosure.
+    link_rows = await fetch_all("""
+        SELECT
+            CASE
+                WHEN co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL THEN 'unlinked'
+                WHEN co.link_confidence = 'pending' THEN 'pending'
+                ELSE 'confirmed'
+            END AS state,
+            COALESCE(co.link_method, 'native_sirene') AS method,
+            COUNT(DISTINCT co.siren) AS n
+        FROM batch_log bl
+        JOIN companies co ON co.siren = bl.siren
+        WHERE bl.batch_id = %s
+        GROUP BY state, method
+    """, (batch_id,))
+    link_stats = {
+        "confirmed": 0, "pending": 0, "unlinked": 0,
+        "total": 0, "naf_verified": 0, "naf_evaluated": 0,
+        "by_method": {},
+    }
+    for row in link_rows:
+        state = row["state"]
+        method = row["method"]
+        n = int(row["n"] or 0)
+        link_stats[state] = link_stats.get(state, 0) + n
+        link_stats["total"] += n
+        if state == "confirmed" and method != "native_sirene":
+            link_stats["by_method"][method] = link_stats["by_method"].get(method, 0) + n
+
+    # NAF accuracy breakdown — how the matched SIRENs align with the demanded NAF code.
+    #   naf_verified  = strict prefix OR section-letter OR curated-sibling match (CLAUDE.md line 275)
+    #   naf_mismatch  = confirmed despite NAF being out-of-family (Phase A signals, chain, Gemini rescue)
+    #   naf_evaluated = verified + mismatch  — non-zero means a NAF filter was applied
+    # The "exact / related" split inside naf_verified comes from the batch_log.action:
+    #   auto_linked_verified  = strict prefix OR section letter (treated as "exact or sector-same")
+    #   auto_linked_expanded  = curated sibling family (treated as "related")
+    naf_row = await fetch_one("""
+        SELECT
+            COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'verified') AS verified,
+            COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'mismatch') AS mismatch,
+            COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated
+        FROM batch_log bl
+        JOIN companies co ON co.siren = bl.siren
+        WHERE bl.batch_id = %s
+    """, (batch_id,))
+    if naf_row:
+        link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
+        link_stats["naf_mismatch"] = int(naf_row.get("mismatch") or 0)
+        link_stats["naf_evaluated"] = int(naf_row.get("evaluated") or 0)
+
+    # Split naf_verified into "exact/section" vs "expanded sibling" using batch_log.action.
+    # A company may have multiple log rows; take the most informative action.
+    naf_split_rows = await fetch_all("""
+        SELECT bl.action, COUNT(DISTINCT bl.siren) AS n
+        FROM batch_log bl
+        JOIN companies co ON co.siren = bl.siren
+        WHERE bl.batch_id = %s
+          AND co.naf_status = 'verified'
+          AND bl.action IN ('auto_linked_verified', 'auto_linked_expanded')
+        GROUP BY bl.action
+    """, (batch_id,))
+    naf_exact = 0
+    naf_related = 0
+    for row in naf_split_rows:
+        if row["action"] == "auto_linked_verified":
+            naf_exact = int(row["n"] or 0)
+        elif row["action"] == "auto_linked_expanded":
+            naf_related = int(row["n"] or 0)
+    link_stats["naf_exact"] = naf_exact
+    link_stats["naf_related"] = naf_related
+
     # ── Queue info (only when batch is waiting) ──
     if job.get("status") == "queued":
         # Find the blocking batch (any in_progress batch)
@@ -609,7 +683,7 @@ async def get_job(batch_id: str, request: Request):
 
         job["queue_info"] = queue_info
 
-    return {**job, "departments": depts, "pending_links": pending_links}
+    return {**job, "departments": depts, "pending_links": pending_links, "link_stats": link_stats}
 
 
 @router.get("/{batch_id}/summary")

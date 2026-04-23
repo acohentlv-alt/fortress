@@ -15,6 +15,137 @@ let _currentBatchName = null;
 let _currentPage = 1;
 let _currentSort = 'completude';
 
+// ── Link stats card (Request A — accuracy scoreboard) ────────────
+// Two rates tied to the 99%-with-right-NAF north star, framed as
+// fractions of all-found so Cindy can see the real rate at a glance.
+//   (1) Auto-confirmés: confirmed / total
+//   (2) Bon NAF code:   naf_verified / total  (hidden when no NAF filter)
+// Compact single-row layout with [▸ détail] disclosure for method +
+// state breakdowns.
+function buildLinkStatsCard(linkStats) {
+    if (!linkStats) return '';
+    const confirmed = linkStats.confirmed || 0;
+    const pending = linkStats.pending || 0;
+    const unlinked = linkStats.unlinked || 0;
+    const total = linkStats.total || (confirmed + pending + unlinked);
+    const nafVerified = linkStats.naf_verified || 0;
+    const nafEvaluated = linkStats.naf_evaluated || 0;
+    const byMethod = linkStats.by_method || {};
+    if (total === 0) return '';
+
+    const pct = (num) => total > 0 ? Math.round((num / total) * 100) : 0;
+    const confirmPct = pct(confirmed);
+    const nafPct = pct(nafVerified);
+    const showNaf = nafEvaluated > 0;  // hide NAF metric when no filter was applied
+
+    // Rate colour — green ≥85%, amber 50-84%, red <50%. Targets the 99% goal visually.
+    const rateColour = (p) => p >= 85 ? 'var(--success)' : p >= 50 ? '#f59e0b' : '#ef4444';
+
+    const methodLabel = (m) => {
+        const map = {
+            inpi: 'company.linkReasonInpi',
+            enseigne: 'company.linkReasonEnseigne',
+            enseigne_weak: 'company.linkReasonEnseigneWeak',
+            phone: 'company.linkReasonPhone',
+            phone_weak: 'company.linkReasonPhoneWeak',
+            address: 'company.linkReasonAddress',
+            siren_website: 'company.linkReasonSirenWebsite',
+            fuzzy_name: 'company.linkReasonFuzzy',
+            manual: 'company.linkReasonManual',
+            surname: 'company.linkReasonSurname',
+            inpi_fuzzy_agree: 'company.linkReasonInpiFuzzyAgree',
+            inpi_mentions_legales: 'company.linkReasonInpiMentionsLegales',
+            chain: 'company.linkReasonChain',
+            gemini_judge: 'company.linkReasonGeminiJudge',
+        };
+        return map[m] ? t(map[m]) : m;
+    };
+
+    const methodEntries = Object.entries(byMethod)
+        .filter(([, n]) => n > 0)
+        .sort((a, b) => b[1] - a[1]);
+    const nafExact = linkStats.naf_exact || 0;
+    const nafRelated = linkStats.naf_related || 0;
+    const nafMismatch = linkStats.naf_mismatch || 0;
+    const nafPending = showNaf ? Math.max(0, total - nafVerified - nafMismatch) : 0;
+    const hasDetail = methodEntries.length > 0 || pending > 0 || unlinked > 0 || showNaf;
+
+    const methodRows = methodEntries.map(([method, n]) => `
+        <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:var(--font-sm)">
+            <span style="color:var(--text-secondary)">${escapeHtml(methodLabel(method))}</span>
+            <span style="font-weight:700; color:var(--text-primary); min-width:28px; text-align:right">${n}</span>
+        </div>
+    `).join('');
+
+    // Render one hero metric — label + fraction + percent + thin bar.
+    // min-width:220px forces wrap on narrow viewports rather than letting
+    // the two metrics overlap awkwardly (mobile / sidebar-constrained).
+    // tooltipKey (optional) adds an info-tip explaining what the metric
+    // counts — important for NAF where "correspondant" includes related codes.
+    const metric = (icon, labelKey, num, pctVal, colour, tooltipKey) => {
+        const tooltipHtml = tooltipKey
+            ? `<span class="info-tip" style="margin-left:4px"><span class="info-tip-icon">i</span><span class="info-tip-card">${t(tooltipKey)}</span></span>`
+            : '';
+        return `
+        <div style="display:flex; align-items:center; gap:var(--space-sm); flex:1 1 220px; min-width:220px">
+            <span style="font-size:var(--font-base); flex-shrink:0">${icon}</span>
+            <div style="display:flex; flex-direction:column; gap:2px; min-width:0; flex:1">
+                <div style="display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-sm); font-size:var(--font-sm)">
+                    <span style="color:var(--text-secondary); white-space:nowrap">${t(labelKey)}${tooltipHtml}</span>
+                    <span style="white-space:nowrap"><strong style="color:var(--text-primary)">${num}/${total}</strong> <span style="color:${colour}; font-weight:700">(${pctVal}%)</span></span>
+                </div>
+                <div style="height:3px; background:var(--bg-secondary); border-radius:2px; overflow:hidden">
+                    <div style="width:${pctVal}%; height:100%; background:${colour}; transition:width 0.3s ease"></div>
+                </div>
+            </div>
+        </div>
+    `;
+    };
+
+    return `
+        <div class="card" id="link-stats-card" style="margin-bottom:var(--space-xl); padding:var(--space-md) var(--space-lg)">
+            <div style="display:flex; align-items:center; gap:var(--space-2xl); flex-wrap:wrap">
+                ${metric('🎯', 'job.linkStatsAutoConfirmed', confirmed, confirmPct, rateColour(confirmPct))}
+                ${showNaf ? metric('🏷️', 'job.linkStatsRightNaf', nafVerified, nafPct, rateColour(nafPct), 'job.linkStatsNafTooltip') : ''}
+                ${hasDetail ? `
+                    <button id="link-stats-toggle" style="background:none; border:1px solid var(--border-subtle); color:var(--accent); cursor:pointer; font-size:var(--font-xs); font-weight:600; padding:4px 10px; border-radius:var(--radius-sm); display:flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='transparent'">
+                        <span id="link-stats-chevron" style="display:inline-block; transition:transform 0.2s">▸</span>
+                        ${t('job.linkStatsDetail')}
+                    </button>
+                ` : ''}
+            </div>
+            ${hasDetail ? `
+                <div id="link-stats-detail" style="display:none; margin-top:var(--space-md); padding-top:var(--space-md); border-top:1px solid var(--border-subtle)">
+                    <div style="display:flex; gap:var(--space-2xl); flex-wrap:wrap; margin-bottom:var(--space-md); font-size:var(--font-sm)">
+                        <span><span style="color:var(--success)">✓</span> <strong>${confirmed}</strong> ${t('job.linkStatsConfirmed')}</span>
+                        <span><span style="color:#f59e0b">⏳</span> <strong>${pending}</strong> ${t('job.linkStatsPending')}</span>
+                        <span><span style="color:var(--text-muted)">○</span> <strong>${unlinked}</strong> ${t('job.linkStatsUnlinked')}</span>
+                    </div>
+                    ${showNaf ? `
+                        <div style="font-size:var(--font-xs); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm); font-weight:700; margin-top:var(--space-md)">
+                            ${t('job.linkStatsNafBreakdown')}
+                        </div>
+                        <div style="display:flex; gap:var(--space-xl); flex-wrap:wrap; font-size:var(--font-sm); margin-bottom:var(--space-md)">
+                            ${nafExact > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafExactTooltip'))}"><span style="color:var(--success)">✓✓</span> <strong>${nafExact}</strong> ${t('job.linkStatsNafExact')}</span>` : ''}
+                            ${nafRelated > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafRelatedTooltip'))}"><span style="color:var(--success)">~</span> <strong>${nafRelated}</strong> ${t('job.linkStatsNafRelated')}</span>` : ''}
+                            <span title="${escapeHtml(t('job.linkStatsNafMismatchTooltip'))}"><span style="color:#ef4444">✗</span> <strong>${nafMismatch}</strong> ${t('job.linkStatsNafMismatch')}</span>
+                            <span><span style="color:var(--text-muted)">—</span> <strong>${nafPending}</strong> ${t('job.linkStatsNafNotEvaluated')}</span>
+                        </div>
+                    ` : ''}
+                    ${methodEntries.length > 0 ? `
+                        <div style="font-size:var(--font-xs); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm); font-weight:700; margin-top:var(--space-md)">
+                            ${t('job.linkStatsByMethod')}
+                        </div>
+                        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:0 var(--space-xl)">
+                            ${methodRows}
+                        </div>
+                    ` : ''}
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
 export async function renderJob(container, batchId) {
     batchId = decodeURIComponent(batchId);
 
@@ -245,6 +376,8 @@ export async function renderJob(container, batchId) {
             </div>
         </div>
 
+        ${buildLinkStatsCard(job.link_stats)}
+
         <!-- Companies -->
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
             <h2 style="font-size:var(--font-lg); font-weight:600">${t('job.companiesLabel')}</h2>
@@ -375,6 +508,19 @@ export async function renderJob(container, batchId) {
                     panel.innerHTML = `<span style="color:var(--danger); font-size:var(--font-sm)">Erreur lors du chargement de l'historique des recherches.</span>`;
                 }
             }
+        });
+    }
+
+    // Link stats disclosure toggle (Request A)
+    const linkStatsBtn = document.getElementById('link-stats-toggle');
+    if (linkStatsBtn) {
+        linkStatsBtn.addEventListener('click', () => {
+            const detail = document.getElementById('link-stats-detail');
+            const chevron = document.getElementById('link-stats-chevron');
+            if (!detail) return;
+            const visible = detail.style.display !== 'none';
+            detail.style.display = visible ? 'none' : 'block';
+            if (chevron) chevron.style.transform = visible ? '' : 'rotate(90deg)';
         });
     }
 
