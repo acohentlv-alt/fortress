@@ -1995,15 +1995,27 @@ async def run(batch_id: str) -> None:
                                     _legal_query_terms = _legal_meaningful[:5]
                                     if _legal_query_terms:
                                         _a2_query = " ".join(_legal_query_terms)
+                                        _a2_rate_limited = False  # A2c: track retry exhaustion
                                         try:
+                                            from fortress.matching import inpi as _inpi_mod
                                             from fortress.matching.inpi import search_by_name as _a2_search
                                             _a2_dept_prefix = (maps_cp or "")[:2]
                                             _a2_cp = maps_cp if _a2_dept_prefix in _DENSE_URBAN_DEPTS else None
+                                            # A2c: opt into 429 retry ladder (2s / 5s / 15s).
+                                            # A2 is a last-resort lever — we've already invested
+                                            # crawl + regex work on this entity, so 22s worst-case
+                                            # wait to rescue a transient rate-limit is worth it.
+                                            # Step 0 and Step 5 keep fail-fast behavior by default.
                                             _a2_hit = await _a2_search(
                                                 query=_a2_query,
                                                 dept=dept_filter,
                                                 cp=_a2_cp,
+                                                retry_on_rate_limit=True,
                                             )
+                                            # Read-and-clear the module flag immediately
+                                            # after await (single-threaded async, no race).
+                                            _a2_rate_limited = _inpi_mod._LAST_A2_RATE_LIMIT_EXHAUSTED
+                                            _inpi_mod._LAST_A2_RATE_LIMIT_EXHAUSTED = False
                                         except Exception as _a2_exc:
                                             log.warning(
                                                 "discovery.a2_inpi_error",
@@ -2095,6 +2107,17 @@ async def run(batch_id: str) -> None:
                                                     inpi_siren=_a2_siren,
                                                 )
                                         else:
+                                            # A2c: dual-emit — a2_inpi_rate_limited fires IN ADDITION
+                                            # to a2_inpi_no_hit when retries were exhausted.
+                                            # Preserves existing a2_inpi_no_hit counter for historical
+                                            # funnel comparisons.
+                                            if _a2_rate_limited:
+                                                log.info(
+                                                    "discovery.a2_inpi_rate_limited",
+                                                    maps_name=maps_name,
+                                                    legal_name=_legal_name,
+                                                    retries_attempted=3,  # matches len(inpi._A2_RETRY_DELAYS); hardcoded to avoid cross-module import
+                                                )
                                             log.info(
                                                 "discovery.a2_inpi_no_hit",
                                                 maps_name=maps_name,

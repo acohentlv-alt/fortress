@@ -27,11 +27,26 @@ _API_URL = "https://recherche-entreprises.api.gouv.fr/search"
 _TIMEOUT = 3.0  # seconds — best-effort, never block the pipeline
 _RATE_DELAY = 0.5  # ~2 req/s — the API claims 7/s but enforces stricter per-IP limits
 
+# A2c retry ladder for rate-limited A2-fallback INPI lookups only.
+# Opt-in via search_by_name(retry_on_rate_limit=True) — default False for all
+# other call sites (Step 0, Step 5, officer fetch, admin UI).
+# Total worst-case additional wait per A2 entity: 2 + 5 + 15 = 22s.
+_A2_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 15.0)
+
+# Set to True by search_by_name() when retry_on_rate_limit=True AND all three
+# retries returned 429. The A2 caller reads and clears this immediately after
+# its await. Single-threaded async, single caller — no race concern. Any other
+# call site that opts into retry_on_rate_limit must follow the same read-clear
+# pattern or leave it alone (default False never writes to this flag).
+_LAST_A2_RATE_LIMIT_EXHAUSTED: bool = False
+
 
 async def search_by_name(
     query: str,
     dept: str | None = None,
     cp: str | None = None,
+    *,
+    retry_on_rate_limit: bool = False,
 ) -> tuple[str, str | None, str | None, str | None] | None:
     """Search for a company by name in Recherche Entreprises API.
 
@@ -39,6 +54,11 @@ async def search_by_name(
         query: Normalised company name to search for.
         dept: Department code (e.g. '66') — used if cp is None.
         cp: Postal code (e.g. '66300') — preferred over dept if provided.
+        retry_on_rate_limit: If True, retry up to 3 times on HTTP 429 using the
+            _A2_RETRY_DELAYS ladder (2s / 5s / 15s). After the final retry, sets
+            the module-level _LAST_A2_RATE_LIMIT_EXHAUSTED flag to True so the
+            caller can emit a dedicated telemetry event. Default False — all call
+            sites except the A2 fallback lever keep fail-fast behaviour.
 
     Returns:
         (siren, naf_code, nom_complet, cp) tuple on hit, or None.
@@ -54,6 +74,28 @@ async def search_by_name(
         import httpx
         async with httpx.AsyncClient(timeout=_TIMEOUT) as hx:
             hx_resp = await hx.get(url)
+            # A2c: opt-in 429 retry ladder.
+            global _LAST_A2_RATE_LIMIT_EXHAUSTED
+            if retry_on_rate_limit:
+                _LAST_A2_RATE_LIMIT_EXHAUSTED = False  # reset before new call
+
+            if hx_resp.status_code == 429 and retry_on_rate_limit:
+                _exhausted = True
+                for _attempt_idx, _delay in enumerate(_A2_RETRY_DELAYS, start=1):
+                    log.warning(
+                        "inpi.rate_limited_retry",
+                        query=query,
+                        attempt=_attempt_idx,
+                        delay_s=_delay,
+                    )
+                    await asyncio.sleep(_delay)
+                    hx_resp = await hx.get(url)
+                    if hx_resp.status_code != 429:
+                        _exhausted = False
+                        break
+                if _exhausted:
+                    _LAST_A2_RATE_LIMIT_EXHAUSTED = True
+
             if hx_resp.status_code == 429:
                 log.warning("inpi.rate_limited", query=query)
                 await asyncio.sleep(_RATE_DELAY)
