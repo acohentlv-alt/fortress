@@ -421,6 +421,9 @@ _HOSTING_SIRENS: frozenset[str] = frozenset({
     "388269078",  # FRANCE LOCATION / enseigne CAPFUN (Mouans-Sartoux)
     "424562890",  # HUTTOPIA (Saint-Genis-les-Ollières)
     "790303838",  # FONCIERE HUTTOPIA EUROPE (Saint-Genis-les-Ollières holding)
+    # Cross-CP-leak SIRENs surfaced by Part 2 of D1b retrofit (2026-04-23)
+    "330375486",  # LYON NORD — real-estate SIREN leaking onto 2 unrelated hotels (Brit + ibis)
+    "483834164",  # J.T.L. EDITIONS — IT/editions company appearing in mentions-légales footers
 })
 
 
