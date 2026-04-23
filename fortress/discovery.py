@@ -55,6 +55,16 @@ log = structlog.get_logger()
 # pending data on edge cases (registered-vs-operational-address mismatches).
 _DENSE_URBAN_DEPTS = frozenset({"75"})
 
+# Step 2.5 — CP-restricted name disambiguation thresholds.
+# Brief targets taxonomy Section 3.8 (Dense urban vs rural matching).
+# Foundation primitive for future Priority 5 (Section 2.B Individual-name code 1000).
+_CP_NAME_DISAMB_BAND_A_SIM = 0.90        # Auto-confirm >= this (Phase A still applies)
+_CP_NAME_DISAMB_BAND_B_SIM = 0.55        # Pool-safe pending >= this
+_CP_NAME_DISAMB_BAND_B_POOL_MAX = 5      # Band B: pool size ceiling
+_CP_NAME_DISAMB_BAND_B_DOMINANCE = 0.15  # Band B: top-1 must beat top-2 by this
+# Flip to True after 7 days of clean Band B audit (manual decision per Alan).
+_BAND_B_AUTO_CONFIRM_ENABLED: bool = False
+
 
 def _compute_naf_status(
     matched_naf: str | None,
@@ -569,6 +579,7 @@ _STRONG_METHODS = frozenset({
     "inpi_mentions_legales",  # Lever A2
     "chain",  # Agent B — franchise/chain detector
     "gemini_judge",  # D1b rescue (April 22) — Gemini upgraded a weak/maps_only candidate
+    "cp_name_disamb",  # P3 Step 2.5 — CP-restricted NAF-filtered name disambiguation
 })
 
 _LEGAL_FORM_TOKENS = frozenset({
@@ -683,6 +694,118 @@ def _get_match_threshold(maps_name: str, name_tokens: list[str], city_match: boo
     return 0.80
 
 
+async def _cp_name_disamb_match(
+    conn: Any,
+    maps_name: str,
+    maps_cp: str | None,
+    picked_nafs: list[str],
+    naf_division_whitelist: list[str] | None,
+) -> dict | None:
+    """Step 2.5: CP-restricted NAF-filtered name disambiguation.
+
+    Returns a candidate dict compatible with Step 2/3/4/5 return shape.
+    Band A (sim >= 0.90) -> method='cp_name_disamb', Phase A-eligible auto-confirm.
+    Band B (sim >= 0.55 + pool/dominance guards) -> method='cp_name_disamb' with
+       cp_name_disamb_band='B' marker consumed by the auto-confirm gate to force
+       pending while _BAND_B_AUTO_CONFIRM_ENABLED=False.
+
+    Early-outs (return None):
+      - maps_cp missing
+      - picked_nafs empty (no NAF filter = no disambiguation, Nansouty risk)
+      - no NAF-filtered candidates at CP
+      - Band B fails pool/dominance guards
+
+    Designed as reusable primitive for future Priority 5 (taxonomy line 1026-1034).
+    """
+    if not maps_cp or not picked_nafs:
+        return None
+
+    # Honor section-letter-only whitelist (when naf_division_whitelist is populated).
+    naf_prefixes = naf_division_whitelist if naf_division_whitelist else picked_nafs
+    if not naf_prefixes:
+        return None
+
+    naf_like_clauses = " OR ".join(["naf_code LIKE %s"] * len(naf_prefixes))
+    naf_params = [f"{p}%" for p in naf_prefixes]
+
+    # SIRENE read-only guard: siren NOT LIKE 'MAPS%'
+    cur = await conn.execute(
+        f"""SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
+                   forme_juridique, adresse, code_postal, ville, departement,
+                   region, statut, date_creation, tranche_effectif,
+                   latitude, longitude, fortress_id,
+                   GREATEST(
+                     similarity(COALESCE(enseigne,''), %s),
+                     similarity(COALESCE(denomination,''), %s)
+                   ) AS sim
+            FROM companies
+            WHERE code_postal = %s
+              AND statut = 'A'
+              AND siren NOT LIKE 'MAPS%%'
+              AND ({naf_like_clauses})
+            ORDER BY sim DESC
+            LIMIT 100""",  # noqa: S608
+        [maps_name, maps_name, maps_cp] + naf_params,
+    )
+    rows = await cur.fetchall()
+    if not rows:
+        return None
+
+    pool_size = len(rows)
+    top_row = rows[0]
+    top_sim = float(top_row[18] or 0.0)
+    second_sim = float(rows[1][18] or 0.0) if len(rows) >= 2 else 0.0
+
+    band: str | None = None
+    if top_sim >= _CP_NAME_DISAMB_BAND_A_SIM:
+        band = "A"
+    elif (
+        top_sim >= _CP_NAME_DISAMB_BAND_B_SIM
+        and pool_size <= _CP_NAME_DISAMB_BAND_B_POOL_MAX
+        and (top_sim - second_sim) >= _CP_NAME_DISAMB_BAND_B_DOMINANCE
+    ):
+        band = "B"
+
+    if band is None:
+        log.info(
+            "discovery.cp_name_disamb_no_band",
+            maps_name=maps_name, maps_cp=maps_cp,
+            top_sim=round(top_sim, 3), second_sim=round(second_sim, 3),
+            pool_size=pool_size,
+        )
+        return None
+
+    log.info(
+        "discovery.cp_name_disamb_match",
+        maps_name=maps_name, maps_cp=maps_cp,
+        band=band,
+        siren=top_row[0],
+        denomination=top_row[2], enseigne=top_row[3],
+        matched_naf=top_row[4],
+        top_sim=round(top_sim, 3), second_sim=round(second_sim, 3),
+        pool_size=pool_size,
+        naf_strict_prefix_matched=True,
+        candidates_considered=pool_size,
+    )
+    return {
+        "siren": top_row[0],
+        "denomination": top_row[2] or "",
+        "enseigne": top_row[3] or "",
+        "score": round(top_sim, 2),
+        "method": "cp_name_disamb",
+        "adresse": top_row[7] or "",
+        "ville": top_row[9] or "",
+        "cp_name_disamb_band": band,
+        "cp_name_disamb_meta": {
+            "top_sim": round(top_sim, 3),
+            "second_sim": round(second_sim, 3),
+            "pool_size": pool_size,
+            "candidates_considered": pool_size,
+            "naf_strict_prefix_matched": True,
+        },
+    }
+
+
 async def _match_to_sirene(
     conn: Any,
     maps_name: str,
@@ -691,6 +814,10 @@ async def _match_to_sirene(
     maps_phone: str | None = None,
     extracted_siren: str | None = None,
     rejected_siren_sink: dict[str, str] | None = None,
+    *,
+    picked_nafs: list[str] | None = None,               # NEW — Step 2.5 CP name disamb
+    naf_division_whitelist: list[str] | None = None,    # NEW — Step 2.5 CP name disamb
+    maps_cp: str | None = None,                         # NEW — Step 2.5 CP name disamb
 ) -> dict | None:
     """Try to find a matching company in the SIRENE database.
 
@@ -1051,6 +1178,20 @@ async def _match_to_sirene(
                              score=best_ens["score"])
                     best_ens.pop("code_postal", None)
                     return best_ens
+
+    # ── Step 2.5: CP-restricted name disambiguation ──────────────────────
+    # Taxonomy: Section 3.8 Dense urban vs rural matching.
+    # Foundation primitive for Priority 5 (Section 2.B Individual-name).
+    # Runs only when a picker + CP are available. SIRENE is filtered by
+    # NAF strict-prefix + exact postal code inside the SQL, so any match
+    # is NAF-aligned by construction. Band A auto-confirms via Phase A;
+    # Band B is gated by pool/dominance + first-week pending forcing.
+    if picked_nafs and maps_cp:
+        cp_cand = await _cp_name_disamb_match(
+            conn, maps_name, maps_cp, picked_nafs, naf_division_whitelist
+        )
+        if cp_cand is not None:
+            return cp_cand
 
     # ── Step 3: Phone match (unique identifier, no postal code) ──────────
     # A phone number is unique to one business — postal code check not needed.
@@ -1919,6 +2060,9 @@ async def run(batch_id: str) -> None:
                         candidate = await _match_to_sirene(
                             conn, maps_name, maps_address, dept_filter, maps_phone, extracted_siren,
                             rejected_siren_sink=_inpi_step0_rejected,
+                            picked_nafs=picked_nafs,
+                            naf_division_whitelist=naf_division_whitelist,
+                            maps_cp=maps_cp,
                         )
 
                     log.info(
@@ -2391,6 +2535,13 @@ async def run(batch_id: str) -> None:
                             method = _pending_link["method"]
                             target_siren = _pending_link["siren"]
 
+                            # Step 2.5 Band B forced-pending: keep pending while
+                            # _BAND_B_AUTO_CONFIRM_ENABLED=False (first 7-day audit window).
+                            _band_b_forced_pending = (
+                                _pending_link.get("cp_name_disamb_band") == "B"
+                                and not _BAND_B_AUTO_CONFIRM_ENABLED
+                            )
+
                             # Compute naf_status first so we can decide on auto-confirm
                             naf_status = None
                             matched_naf = ""
@@ -2464,6 +2615,11 @@ async def run(batch_id: str) -> None:
                             else:
                                 auto_confirm = False
 
+                            # Step 2.5 Band B: override auto_confirm to False during
+                            # first-week audit window (_BAND_B_AUTO_CONFIRM_ENABLED=False).
+                            if _band_b_forced_pending:
+                                auto_confirm = False
+
                             link_state = "confirmed" if auto_confirm else "pending"
 
                             await conn.execute(
@@ -2498,6 +2654,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_mentions_legales"
                                 elif method == "chain":
                                     audit_action = "auto_linked_chain"
+                                elif method == "cp_name_disamb":
+                                    audit_action = "auto_linked_cp_name_disamb"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
@@ -2515,6 +2673,26 @@ async def run(batch_id: str) -> None:
                                     action=audit_action,
                                     result="success",
                                     detail=f"Auto-confirmé → {target_siren} (method={method}, naf_status={naf_status}, audit={audit_action})",
+                                    workspace_id=batch_workspace_id,
+                                )
+
+                            # Step 2.5 Band B pending audit — emitted when Band B is
+                            # forced to pending (first-week audit window).
+                            if (
+                                not auto_confirm
+                                and _pending_link.get("cp_name_disamb_band") == "B"
+                            ):
+                                await log_audit(
+                                    conn,
+                                    batch_id=batch_id,
+                                    siren=siren,
+                                    action="pending_cp_name_disamb",
+                                    result="success",
+                                    detail=(
+                                        f"Pending (Band B audit) → {target_siren} "
+                                        f"(sim={_pending_link.get('cp_name_disamb_meta', {}).get('top_sim')}, "
+                                        f"pool={_pending_link.get('cp_name_disamb_meta', {}).get('pool_size')})"
+                                    ),
                                     workspace_id=batch_workspace_id,
                                 )
 
