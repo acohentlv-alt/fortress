@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     gemini_model_fallback: str = ""  # e.g. "gemini-2.5-flash" — see R12
     gemini_batch_budget_usd: float = 0.50
 
+    # D1b Hybrid (April 22) — Gemini influences linking decisions.
+    # When True: rescue path (upgrade weak/maps_only on high-confidence match)
+    #            + quarantine path (downgrade strong auto-confirm on high-confidence no_match,
+    #             UNLESS the Frankenstein display-bug signature triggers).
+    # Kill switch: set to False to revert to shadow-only behavior.
+    gemini_d1b_hybrid_enabled: bool = True
+    gemini_d1b_rescue_threshold: float = 0.85
+    gemini_d1b_quarantine_threshold: float = 0.85
+
     # Lever A2 — legal name from mentions-légales → INPI retry
     a2_mentions_legales_enabled: bool = True
 

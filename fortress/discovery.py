@@ -307,6 +307,58 @@ def _name_match_score(name_a: str, name_b: str) -> float:
     return overlap / max(len(set_a), len(set_b))
 
 
+def _is_frankenstein_parent_siren(
+    maps_name: str,
+    sirene_denom: str | None,
+    sirene_enseigne: str | None,
+) -> bool:
+    """Detect the Frankenstein display-bug pattern (Agent C Phase 1 signature).
+
+    Returns True when the matcher legitimately linked the MAPS entity to its
+    real parent/holding SIREN, but the SIRENE row's denomination is an unrelated
+    shell (e.g. OSG TWO, MERCIERE YG) while SIRENE enseigne holds the real trade
+    name. These cases look like "wrong match" to Gemini (addresses don't match
+    because SIRENE stores the siège, not the storefront), but the link is
+    correct. They must NOT be D1b-quarantined.
+
+    Signature (per Alan's locked decision, Apr 22 — dept dropped):
+      - name_overlap(sirene_denom, maps_name) < 0.3   (denom is unrelated shell)
+      - enseigne_overlap(sirene_enseigne, maps_name) >= 0.5   (enseigne matches Maps)
+      - sirene_enseigne is populated with >= 1 meaningful token (length >= 2) after normalization
+
+    Returns False when enseigne is NULL or has no meaningful tokens — those
+    cases fall through to D1b quarantine evaluation (no false protection for
+    cases we cannot verify).
+    """
+    if not maps_name or not sirene_enseigne:
+        return False
+
+    # Enseigne must have >=1 meaningful token after normalization.
+    enseigne_tokens = [t for t in _normalize_name(sirene_enseigne).split() if len(t) >= 2]
+    if not enseigne_tokens:
+        return False
+
+    maps_tokens = set(_normalize_name(maps_name).split())
+    if not maps_tokens:
+        return False
+
+    denom_tokens = set(_normalize_name(sirene_denom or "").split())
+    ens_token_set = set(enseigne_tokens)
+
+    # Jaccard overlap (intersection / union) for both denom and enseigne.
+    def _jaccard(a: set, b: set) -> float:
+        if not a or not b:
+            return 0.0
+        inter = len(a & b)
+        union = len(a | b)
+        return inter / union if union else 0.0
+
+    name_overlap = _jaccard(denom_tokens, maps_tokens)
+    enseigne_overlap = _jaccard(ens_token_set, maps_tokens)
+
+    return name_overlap < 0.3 and enseigne_overlap >= 0.5
+
+
 def _validate_inpi_step0_hit(
     maps_cp: str | None,
     departement: str | None,
@@ -318,10 +370,15 @@ def _validate_inpi_step0_hit(
 ) -> bool:
     """Validate an INPI Step 0 hit before accepting it as method='inpi'.
 
-    Returns True when:
-      - dept check passes (strict CP match for _DENSE_URBAN_DEPTS, else dept prefix ok)
-      - at least one meaningful Maps token is a complete token of SIRENE
-        denomination or enseigne (_INDUSTRY_WORDS already filtered from meaningful_terms)
+    Accepts when dept check passes AND one of two paths match:
+      (1) Whole-token overlap — at least one meaningful Maps token is a
+          complete token of SIRENE denomination/enseigne (original behavior).
+      (2) Substring-pair path (A1.1, Apr 22) — punctuation-driven splits.
+          Fires ONLY when meaningful_terms has exactly 2 tokens (each >=3 chars,
+          combined >=6 chars) and BOTH appear as substrings of the same SIRENE
+          token (>=6 chars) with coverage >= 0.9. Catches "pic mie" <-> "picmie"
+          without opening to generic-word pairs like "bel art" <-> "belartiste"
+          (coverage 0.6 -> rejected).
     """
     dept_prefix = (maps_cp or "")[:2]
     strict_postal = dept_prefix in _DENSE_URBAN_DEPTS
@@ -338,7 +395,22 @@ def _validate_inpi_step0_hit(
         set(_normalize_name(local_denom).split())
         | set(_normalize_name(local_enseigne).split())
     )
-    return bool(set(meaningful_terms) & sirene_tokens)
+    # Path 1: whole-token overlap (original behavior)
+    if set(meaningful_terms) & sirene_tokens:
+        return True
+
+    # Path 2: substring pair (A1.1, Apr 22)
+    if len(meaningful_terms) == 2:
+        t1, t2 = meaningful_terms[0], meaningful_terms[1]
+        if len(t1) >= 3 and len(t2) >= 3 and (len(t1) + len(t2)) >= 6:
+            for st in sirene_tokens:
+                if len(st) < 6:
+                    continue
+                if t1 in st and t2 in st:
+                    coverage = (len(t1) + len(t2)) / len(st)
+                    if coverage >= 0.9:
+                        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +568,7 @@ _STRONG_METHODS = frozenset({
     "inpi_fuzzy_agree",
     "inpi_mentions_legales",  # Lever A2
     "chain",  # Agent B — franchise/chain detector
+    "gemini_judge",  # D1b rescue (April 22) — Gemini upgraded a weak/maps_only candidate
 })
 
 _LEGAL_FORM_TOKENS = frozenset({
@@ -2332,8 +2405,14 @@ async def run(batch_id: str) -> None:
                                 (siren,),
                             )
 
-                        # ── Edit D: Gemini shadow judge (Wave D1a, observer only) ──
-                        # Verdict is LOGGED; linking state is NEVER modified by this block.
+                        # ── Edit D: Gemini shadow judge (Wave D1a) + D1b Hybrid ──
+                        # D1a: verdict is always LOGGED (shadow audit).
+                        # D1b: when gemini_d1b_hybrid_enabled=True, Gemini can influence linking:
+                        #   quarantine path — downgrade strong auto-confirm to pending on high-confidence no_match
+                        #   rescue path    — upgrade weak/maps_only to confirmed on high-confidence match
+                        # _just_auto_confirmed: True when the auto-confirm path above ran AND copied SIRENE fields.
+                        # Used by quarantine path to know if rollback is needed.
+                        _just_auto_confirmed = bool(_pending_link and auto_confirm)
                         if (maps_name, maps_address or "") in _shadow_judge_needed:
                             try:
                                 _cost = _gemini_judge._COST_PER_CALL_USD
@@ -2408,12 +2487,17 @@ async def run(batch_id: str) -> None:
                                     if _verdict is not None:
                                         await _gemini_budget.spend(_cost)
                                         _v = _verdict.get("verdict")
+                                        _vconf = _verdict.get("confidence") or 0.0
+                                        _vpicked = _verdict.get("picked_siren")
+
+                                        # Shadow-mode audit action (preserved for backward compat + D1b dashboard)
                                         if _v == "match":
                                             _action = "gemini_shadow_yes"
                                         elif _v == "no_match":
                                             _action = "gemini_shadow_no"
                                         else:
                                             _action = "gemini_shadow_ambiguous"
+
                                         await log_audit(
                                             conn,
                                             batch_id=batch_id,
@@ -2422,8 +2506,8 @@ async def run(batch_id: str) -> None:
                                             result="success",
                                             detail=json.dumps({
                                                 "verdict": _v,
-                                                "confidence": _verdict.get("confidence"),
-                                                "picked_siren": _verdict.get("picked_siren"),
+                                                "confidence": _vconf,
+                                                "picked_siren": _vpicked,
                                                 "reasoning": (_verdict.get("reasoning") or "")[:200],
                                                 "candidate_count": len(_candidates_for_prompt),
                                                 "candidate_method": (
@@ -2438,6 +2522,193 @@ async def run(batch_id: str) -> None:
                                             }, ensure_ascii=False),
                                             workspace_id=batch_workspace_id,
                                         )
+
+                                        # ── D1b Hybrid: act on Gemini verdict ──
+                                        if settings.gemini_d1b_hybrid_enabled:
+                                            # ── Quarantine path ──
+                                            # Fire when: currently auto-confirmed, strong method,
+                                            #            Gemini says no_match with high confidence,
+                                            #            AND this is NOT a chain match,
+                                            #            AND the Frankenstein signature does NOT trigger.
+                                            if (
+                                                _v == "no_match"
+                                                and _vconf >= settings.gemini_d1b_quarantine_threshold
+                                                and _pending_link is not None
+                                                and _just_auto_confirmed  # was auto-confirmed pre-Gemini
+                                                and _pending_link["method"] != "chain"  # exclude chain (Agent B territory)
+                                            ):
+                                                _target_for_frank = _pending_link["siren"]
+                                                # Fetch SIRENE denom+enseigne for Frankenstein check.
+                                                _frank_cur = await conn.execute(
+                                                    "SELECT denomination, enseigne FROM companies WHERE siren = %s",
+                                                    (_target_for_frank,),
+                                                )
+                                                _frank_row = await _frank_cur.fetchone()
+                                                _frank_denom = (_frank_row[0] if _frank_row else None) or ""
+                                                _frank_enseigne = (_frank_row[1] if _frank_row else None) or ""
+                                                _is_frank = _is_frankenstein_parent_siren(
+                                                    maps_name, _frank_denom, _frank_enseigne,
+                                                )
+                                                if not _is_frank:
+                                                    # Quarantine: flip to pending, retag method, roll back companies row.
+                                                    _pending_link["method"] = "gemini_quarantine"
+                                                    await conn.execute(
+                                                        """UPDATE companies
+                                                              SET link_confidence = 'pending',
+                                                                  link_method = 'gemini_quarantine',
+                                                                  siret_siege = NULL,
+                                                                  naf_code = NULL,
+                                                                  naf_libelle = NULL,
+                                                                  forme_juridique = NULL,
+                                                                  date_creation = NULL
+                                                            WHERE siren = %s""",
+                                                        (siren,),
+                                                    )
+                                                    await log_audit(
+                                                        conn,
+                                                        batch_id=batch_id,
+                                                        siren=siren,
+                                                        action="gemini_quarantine",
+                                                        result="success",
+                                                        detail=json.dumps({
+                                                            "quarantined_siren": _target_for_frank,
+                                                            "original_method": candidate["method"] if candidate else None,
+                                                            "gemini_confidence": _vconf,
+                                                            "gemini_reasoning": (_verdict.get("reasoning") or "")[:200],
+                                                            "frankenstein_checked": True,
+                                                            "frankenstein_result": False,
+                                                        }, ensure_ascii=False),
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+                                                    log.info("discovery.gemini_quarantine",
+                                                             maps_name=maps_name, maps_siren=siren,
+                                                             quarantined_siren=_target_for_frank,
+                                                             confidence=_vconf)
+                                                else:
+                                                    # Frankenstein protection fired — leave auto-confirm intact.
+                                                    await log_audit(
+                                                        conn,
+                                                        batch_id=batch_id,
+                                                        siren=siren,
+                                                        action="gemini_frankenstein_protected",
+                                                        result="skipped",
+                                                        detail=json.dumps({
+                                                            "target_siren": _target_for_frank,
+                                                            "sirene_denom": _frank_denom,
+                                                            "sirene_enseigne": _frank_enseigne,
+                                                            "gemini_confidence": _vconf,
+                                                        }, ensure_ascii=False),
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+
+                                            # ── Rescue path ──
+                                            # Fire when: no auto-confirm happened (weak candidate or maps_only),
+                                            #            Gemini said match at high confidence with a picked_siren,
+                                            #            the picked SIREN passes section-letter NAF check
+                                            #            (if picker non-empty), AND is not on hosting blacklist.
+                                            elif (
+                                                _v == "match"
+                                                and _vconf >= settings.gemini_d1b_rescue_threshold
+                                                and _vpicked is not None
+                                                and not _just_auto_confirmed  # currently pending or maps_only
+                                            ):
+                                                from fortress.matching.contacts import _HOSTING_SIRENS
+                                                if _vpicked in _HOSTING_SIRENS:
+                                                    # Never rescue into a known hosting/umbrella SIREN.
+                                                    await log_audit(
+                                                        conn,
+                                                        batch_id=batch_id,
+                                                        siren=siren,
+                                                        action="gemini_rescue_rejected_hosting",
+                                                        result="skipped",
+                                                        detail=json.dumps({
+                                                            "picked_siren": _vpicked,
+                                                            "gemini_confidence": _vconf,
+                                                        }, ensure_ascii=False),
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+                                                else:
+                                                    # Fetch target SIRENE row for NAF + display fields.
+                                                    _rescue_cur = await conn.execute(
+                                                        """SELECT siren, denomination, enseigne, adresse, ville, naf_code
+                                                             FROM companies
+                                                            WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                                                            LIMIT 1""",
+                                                        (_vpicked,),
+                                                    )
+                                                    _rescue_row = await _rescue_cur.fetchone()
+                                                    if _rescue_row:
+                                                        _rescue_naf = _rescue_row[5] or ""
+                                                        # NAF check: section-letter (matches chain detector policy).
+                                                        # Pass when picker is empty OR section letter aligns.
+                                                        _rescue_naf_ok = (
+                                                            not picked_nafs
+                                                            or _naf_section_matches(_rescue_naf, picked_nafs)
+                                                        )
+                                                        if _rescue_naf_ok:
+                                                            # Perform rescue: upgrade to confirmed with method=gemini_judge.
+                                                            await conn.execute(
+                                                                """UPDATE companies
+                                                                      SET linked_siren = %s,
+                                                                          link_confidence = 'confirmed',
+                                                                          link_method = 'gemini_judge'
+                                                                    WHERE siren = %s""",
+                                                                (_vpicked, siren),
+                                                            )
+                                                            # Recompute naf_status if picker was applied.
+                                                            _rescue_status = None
+                                                            if picked_nafs:
+                                                                _rescue_status = _compute_naf_status(
+                                                                    _rescue_naf, picked_nafs, naf_division_whitelist,
+                                                                )
+                                                                await conn.execute(
+                                                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
+                                                                    (_rescue_status, siren),
+                                                                )
+                                                            # Copy SIRENE reference data (same semantics as manual /link approve).
+                                                            await _copy_sirene_reference_data(conn, siren, _vpicked)
+                                                            # Mutate _pending_link so officer-fetch gate fires.
+                                                            _pending_link = {
+                                                                "siren": _vpicked,
+                                                                "denomination": _rescue_row[1] or "",
+                                                                "enseigne": _rescue_row[2] or "",
+                                                                "adresse": _rescue_row[3] or "",
+                                                                "ville": _rescue_row[4] or "",
+                                                                "method": "gemini_judge",
+                                                                "score": _vconf,
+                                                            }
+                                                            await log_audit(
+                                                                conn,
+                                                                batch_id=batch_id,
+                                                                siren=siren,
+                                                                action="auto_linked_gemini_rescue",
+                                                                result="success",
+                                                                detail=json.dumps({
+                                                                    "rescued_siren": _vpicked,
+                                                                    "gemini_confidence": _vconf,
+                                                                    "naf_status": _rescue_status,
+                                                                    "gemini_reasoning": (_verdict.get("reasoning") or "")[:200],
+                                                                }, ensure_ascii=False),
+                                                                workspace_id=batch_workspace_id,
+                                                            )
+                                                            log.info("discovery.gemini_rescue",
+                                                                     maps_name=maps_name, maps_siren=siren,
+                                                                     rescued_siren=_vpicked, confidence=_vconf)
+                                                        else:
+                                                            await log_audit(
+                                                                conn,
+                                                                batch_id=batch_id,
+                                                                siren=siren,
+                                                                action="gemini_rescue_rejected_naf",
+                                                                result="skipped",
+                                                                detail=json.dumps({
+                                                                    "picked_siren": _vpicked,
+                                                                    "rescue_naf": _rescue_naf,
+                                                                    "picked_nafs": picked_nafs,
+                                                                    "gemini_confidence": _vconf,
+                                                                }, ensure_ascii=False),
+                                                                workspace_id=batch_workspace_id,
+                                                            )
                             except _gemini_judge._SkipGemini:
                                 pass  # already logged gemini_shadow_no_candidates
                             except Exception as _gem_exc:
