@@ -241,7 +241,14 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
     };
 
     if (linkedCo) {
-        // Confirmed link — side-by-side comparison (same layout as suggested match, green theme)
+        // Confirmed link → banner is redundant (data lives in the CRM sections below,
+        // SIREN in Identity, Maps address in Contact). Hide entirely. The Unlink
+        // action lives in the Identity section's footer instead.
+        if (linkConfidence === 'confirmed') {
+            return '';
+        }
+        // Pending link (user still needs to confirm) — keep the 3-column comparison
+        // so they can review before clicking "Finalize merge".
         const reasonText = _linkReasonLabel(linkMethod);
         return `
         <div id="entity-link-banner" class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(59,130,246,0.04)); border:1px solid rgba(16,185,129,0.3); margin-bottom:var(--space-lg); padding:var(--space-lg); border-radius:var(--radius-lg)">
@@ -277,7 +284,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
                 ${_buildCrawlColumn()}
             </div>
             <div style="display:flex; gap:var(--space-md); justify-content:center">
-                ${linkConfidence === 'confirmed' ? '' : `<button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>`}
+                <button class="btn btn-primary btn-sm" id="btn-merge-entity" data-maps="${co.siren}" data-target="${linkedCo.siren}" style="font-size:var(--font-sm)">${t('company.btnMerge')}</button>
                 <button class="btn btn-secondary btn-sm" id="btn-unlink-entity" data-maps="${co.siren}" style="font-size:var(--font-sm); opacity:0.7">${t('company.btnUnlink')}</button>
             </div>
         </div>`;
@@ -755,9 +762,18 @@ export async function renderCompany(container, siren) {
                     // siren: system ID for MAPS entities, SIRENE for real SIREN
                     const sirenSource = isMaps ? sourceSystemId : sourceRegistre;
 
+                    // When linked+confirmed, show the REAL SIREN (from registre) first,
+                    // then the internal Maps ID as a secondary row. Before the fix this
+                    // section only surfaced co.siren which for MAPS entities is the
+                    // system-generated "MAPS01649" — confusing for Cindy.
+                    const sirenRows = isLinked
+                        ? `${detailRow(t('company.labelSiren'), formatSiren(linkedCo.siren), sourceRegistre)}
+                           ${detailRow(t('company.mapsId'), `<span style="color:var(--text-muted); font-family:var(--font-mono, monospace); font-size:var(--font-sm)">${escapeHtml(co.siren)}</span>`, sourceSystemId)}`
+                        : `${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}`;
+
                     return `
                 ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, denomSource, 'denomination', co.denomination || '')}
-                ${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}
+                ${sirenRows}
                 ${detailRow(t('company.labelSiret'), formatSiret(co.siret_siege), isLinked ? sourceRegistre : sirenSource)}
                 ${detailRow(t('company.labelLegalForm'), co.forme_juridique ? _formeLabel(co.forme_juridique) : '<span style="color:var(--text-disabled)">—</span>', isMaps && !isLinked ? sourceSystemId : sourceRegistre)}
                 ${detailRow(t('company.labelStatut'), statutBadge(co.statut), isMaps ? sourceSystemId : sourceRegistre)}
@@ -767,6 +783,11 @@ export async function renderCompany(container, siren) {
                 ${detailRow(t('company.labelPostal'), co.code_postal || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'code_postal', co.code_postal || '')}
                 ${detailRow(t('company.labelCity'), co.ville || '<span style="color:var(--text-disabled)">—</span>', cpVilleSource, 'ville', co.ville || '')}
                 ${detailRow(t('company.labelDept'), co.departement ? `${escapeHtml(co.departement)}${co.region ? ` · ${escapeHtml(co.region)}` : ''}` : '<span style="color:var(--text-disabled)">—</span>', isMaps ? sourceMaps : sourceRegistre)}
+                ${isLinked && data.link_confidence === 'confirmed' ? `
+                <div style="border-top:1px solid var(--border-subtle); margin-top:var(--space-md); padding-top:var(--space-sm); display:flex; justify-content:flex-end">
+                    <button id="btn-unlink-entity" data-maps="${co.siren}" style="background:none; border:none; color:var(--text-muted); font-size:var(--font-xs); cursor:pointer; padding:4px 8px; text-decoration:underline; opacity:0.7" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.7">${t('company.btnUnlink')}</button>
+                </div>
+                ` : ''}
                     `;
                 })()}
             </div>
