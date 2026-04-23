@@ -860,6 +860,34 @@ _LEGAL_FORMS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Pattern 0: Collectivité territoriale (commune-run businesses)
+_COMMUNE_RE = re.compile(
+    r"\b(Commune\s+(?:de|du|des|d[''])\s+[A-ZÀ-Ü][A-Za-zÀ-ÿ''\-\s]{2,60}?)"
+    r"(?=\s*(?:,|<|\n|siret|siren|rcs|sis|situ[ée])|$)",
+    re.IGNORECASE,
+)
+
+# Pattern 4: Hospitality name prefixes (excludes CAMPING/HÔTEL/RESTAURANT per locked decision)
+_COMPANY_NAME_PREFIX_RE = re.compile(
+    r"\b(DOMAINE|MAS|CHATEAU|CHÂTEAU|VILLA|VILLAGE|AUBERGE|RELAIS|FERME|GITE|GÎTE|CLOS)"
+    r"\s+([A-ZÀ-Ü][A-Za-zÀ-ÿ0-9''\-\s&.]{2,60}?)"
+    r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|capital|au\s+capital|siret|siren|rcs|sis|situ[ée])|$)",
+    re.IGNORECASE,
+)
+
+# Pattern 5: Trailing legal form (e.g., "KER HELEN EURL")
+_LEGAL_FORM_SUFFIX_RE = re.compile(
+    r"\b([A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)\s+"
+    r"(SARL|EURL|SAS|SASU|SCI|SCP|SA|SNC)\b"
+    r"(?=\s*(?:,|<|\n|capital|au\s+capital|siret|siren|rcs|sis|situ[ée])|$)",
+)
+
+# Pattern 6: Parenthesized legal form (e.g., "KER HELEN (EURL)")
+_LEGAL_FORM_PAREN_RE = re.compile(
+    r"\b([A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)\s*"
+    r"\((SARL|EURL|SAS|SASU|SCI|SCP|SA|SNC)\)",
+)
+
 _RAISON_SOCIALE_RE = re.compile(
     r"(?:raison\s+sociale|d[ée]nomination(?:\s+sociale)?)\s*:?\s*"
     r"([A-ZÀ-ÜÉÈÊ][^<\n,;]{2,80})",
@@ -908,6 +936,13 @@ def extract_legal_denomination(html: str | None) -> str | None:
     company_section = text[:hebergeur_match.start()] if hebergeur_match else text
 
     # Try patterns in priority order
+    # Pattern 0: Collectivité territoriale (commune-run businesses) — tried first
+    m = _COMMUNE_RE.search(company_section)
+    if m:
+        name = m.group(1).strip()[:100]
+        log.info("a2_extract_matched", pattern="commune", name=name)
+        return name
+
     # Pattern 1: explicit "raison sociale :" or "dénomination :" preamble
     m = _RAISON_SOCIALE_RE.search(company_section)
     if m:
@@ -927,6 +962,27 @@ def extract_legal_denomination(html: str | None) -> str | None:
     if m:
         log.info("a2_extract_matched", pattern="legal_form_prefix", name=f"{m.group(1)} {m.group(2).strip()}"[:100])
         return f"{m.group(1)} {m.group(2).strip()}"[:100]
+
+    # Pattern 4: Hospitality name prefixes (DOMAINE, MAS, CHATEAU, etc.)
+    m = _COMPANY_NAME_PREFIX_RE.search(company_section)
+    if m:
+        name = f"{m.group(1)} {m.group(2).strip()}"[:100]
+        log.info("a2_extract_matched", pattern="company_name_prefix", name=name)
+        return name
+
+    # Pattern 5: Trailing legal form (e.g., "KER HELEN EURL")
+    m = _LEGAL_FORM_SUFFIX_RE.search(company_section)
+    if m:
+        name = f"{m.group(1).strip()} {m.group(2)}"[:100]
+        log.info("a2_extract_matched", pattern="legal_form_suffix", name=name)
+        return name
+
+    # Pattern 6: Parenthesized legal form (e.g., "KER HELEN (EURL)")
+    m = _LEGAL_FORM_PAREN_RE.search(company_section)
+    if m:
+        name = f"{m.group(1).strip()} ({m.group(2)})"[:100]
+        log.info("a2_extract_matched", pattern="legal_form_paren", name=name)
+        return name
 
     log.info("a2_extract_no_match")
     return None

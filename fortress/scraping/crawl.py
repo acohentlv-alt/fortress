@@ -37,16 +37,24 @@ _CONTACT_KEYWORDS = re.compile(
 # Mentions-légales variants first — A2 (legal-name extraction) relies on them.
 # Order matters: budget truncation is positional (see line 266).
 _SEED_PATHS = [
-    "/contact",
+    "/contact",                    # Highest hit-rate on general sites
     "/mentions-legales",
     "/mentions-legales.html",
+    "/mentions-legales/",          # Trailing-slash variant
+    "/mentions-legales.php",       # PHP sites
     "/mentions",
     "/mention-legale",
+    "/page/mentions-legales",      # CMS route (Drupal/WordPress)
+    "/informations-legales",       # H2 new: plural
+    "/information-legale",         # H2 new: singular
     "/legal",
     "/legal-notice",
     "/notice-legale",
     "/cgu",
-    "/a-propos",
+    "/cgu-cgv",                    # H2 new: combined
+    "/cgv",                        # H2 new
+    "/conditions-generales",       # H2 new
+    "/a-propos",                   # Tail — cheapest to lose under budget
 ]
 
 
@@ -153,7 +161,7 @@ async def crawl_website(
     department: str = "",
     siren: str = "",
     pre_fetched: dict[str, str] | None = None,
-    max_pages: int = 13,  # homepage + 10 seeds + 2 discovered nav links
+    max_pages: int = 18,  # homepage + 17 seeds, discovered links truncated under budget
     wall_clock_limit: float = 13.0,
 ) -> CrawlResult:
     """Crawl a website and extract contact/legal information.
