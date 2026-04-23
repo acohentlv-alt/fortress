@@ -182,13 +182,14 @@ export async function untagCompany(siren, batchName) {
     return await request(`/companies/${siren}/tags/${encodeURIComponent(batchName)}`, { method: 'DELETE' });
 }
 
-export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search = '', sort = 'completude' } = {}) {
+export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search = '', sort = 'completude', filter = '' } = {}) {
     const params = new URLSearchParams({
         page: page.toString(),
         page_size: pageSize.toString(),
         search,
         sort,
     });
+    if (filter) params.set('state_filter', filter);  // URL key matches Python param name
     return await request(`/jobs/${encodeURIComponent(batchId)}/companies?${params}`);
 }
 

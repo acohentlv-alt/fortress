@@ -515,6 +515,25 @@ async def get_job(batch_id: str, request: Request):
     # Used by the frontend to hide the legacy "Mode exhaustif" badge.
     job["exhaustive_default"] = bool((job.get("batch_size") or 0) >= 2000)
 
+    # Parse picked NAFs from batch_data.filters_json — same logic as discovery.py:1601-1613.
+    # Accepts new key `naf_codes` (list) or legacy `naf_code` (scalar).
+    import json
+    filters_raw = job.get("filters_json")
+    picked_nafs: list[str] = []
+    if filters_raw:
+        try:
+            filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
+            raw_list = filters.get("naf_codes")
+            if isinstance(raw_list, list):
+                picked_nafs = [str(c).strip() for c in raw_list if c and str(c).strip()]
+            else:
+                legacy = (filters.get("naf_code") or "").strip()
+                if legacy:
+                    picked_nafs = [legacy]
+        except Exception:
+            pass
+    job["picked_nafs"] = picked_nafs
+
     # Watchdog: if batch is in_progress but no update in 10+ minutes, resolve status.
     # completed if scraped >= batch_size, interrupted if scraped < batch_size.
     idle = job.get("idle_seconds") or 0
@@ -639,6 +658,33 @@ async def get_job(batch_id: str, request: Request):
             naf_related = int(row["n"] or 0)
     link_stats["naf_exact"] = naf_exact
     link_stats["naf_related"] = naf_related
+
+    # Per-NAF-code breakdown for the scoreboard legend — counts confirmed matches
+    # grouped by the ACTUAL NAF code stored on the matched entity.
+    # Confirmed = NOT unlinked (MAPS with no linked_siren) AND NOT pending.
+    # NULL-safe: native SIRENE matches have link_confidence IS NULL.
+    from fortress.config.naf_codes import get_naf_label  # noqa: E402
+    naf_per_code = await fetch_all("""
+        SELECT co.naf_code, COUNT(DISTINCT co.siren) AS n
+        FROM batch_log bl
+        JOIN companies co ON co.siren = bl.siren
+        WHERE bl.batch_id = %s
+          AND co.naf_code IS NOT NULL
+          AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)
+          AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
+        GROUP BY co.naf_code
+        ORDER BY n DESC
+    """, (batch_id,))
+
+    link_stats["by_naf"] = [
+        {
+            "code": row["naf_code"],
+            "label": get_naf_label(row["naf_code"]) or row["naf_code"],
+            "count": int(row["n"] or 0),
+            "is_picked": row["naf_code"] in picked_nafs,
+        }
+        for row in (naf_per_code or [])
+    ]
 
     # ── Queue info (only when batch is waiting) ──
     if job.get("status") == "queued":
@@ -776,6 +822,7 @@ async def get_job_companies(
     page_size: int = Query(20, ge=1, le=100),
     search: str = Query("", description="Filter by name, city, or SIREN"),
     sort: str = Query("completude", description="Sort by: completude | name | date"),
+    state_filter: str = Query("", description="Filter: naf_confirmed | naf_sibling | pending | unlinked"),
 ):
     """Paginated companies for a job with merged contact data."""
     user = getattr(request.state, "user", None)
@@ -809,6 +856,22 @@ async def get_job_companies(
         """
         like = f"%{search}%"
         search_params = [like, like, like]
+
+    # Scoreboard legend filter — derived from link_confidence + linked_siren pattern.
+    # Mirrors state classification in link_stats SQL at jobs.py:573-586.
+    # NULL-safe: native SIRENE matches have link_confidence IS NULL.
+    filter_clause = ""
+    if state_filter == "naf_confirmed":
+        filter_clause = " AND co.naf_status = 'verified' AND (co.link_confidence IS NULL OR co.link_confidence != 'pending') AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)"
+    elif state_filter == "naf_sibling":
+        filter_clause = " AND co.naf_status = 'mismatch' AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')"
+    elif state_filter == "pending":
+        filter_clause = " AND co.link_confidence = 'pending'"
+    elif state_filter == "unlinked":
+        filter_clause = " AND co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL"
+    # Empty/unknown → no extra clause (preserves existing behavior)
+
+    where_extra = where_extra + filter_clause
 
     # Determine sort clause
     sort_clause = {
