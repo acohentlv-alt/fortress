@@ -1921,6 +1921,14 @@ async def run(batch_id: str) -> None:
                             rejected_siren_sink=_inpi_step0_rejected,
                         )
 
+                    log.info(
+                        "discovery.a2_entry",
+                        maps_name=maps_name,
+                        has_candidate=candidate is not None,
+                        a2_enabled=settings.a2_mentions_legales_enabled,
+                        has_website=bool(maps_website),
+                    )
+
                     # ── Lever A2 — Legal name from mentions-légales → INPI retry ──────────
                     # Fires only when Step 0-5 all missed (candidate is None). Extracts the
                     # registered legal name from the website's mentions-légales page and
@@ -1939,6 +1947,16 @@ async def run(batch_id: str) -> None:
                                 break
 
                         if _mentions_html:
+                            log.info(
+                                "discovery.a2_html_found",
+                                maps_name=maps_name,
+                                mentions_url=next(
+                                    (u for u in crawl_result.all_html.keys()
+                                     if "mention" in u.lower() or "legal" in u.lower()),
+                                    None,
+                                ),
+                                html_len=len(_mentions_html),
+                            )
                             try:
                                 from fortress.matching.contacts import extract_legal_denomination
                                 _legal_name = extract_legal_denomination(_mentions_html)
@@ -1946,6 +1964,11 @@ async def run(batch_id: str) -> None:
                                 _legal_name = None
 
                             if _legal_name:
+                                log.info(
+                                    "discovery.a2_legal_name_extracted",
+                                    maps_name=maps_name,
+                                    legal_name=_legal_name,
+                                )
                                 # Skip if legal name is effectively the same as Maps name
                                 # (Step 0 already tried that — no point re-querying)
                                 _maps_tokens = set(_normalize_name(maps_name).split())
@@ -1991,6 +2014,12 @@ async def run(batch_id: str) -> None:
 
                                         if _a2_hit:
                                             _a2_siren, _a2_naf, _a2_nom, _a2_cp = _a2_hit
+                                            log.info(
+                                                "discovery.a2_sirene_searched",
+                                                maps_name=maps_name,
+                                                legal_name=_legal_name,
+                                                inpi_siren=_a2_hit[0],
+                                            )
                                             async with pool.connection() as conn:
                                                 _a2_local_cur = await conn.execute(
                                                     """SELECT siren, denomination, enseigne, adresse,
@@ -2002,6 +2031,13 @@ async def run(batch_id: str) -> None:
                                                 )
                                                 _a2_local_row = await _a2_local_cur.fetchone()
                                             if _a2_local_row:
+                                                log.info(
+                                                    "discovery.a2_candidate_found",
+                                                    maps_name=maps_name,
+                                                    legal_name=_legal_name,
+                                                    siren=_a2_siren,
+                                                    local_denom=_a2_local_row[1] or "",
+                                                )
                                                 _a2_local_denom = _a2_local_row[1] or ""
                                                 _a2_local_enseigne = _a2_local_row[2] or ""
                                                 _a2_local_cp = _a2_local_row[4] or ""
@@ -2018,6 +2054,12 @@ async def run(batch_id: str) -> None:
                                                 ):
                                                     log.info(
                                                         "discovery.a2_match_confirmed",
+                                                        maps_name=maps_name,
+                                                        legal_name=_legal_name,
+                                                        siren=_a2_siren,
+                                                    )
+                                                    log.info(
+                                                        "discovery.a2_confirmed",
                                                         maps_name=maps_name,
                                                         legal_name=_legal_name,
                                                         siren=_a2_siren,
@@ -2039,6 +2081,61 @@ async def run(batch_id: str) -> None:
                                                         siren=_a2_siren,
                                                         reason="dept_or_overlap_fail",
                                                     )
+                                                    log.info(
+                                                        "discovery.a2_rejected",
+                                                        maps_name=maps_name,
+                                                        legal_name=_legal_name,
+                                                        siren=_a2_siren,
+                                                        reason="dept_or_overlap_fail",
+                                                    )
+                                            else:
+                                                log.info(
+                                                    "discovery.a2_no_local_row",
+                                                    maps_name=maps_name,
+                                                    inpi_siren=_a2_siren,
+                                                )
+                                        else:
+                                            log.info(
+                                                "discovery.a2_inpi_no_hit",
+                                                maps_name=maps_name,
+                                                legal_name=_legal_name,
+                                            )
+                                    else:
+                                        log.info(
+                                            "discovery.a2_no_meaningful_terms",
+                                            maps_name=maps_name,
+                                            legal_name=_legal_name,
+                                        )
+                                else:
+                                    log.info(
+                                        "discovery.a2_skip_same_name",
+                                        maps_name=maps_name,
+                                        legal_name=_legal_name,
+                                        overlap_ratio=round(_overlap_ratio, 2),
+                                    )
+                            else:
+                                log.info(
+                                    "discovery.a2_extract_returned_none",
+                                    maps_name=maps_name,
+                                    html_len=len(_mentions_html),
+                                )
+                        else:
+                            log.info(
+                                "discovery.a2_no_mentions_page",
+                                maps_name=maps_name,
+                                pages_crawled=len(crawl_result.all_html),
+                                urls=[
+                                    u.split("/", 3)[-1][:60] if "://" in u else u[:60]
+                                    for u in list(crawl_result.all_html.keys())[:5]
+                                ],
+                            )
+                    elif candidate is not None and settings.a2_mentions_legales_enabled and maps_website:
+                        log.info(
+                            "discovery.a2_skip_has_candidate",
+                            maps_name=maps_name,
+                            siren=candidate.get("siren"),
+                            method=candidate.get("method"),
+                        )
 
                     # ── Edit C: inpi_fuzzy_agree demotion + shadow-judge eligibility ──
                     # DETERMINISTIC — does NOT use Gemini. Demotes when Step 5

@@ -892,6 +892,7 @@ def extract_legal_denomination(html: str | None) -> str | None:
     section first to avoid capturing hosting provider names.
     """
     if not html:
+        log.info("a2_extract_none", reason="empty_html")
         return None
     # Strip HTML tags and collapse whitespace
     text = re.sub(r"<[^>]+>", " ", html)
@@ -912,18 +913,22 @@ def extract_legal_denomination(html: str | None) -> str | None:
     if m:
         candidate = m.group(1).strip()
         if _LEGAL_FORMS_RE.search(candidate):
+            log.info("a2_extract_matched", pattern="raison_sociale", name=candidate[:100])
             return candidate[:100]
 
     # Pattern 2: "société :" / "éditeur :" with legal form
     m = _SOCIETE_PREAMBLE_RE.search(company_section)
     if m:
+        log.info("a2_extract_matched", pattern="societe_preamble", name=m.group(1).strip()[:100])
         return m.group(1).strip()[:100]
 
     # Pattern 3: direct "SARL XYZ" / "SAS XYZ" prefix
     m = _LEGAL_FORM_PREFIX_RE.search(company_section)
     if m:
+        log.info("a2_extract_matched", pattern="legal_form_prefix", name=f"{m.group(1)} {m.group(2).strip()}"[:100])
         return f"{m.group(1)} {m.group(2).strip()}"[:100]
 
+    log.info("a2_extract_no_match")
     return None
 
 
