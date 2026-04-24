@@ -213,3 +213,89 @@ def test_no_preamble_no_legal_form_no_siren_returns_none():
     # without a formal preamble colon.
     result = extract_legal_denomination(SAMPLE_LA_CANTINE_NO_PREAMBLE)
     assert result is None
+
+
+# ── Apr 26 post-capture trim (entity-level junk from Apr 25 QA batch CAMPING_33_W174_BATCH_005) ──
+# Real extracted legal names that hit INPI no-hit because of trailing
+# boilerplate. Each fixture reproduces the HTML shape that caused
+# the leak in production.
+
+SAMPLE_FONTAINE_VIEILLE_CAPITAL_SOCIAL = """
+<html><body>
+<h1>Mentions Légales</h1>
+<p>Éditeur : Camping de Fontaine Vieille - Capital social de 45000 €.</p>
+<p>SIRET 543210987 00015, 33510 Andernos-les-Bains.</p>
+<p>Contact : contact@fontaine-vieille.fr</p>
+</body></html>
+"""
+
+SAMPLE_GILAMON_CAPITAL_NUMERO_TVA = """
+<html><body>
+<p>Raison sociale : SARL Centre de soins Gilamon Blanquefort Capital social de 153000 € Numéro de TVA FR00123456789.</p>
+<p>Siège : 33290 Blanquefort.</p>
+</body></html>
+"""
+
+SAMPLE_B2M_LOISIRS_STREET_LEAK = """
+<html><body>
+<p>SAS B2M Loisirs 488 Rambla Helios 66140 Canet-en-Roussillon, immatriculée au RCS de Perpignan.</p>
+</body></html>
+"""
+
+SAMPLE_LEDAUPHIN_ZI_ADDRESS = """
+<html><body>
+<p>Éditeur : LE DAUPHIN ZI DES CARMES 29250 SAINT-POL-DE-LEON</p>
+<p>Tél. : 02 98 29 00 00</p>
+</body></html>
+"""
+
+
+def test_trim_trailing_capital_social_boilerplate():
+    # Real fixture from Apr 25 QA: Pattern captured
+    # "Camping de Fontaine Vieille - Capital social" — junk past the name.
+    # Post-trim must drop "Capital social" so INPI gets a clean query.
+    result = extract_legal_denomination(SAMPLE_FONTAINE_VIEILLE_CAPITAL_SOCIAL)
+    assert result is not None
+    assert "fontaine vieille" in result.lower()
+    assert "capital" not in result.lower()
+    assert "social" not in result.lower()
+
+
+def test_trim_trailing_numero_tva_and_capital():
+    # Real fixture from Apr 25 QA: 12 junk tokens past "SC Centre de soins
+    # Gilamon Blanquefort". Trim must stop at first "Capital social" boundary.
+    result = extract_legal_denomination(SAMPLE_GILAMON_CAPITAL_NUMERO_TVA)
+    assert result is not None
+    assert "gilamon" in result.lower()
+    assert "blanquefort" in result.lower()
+    assert "capital" not in result.lower()
+    assert "tva" not in result.lower()
+    assert "numéro" not in result.lower() and "numero" not in result.lower()
+
+
+def test_trim_trailing_street_address_prefix():
+    # Real fixture from Apr 25 QA: Pattern 3 leaked "488 Rambla Helios" past
+    # "SAS B2M Loisirs". Trim must stop at the street-number-prefix boundary
+    # so "488 Rambla" (number + street type is not matched here — Rambla
+    # isn't in the street-type list) or at the postal code "66140 Canet".
+    # Either way "Canet" must be gone.
+    result = extract_legal_denomination(SAMPLE_B2M_LOISIRS_STREET_LEAK)
+    assert result is not None
+    assert "b2m" in result.lower() or "B2M" in result
+    assert "loisirs" in result.lower()
+    assert "66140" not in result
+    assert "canet" not in result.lower()
+
+
+def test_trim_trailing_ZI_address_block():
+    # Real pattern seen in production: ledauphin.fr-style footer with
+    # "ZI DES CARMES 29250 SAINT-POL-DE-LEON" after the company name.
+    # The ZI (Zone Industrielle) branch must trim everything from " ZI "
+    # onward, including the postal code and city.
+    result = extract_legal_denomination(SAMPLE_LEDAUPHIN_ZI_ADDRESS)
+    assert result is not None
+    assert "DAUPHIN" in result.upper()
+    assert "ZI" not in result.upper()
+    assert "CARMES" not in result.upper()
+    assert "29250" not in result
+    assert "SAINT-POL" not in result.upper()

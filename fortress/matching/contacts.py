@@ -783,6 +783,81 @@ def synthesize_email(
 # ---------------------------------------------------------------------------
 
 
+# Post-capture boilerplate phrases that indicate end-of-legal-name.
+# Used by _trim_post_capture to strip trailing junk captured by
+# Patterns 0-7 when the regex lookahead fails to catch them all
+# (e.g., real-world HTML with unusual separators).
+#
+# IMPORTANT constraints:
+# - NEVER use bare \bcapital\b without social/au qualifier — would false-trim
+#   legitimate names like "CAPITAL CONSEILS". "capital de" alone is also risky
+#   (could match "Capital de Provence") so we only match "capital social" and
+#   "au capital".
+# - Use [ée] explicitly for accented chars — re.IGNORECASE does NOT case-fold
+#   é↔e. "Tél." must be matched via t[ée]l, not tel with IGNORECASE.
+# - Postal code branch requires uppercase-letter city suffix to avoid false-trim
+#   on 5-digit numeric suffixes that aren't postal codes (typical French
+#   postal-code-then-city pattern: "29250 SAINT-POL-DE-LEON").
+# - ZI / ZA / ZAC / PA branches catch French industrial-zone address prefixes
+#   that routinely appear in mentions-légales blocks after the company name.
+# - Street-number-then-street-type branch catches "488 Rambla" / "12 rue" /
+#   "7 avenue" patterns. Requires street-type keyword to avoid trimming on
+#   bare numeric suffixes in legal names.
+_POST_CAPTURE_BOUNDARIES_RE = re.compile(
+    r"\s+(?:"
+    r"capital\s+social"                           # "Capital social de 10000€"
+    r"|au\s+capital"                              # "au capital de 50000€"
+    r"|siret"                                     # "SIRET 123456789 00015"
+    r"|siren"                                     # "SIREN 123456789"
+    r"|rcs"                                       # "RCS Paris 123456789"
+    r"|num[ée]ro\s+de\s+tva"                      # "Numéro de TVA FR00..."
+    r"|tva\s+intra"                               # "TVA intracommunautaire"
+    r"|t[ée]l[ée]?phone"                          # "Téléphone : ..."
+    r"|t[ée]l\b"                                  # "Tel 01 23"
+    r"|t[ée]l\."                                  # "Tél. 01 23"
+    r"|ZI\s+"                                     # "ZI des Carmes"
+    r"|Z\.I\.\s+"                                 # "Z.I. des Carmes"
+    r"|ZA\s+"                                     # "ZA du Moulin"
+    r"|Z\.A\.\s+"                                 # "Z.A. du Moulin"
+    r"|ZAC\s+"                                    # "ZAC de ..."
+    r"|PA\s+"                                     # "PA de ..." (Parc d'Activités)
+    r"|\d+\s+(?:rue|avenue|av\.|bd|boulevard|place|chemin|impasse|all[ée]e|route|rte|quai|cours)\b"  # "488 Rambla" / "12 rue des..."
+    r"|\d{5}(?=\s+[A-ZÀ-Ü])"                      # "29250 SAINT-POL-DE-LEON" — postal+city pattern only
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _trim_post_capture(name: str) -> str:
+    """Trim trailing French legal-register boilerplate from a captured name.
+
+    Patterns in extract_legal_denomination use lookahead boundaries that
+    catch most cases, but real-world HTML with unusual separators slips
+    junk through. This is a belt-and-braces post-trim applied at every
+    return site.
+
+    Example inputs -> outputs:
+      "Camping de Fontaine Vieille - Capital social" -> "Camping de Fontaine Vieille -"
+      "SC Centre de soins Gilamon Blanquefort Capital social de 153000 €" -> "SC Centre de soins Gilamon Blanquefort"
+      "SAS B2M Loisirs 488 Rambla Helios 66140 Canet" -> "SAS B2M Loisirs"
+      "LE DAUPHIN ZI DES CARMES 29250 SAINT-POL-DE-LEON" -> "LE DAUPHIN"
+      "PLEIN AIR LOCATIONS SARL" -> "PLEIN AIR LOCATIONS SARL"  (unchanged — no boundary)
+
+    Trims at FIRST boundary, strips trailing whitespace.
+
+    Guard: all current boundaries in _POST_CAPTURE_BOUNDARIES_RE require
+    \\s+ prefix, so search cannot match at position 0. But if a future
+    maintainer changes any boundary to \\s* or bare \\b, the empty-string
+    guard below becomes load-bearing — leave it in place.
+    """
+    if not name:
+        return name
+    m = _POST_CAPTURE_BOUNDARIES_RE.search(name)
+    if not m:
+        return name
+    trimmed = name[: m.start()].rstrip()
+    return trimmed if trimmed else name
+
 
 # ---------------------------------------------------------------------------
 # Mentions Légales structured parser
@@ -952,14 +1027,14 @@ def extract_legal_denomination(html: str | None) -> str | None:
     # Pattern 0: Collectivité territoriale (commune-run businesses) — tried first
     m = _COMMUNE_RE.search(company_section)
     if m:
-        name = m.group(1).strip()[:100]
+        name = _trim_post_capture(m.group(1).strip())[:100]
         log.info("a2_extract_matched", pattern="commune", name=name)
         return name
 
     # Pattern 1: explicit "raison sociale :" or "dénomination :" preamble
     m = _RAISON_SOCIALE_RE.search(company_section)
     if m:
-        candidate = m.group(1).strip()
+        candidate = _trim_post_capture(m.group(1).strip())
         if _LEGAL_FORMS_RE.search(candidate):
             log.info("a2_extract_matched", pattern="raison_sociale", name=candidate[:100])
             return candidate[:100]
@@ -967,33 +1042,35 @@ def extract_legal_denomination(html: str | None) -> str | None:
     # Pattern 2: "société :" / "éditeur :" with legal form
     m = _SOCIETE_PREAMBLE_RE.search(company_section)
     if m:
-        log.info("a2_extract_matched", pattern="societe_preamble", name=m.group(1).strip()[:100])
-        return m.group(1).strip()[:100]
+        name = _trim_post_capture(m.group(1).strip())[:100]
+        log.info("a2_extract_matched", pattern="societe_preamble", name=name)
+        return name
 
     # Pattern 3: direct "SARL XYZ" / "SAS XYZ" prefix
     m = _LEGAL_FORM_PREFIX_RE.search(company_section)
     if m:
-        log.info("a2_extract_matched", pattern="legal_form_prefix", name=f"{m.group(1)} {m.group(2).strip()}"[:100])
-        return f"{m.group(1)} {m.group(2).strip()}"[:100]
+        name = _trim_post_capture(f"{m.group(1)} {m.group(2).strip()}")[:100]
+        log.info("a2_extract_matched", pattern="legal_form_prefix", name=name)
+        return name
 
     # Pattern 4: Hospitality name prefixes (DOMAINE, MAS, CHATEAU, etc.)
     m = _COMPANY_NAME_PREFIX_RE.search(company_section)
     if m:
-        name = f"{m.group(1)} {m.group(2).strip()}"[:100]
+        name = _trim_post_capture(f"{m.group(1)} {m.group(2).strip()}")[:100]
         log.info("a2_extract_matched", pattern="company_name_prefix", name=name)
         return name
 
     # Pattern 5: Trailing legal form (e.g., "KER HELEN EURL")
     m = _LEGAL_FORM_SUFFIX_RE.search(company_section)
     if m:
-        name = f"{m.group(1).strip()} {m.group(2)}"[:100]
+        name = _trim_post_capture(f"{m.group(1).strip()} {m.group(2)}")[:100]
         log.info("a2_extract_matched", pattern="legal_form_suffix", name=name)
         return name
 
     # Pattern 6: Parenthesized legal form (e.g., "KER HELEN (EURL)")
     m = _LEGAL_FORM_PAREN_RE.search(company_section)
     if m:
-        name = f"{m.group(1).strip()} ({m.group(2)})"[:100]
+        name = _trim_post_capture(f"{m.group(1).strip()} ({m.group(2)})")[:100]
         log.info("a2_extract_matched", pattern="legal_form_paren", name=name)
         return name
 
@@ -1003,7 +1080,7 @@ def extract_legal_denomination(html: str | None) -> str | None:
     # to reject junk extractions (dept + meaningful-token overlap check).
     m = _EDITEUR_PREAMBLE_BARE_RE.search(company_section)
     if m:
-        name = m.group(1).strip()[:100]
+        name = _trim_post_capture(m.group(1).strip())[:100]
         log.info("a2_extract_matched", pattern="editeur_preamble_bare", name=name)
         return name
 

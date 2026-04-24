@@ -2097,8 +2097,8 @@ async def run(batch_id: str) -> None:
                                 search_query=_current_search_query or None,
                                 workspace_id=batch_workspace_id,
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("a2_audit_write_failed", action="a2_entry", error=str(e))
 
                     # ── Lever A2 — Legal name from mentions-légales → INPI retry ──────────
                     # Fires only when Step 0-5 all missed (candidate is None). Extracts the
@@ -2156,8 +2156,8 @@ async def run(batch_id: str) -> None:
                                             search_query=_current_search_query or None,
                                             workspace_id=batch_workspace_id,
                                         )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    log.debug("a2_audit_write_failed", action="a2_legal_name_extracted", error=str(e))
                                 # Skip if legal name is effectively the same as Maps name
                                 # (Step 0 already tried that — no point re-querying)
                                 _maps_tokens = set(_normalize_name(maps_name).split())
@@ -2277,8 +2277,8 @@ async def run(batch_id: str) -> None:
                                                                 search_query=_current_search_query or None,
                                                                 workspace_id=batch_workspace_id,
                                                             )
-                                                    except Exception:
-                                                        pass
+                                                    except Exception as e:
+                                                        log.debug("a2_audit_write_failed", action="a2_match_confirmed", error=str(e))
                                                     candidate = {
                                                         "siren": _a2_siren,
                                                         "denomination": _a2_local_denom,
@@ -2315,8 +2315,8 @@ async def run(batch_id: str) -> None:
                                                                 search_query=_current_search_query or None,
                                                                 workspace_id=batch_workspace_id,
                                                             )
-                                                    except Exception:
-                                                        pass
+                                                    except Exception as e:
+                                                        log.debug("a2_audit_write_failed", action="a2_rejected", error=str(e))
                                             else:
                                                 log.info(
                                                     "discovery.a2_no_local_row",
@@ -2352,8 +2352,8 @@ async def run(batch_id: str) -> None:
                                                         search_query=_current_search_query or None,
                                                         workspace_id=batch_workspace_id,
                                                     )
-                                            except Exception:
-                                                pass
+                                            except Exception as e:
+                                                log.debug("a2_audit_write_failed", action="a2_inpi_no_hit", error=str(e))
                                     else:
                                         log.info(
                                             "discovery.a2_no_meaningful_terms",
@@ -2372,8 +2372,8 @@ async def run(batch_id: str) -> None:
                                                     search_query=_current_search_query or None,
                                                     workspace_id=batch_workspace_id,
                                                 )
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            log.debug("a2_audit_write_failed", action="a2_no_meaningful_terms", error=str(e))
                                 else:
                                     log.info(
                                         "discovery.a2_skip_same_name",
@@ -2393,8 +2393,8 @@ async def run(batch_id: str) -> None:
                                                 search_query=_current_search_query or None,
                                                 workspace_id=batch_workspace_id,
                                             )
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        log.debug("a2_audit_write_failed", action="a2_skip_same_name", error=str(e))
                             else:
                                 log.info(
                                     "discovery.a2_extract_returned_none",
@@ -2413,8 +2413,8 @@ async def run(batch_id: str) -> None:
                                             search_query=_current_search_query or None,
                                             workspace_id=batch_workspace_id,
                                         )
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    log.debug("a2_audit_write_failed", action="a2_extract_returned_none", error=str(e))
                         else:
                             log.info(
                                 "discovery.a2_no_mentions_page",
@@ -2437,8 +2437,8 @@ async def run(batch_id: str) -> None:
                                         search_query=_current_search_query or None,
                                         workspace_id=batch_workspace_id,
                                     )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("a2_audit_write_failed", action="a2_no_mentions_page", error=str(e))
                     elif candidate is not None and settings.a2_mentions_legales_enabled and maps_website:
                         log.info(
                             "discovery.a2_skip_has_candidate",
