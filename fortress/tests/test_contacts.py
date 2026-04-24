@@ -2,6 +2,7 @@ from fortress.matching.contacts import (
     _accept_siren,
     _HOSTING_SIRENS,
     extract_legal_denomination,
+    extract_siren_from_html,
     extract_siret,
 )
 
@@ -130,3 +131,85 @@ def test_extract_siret_rejects_franchise_footer():
     </body></html>
     """
     assert extract_siret(html) is None
+
+
+# ── Bug 4 extractor widening (Apr 24) ──
+# Real-world fixtures from live-tested sites (TOMA / Tigermilk / ledauphin).
+
+SAMPLE_TOMA_SARL_WITH_SOUS = """
+<html><body>
+<h1>Mentions légales</h1>
+<p>SARL 19 FORTIA sous le nom commercial TOMA, au capital de 10000 €.</p>
+<p>RCS Marseille 987654321</p>
+</body></html>
+"""
+
+SAMPLE_TIGERMILK_PROPRIETAIRE = """
+<html><body>
+<p>Propriétaire : SASU 2MS Aboukir Capital social 5000€.</p>
+<p>Siège : 2 rue Aboukir, 75002 Paris</p>
+</body></html>
+"""
+
+SAMPLE_LEDAUPHIN_EDITEUR_BARE = """
+<html><body>
+<h1>Mentions Légales</h1>
+<p>Le site est édité par : LE DAUPHIN ZI DES CARMES 29250 SAINT-POL-DE-LEON</p>
+<p>Contact : info@ledauphin.fr</p>
+</body></html>
+"""
+
+SAMPLE_REGISTRE_COMMERCE_SIREN = """
+<html><body>
+<p>Société TOMA, Registre du Commerce et des Sociétés sous le numéro Marseille B 929 539 609.</p>
+<p>Siège social : Marseille</p>
+</body></html>
+"""
+
+SAMPLE_LA_CANTINE_NO_PREAMBLE = """
+<html><body>
+<h1>Bienvenue à LA CANTINE DE MARSEILLE</h1>
+<p>Retrouvez nos plats du jour sur notre page Facebook.</p>
+</body></html>
+"""
+
+
+def test_extract_sarl_with_sous_terminator():
+    # Fix A target — "sous le nom" terminates the capture group.
+    # Leading anchor widened to accept digit-starting names like "19 FORTIA".
+    result = extract_legal_denomination(SAMPLE_TOMA_SARL_WITH_SOUS)
+    assert result is not None
+    assert "19 FORTIA" in result.upper()
+    assert "SARL" in result.upper()
+    assert "sous" not in result.lower()
+
+
+def test_extract_sasu_from_proprietaire_preamble():
+    # Fix B target — "Propriétaire :" is a new preamble keyword.
+    # Leading anchor widened to accept digit-starting names like "2MS Aboukir".
+    result = extract_legal_denomination(SAMPLE_TIGERMILK_PROPRIETAIRE)
+    assert result is not None
+    assert "2MS ABOUKIR" in result.upper()
+    assert "SASU" in result.upper()
+
+
+def test_extract_pattern7_editeur_bare_no_legal_form():
+    # Fix D target — Pattern 7 WIDE fallback, no legal form required.
+    # Regex must catch past-participle "édité par" (not just noun "éditeur").
+    result = extract_legal_denomination(SAMPLE_LEDAUPHIN_EDITEUR_BARE)
+    assert result is not None
+    assert result.upper().startswith("LE DAUPHIN")
+
+
+def test_extract_siren_from_registre_du_commerce_anchor():
+    # Fix C target — "Registre du Commerce … numéro Marseille B 929 539 609"
+    # must produce SIREN "929539609" via the widened _SIREN_CONTEXT_RE.
+    result = extract_siren_from_html(SAMPLE_REGISTRE_COMMERCE_SIREN)
+    assert result == "929539609"
+
+
+def test_no_preamble_no_legal_form_no_siren_returns_none():
+    # Negative case — Pattern 7 should NOT over-fire on plain business names
+    # without a formal preamble colon.
+    result = extract_legal_denomination(SAMPLE_LA_CANTINE_NO_PREAMBLE)
+    assert result is None

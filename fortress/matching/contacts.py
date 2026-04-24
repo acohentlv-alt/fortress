@@ -469,7 +469,7 @@ def extract_siret(html: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 _SIREN_CONTEXT_RE = re.compile(
-    r'(?:SIREN|RCS|immatricul|enregistr|n[°o]\s*d.immatricul)[^0-9]{0,40}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3})',
+    r'(?:SIREN|RCS|immatricul|enregistr|n[°o]\s*d.immatricul|Registre\s+du\s+Commerce|num[ée]ro\s+SIRET|n[°o]\s*SIRET)[^0-9]{0,80}(\d{3}[\s\u00a0]?\d{3}[\s\u00a0]?\d{3})',
     re.IGNORECASE,
 )
 
@@ -481,7 +481,7 @@ _SIRET_14_RE = re.compile(
 
 # Footer pattern: SIREN near end of page or inside <footer> tag
 _FOOTER_SIREN_RE = re.compile(
-    r'(?:SIREN|RCS|SIRET|N°\s*TVA)[^0-9]{0,30}(\d{3}[\s\u00a0\-]?\d{3}[\s\u00a0\-]?\d{3})',
+    r'(?:SIREN|RCS|SIRET|N°\s*TVA|Registre\s+du\s+Commerce|num[ée]ro\s+SIRET|n[°o]\s*SIRET)[^0-9]{0,80}(\d{3}[\s\u00a0\-]?\d{3}[\s\u00a0\-]?\d{3})',
     re.IGNORECASE,
 )
 
@@ -895,17 +895,30 @@ _RAISON_SOCIALE_RE = re.compile(
 )
 
 _SOCIETE_PREAMBLE_RE = re.compile(
-    r"(?:soci[ée]t[ée]|[ée]diteur|entreprise)\s*:?\s*"
+    r"(?:soci[ée]t[ée]|[ée]diteur|[ée]dit[ée](?:\s+par)?|entreprise|propri[ée]taire|responsable\s+de\s+(?:la\s+)?publication|responsable\s+du\s+site|[ée]dition|publi[ée]\s+par)"
+    r"(?:\s+du\s+site)?"
+    r"\s*:?\s*"
     r"((?:SARL|SAS|SASU|EURL|SA|SCI|SNC|EI|EIRL|Association|Micro-entreprise|EARL|GAEC|SCEA)"
-    r"\s+[A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)"
+    r"\s+[A-ZÀ-Ü0-9][A-Za-z0-9À-ÿ\s&'.-]{2,80}?)"
     r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|capital|au\s+capital|siret|siren|rcs|sis|situ[ée])|$)",
     re.IGNORECASE,
 )
 
 _LEGAL_FORM_PREFIX_RE = re.compile(
     r"\b(SARL|SAS|SASU|EURL|EI|EIRL|SCI|EARL|GAEC|SCEA|SA|SNC|SELARL|SELAS)\s+"
-    r"([A-ZÀ-Ü][A-Z0-9À-Ü\s&'.-]{2,80}?)"
-    r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|capital|au\s+capital|siret|siren|rcs)|$)",
+    r"([A-ZÀ-Ü0-9][A-Za-z0-9À-ÿ\s&'.-]{2,80}?)"
+    r"(?=\s*(?:,|<|\n|soci[ée]t[ée]|sous|au\s+capital|capital|ayant|immatricul[ée]e?|inscrite?|domicili[ée]e?|siret|siren|SIREN|rcs|RCS)|$)",
+)
+
+# Pattern 7: Preamble-only (no legal-form requirement) — WIDE fallback.
+# Catches "édité par : LE DAUPHIN ZI DES CARMES 29250 ..." style sites.
+# Safety net: _validate_inpi_step0_hit rejects if dept or token overlap fails.
+_EDITEUR_PREAMBLE_BARE_RE = re.compile(
+    r"(?:[ée]diteur|[ée]dit[ée](?:\s+par)?|propri[ée]taire|publi[ée]\s+par|responsable\s+de\s+publication)"
+    r"(?:\s+du\s+site)?"
+    r"\s*:\s*"
+    r"([A-ZÀ-Ü0-9][^<\n,;:]{2,80})",
+    re.IGNORECASE,
 )
 
 
@@ -982,6 +995,16 @@ def extract_legal_denomination(html: str | None) -> str | None:
     if m:
         name = f"{m.group(1).strip()} ({m.group(2)})"[:100]
         log.info("a2_extract_matched", pattern="legal_form_paren", name=name)
+        return name
+
+    # Pattern 7: Preamble-only (no legal form) — WIDE fallback for sites like
+    # ledauphin.fr where mentions-légales says "Le site est édité par : LE DAUPHIN …"
+    # with no SARL/SAS/etc. token. Relies on _validate_inpi_step0_hit downstream
+    # to reject junk extractions (dept + meaningful-token overlap check).
+    m = _EDITEUR_PREAMBLE_BARE_RE.search(company_section)
+    if m:
+        name = m.group(1).strip()[:100]
+        log.info("a2_extract_matched", pattern="editeur_preamble_bare", name=name)
         return name
 
     log.info("a2_extract_no_match")

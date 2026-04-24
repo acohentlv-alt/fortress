@@ -582,6 +582,19 @@ _STRONG_METHODS = frozenset({
     "cp_name_disamb",  # P3 Step 2.5 — CP-restricted NAF-filtered name disambiguation
 })
 
+# Weak match methods — A2 mentions-légales rescue is allowed to replace these.
+# A2 fires when candidate is None OR candidate.method ∈ _A2_WEAK_ELIGIBLE.
+# Keep this set conservative — only methods that are explicitly weak (never
+# auto-confirm) belong here. Do NOT add strong methods even if they got
+# `link_confidence='pending'` via the NAF gate — those are strong-weak pending
+# and A2 must not override them.
+_A2_WEAK_ELIGIBLE = frozenset({
+    "fuzzy_name",
+    "surname",
+    "enseigne_weak",
+    "phone_weak",
+})
+
 _LEGAL_FORM_TOKENS = frozenset({
     "earl", "gaec", "scea", "scev", "sci", "sarl", "sas",
     "sasu", "eurl", "sa", "snc", "eirl", "ei",
@@ -2072,13 +2085,31 @@ async def run(batch_id: str) -> None:
                         a2_enabled=settings.a2_mentions_legales_enabled,
                         has_website=bool(maps_website),
                     )
+                    try:
+                        async with pool.connection() as _a2_log_conn:
+                            await log_audit(
+                                _a2_log_conn,
+                                batch_id=batch_id,
+                                siren=(candidate or {}).get("siren") or "A2PENDING",
+                                action="a2_entry",
+                                result="success",
+                                detail=f"maps_name={maps_name[:200]} | has_candidate={candidate is not None} | a2_enabled={settings.a2_mentions_legales_enabled} | has_website={bool(maps_website)}",
+                                search_query=_current_search_query or None,
+                                workspace_id=batch_workspace_id,
+                            )
+                    except Exception:
+                        pass
 
                     # ── Lever A2 — Legal name from mentions-légales → INPI retry ──────────
                     # Fires only when Step 0-5 all missed (candidate is None). Extracts the
                     # registered legal name from the website's mentions-légales page and
                     # retries INPI with that name. Reuses Step 0's validator for safety.
+                    _a2_candidate_is_weak = (
+                        candidate is not None
+                        and candidate.get("method") in _A2_WEAK_ELIGIBLE
+                    )
                     if (
-                        candidate is None
+                        (candidate is None or _a2_candidate_is_weak)
                         and settings.a2_mentions_legales_enabled
                         and crawl_result is not None
                         and getattr(crawl_result, "all_html", None)
@@ -2113,6 +2144,20 @@ async def run(batch_id: str) -> None:
                                     maps_name=maps_name,
                                     legal_name=_legal_name,
                                 )
+                                try:
+                                    async with pool.connection() as _a2_log_conn:
+                                        await log_audit(
+                                            _a2_log_conn,
+                                            batch_id=batch_id,
+                                            siren="A2PENDING",
+                                            action="a2_legal_name_extracted",
+                                            result="success",
+                                            detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]}",
+                                            search_query=_current_search_query or None,
+                                            workspace_id=batch_workspace_id,
+                                        )
+                                except Exception:
+                                    pass
                                 # Skip if legal name is effectively the same as Maps name
                                 # (Step 0 already tried that — no point re-querying)
                                 _maps_tokens = set(_normalize_name(maps_name).split())
@@ -2220,6 +2265,20 @@ async def run(batch_id: str) -> None:
                                                         legal_name=_legal_name,
                                                         siren=_a2_siren,
                                                     )
+                                                    try:
+                                                        async with pool.connection() as _a2_log_conn:
+                                                            await log_audit(
+                                                                _a2_log_conn,
+                                                                batch_id=batch_id,
+                                                                siren=_a2_siren,
+                                                                action="a2_match_confirmed",
+                                                                result="success",
+                                                                detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]} | prev_method={(candidate or {}).get('method')}",
+                                                                search_query=_current_search_query or None,
+                                                                workspace_id=batch_workspace_id,
+                                                            )
+                                                    except Exception:
+                                                        pass
                                                     candidate = {
                                                         "siren": _a2_siren,
                                                         "denomination": _a2_local_denom,
@@ -2244,6 +2303,20 @@ async def run(batch_id: str) -> None:
                                                         siren=_a2_siren,
                                                         reason="dept_or_overlap_fail",
                                                     )
+                                                    try:
+                                                        async with pool.connection() as _a2_log_conn:
+                                                            await log_audit(
+                                                                _a2_log_conn,
+                                                                batch_id=batch_id,
+                                                                siren=_a2_siren,
+                                                                action="a2_rejected",
+                                                                result="fail",
+                                                                detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]} | reason=dept_or_overlap_fail",
+                                                                search_query=_current_search_query or None,
+                                                                workspace_id=batch_workspace_id,
+                                                            )
+                                                    except Exception:
+                                                        pass
                                             else:
                                                 log.info(
                                                     "discovery.a2_no_local_row",
@@ -2267,12 +2340,40 @@ async def run(batch_id: str) -> None:
                                                 maps_name=maps_name,
                                                 legal_name=_legal_name,
                                             )
+                                            try:
+                                                async with pool.connection() as _a2_log_conn:
+                                                    await log_audit(
+                                                        _a2_log_conn,
+                                                        batch_id=batch_id,
+                                                        siren="A2PENDING",
+                                                        action="a2_inpi_no_hit",
+                                                        result="fail",
+                                                        detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]} | rate_limited={_a2_rate_limited}",
+                                                        search_query=_current_search_query or None,
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+                                            except Exception:
+                                                pass
                                     else:
                                         log.info(
                                             "discovery.a2_no_meaningful_terms",
                                             maps_name=maps_name,
                                             legal_name=_legal_name,
                                         )
+                                        try:
+                                            async with pool.connection() as _a2_log_conn:
+                                                await log_audit(
+                                                    _a2_log_conn,
+                                                    batch_id=batch_id,
+                                                    siren="A2PENDING",
+                                                    action="a2_no_meaningful_terms",
+                                                    result="skipped",
+                                                    detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]}",
+                                                    search_query=_current_search_query or None,
+                                                    workspace_id=batch_workspace_id,
+                                                )
+                                        except Exception:
+                                            pass
                                 else:
                                     log.info(
                                         "discovery.a2_skip_same_name",
@@ -2280,12 +2381,40 @@ async def run(batch_id: str) -> None:
                                         legal_name=_legal_name,
                                         overlap_ratio=round(_overlap_ratio, 2),
                                     )
+                                    try:
+                                        async with pool.connection() as _a2_log_conn:
+                                            await log_audit(
+                                                _a2_log_conn,
+                                                batch_id=batch_id,
+                                                siren="A2PENDING",
+                                                action="a2_skip_same_name",
+                                                result="skipped",
+                                                detail=f"maps_name={maps_name[:120]} | legal_name={_legal_name[:120]} | overlap_ratio={round(_overlap_ratio, 2)}",
+                                                search_query=_current_search_query or None,
+                                                workspace_id=batch_workspace_id,
+                                            )
+                                    except Exception:
+                                        pass
                             else:
                                 log.info(
                                     "discovery.a2_extract_returned_none",
                                     maps_name=maps_name,
                                     html_len=len(_mentions_html),
                                 )
+                                try:
+                                    async with pool.connection() as _a2_log_conn:
+                                        await log_audit(
+                                            _a2_log_conn,
+                                            batch_id=batch_id,
+                                            siren="A2PENDING",
+                                            action="a2_extract_returned_none",
+                                            result="fail",
+                                            detail=f"maps_name={maps_name[:120]} | html_len={len(_mentions_html)}",
+                                            search_query=_current_search_query or None,
+                                            workspace_id=batch_workspace_id,
+                                        )
+                                except Exception:
+                                    pass
                         else:
                             log.info(
                                 "discovery.a2_no_mentions_page",
@@ -2296,6 +2425,20 @@ async def run(batch_id: str) -> None:
                                     for u in list(crawl_result.all_html.keys())[:5]
                                 ],
                             )
+                            try:
+                                async with pool.connection() as _a2_log_conn:
+                                    await log_audit(
+                                        _a2_log_conn,
+                                        batch_id=batch_id,
+                                        siren="A2PENDING",
+                                        action="a2_no_mentions_page",
+                                        result="fail",
+                                        detail=f"maps_name={maps_name[:120]} | pages_crawled={len(crawl_result.all_html)}",
+                                        search_query=_current_search_query or None,
+                                        workspace_id=batch_workspace_id,
+                                    )
+                            except Exception:
+                                pass
                     elif candidate is not None and settings.a2_mentions_legales_enabled and maps_website:
                         log.info(
                             "discovery.a2_skip_has_candidate",

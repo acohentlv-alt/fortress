@@ -405,6 +405,14 @@ async def lifespan(app: FastAPI):
                 # Bug reports: 90 days (dev debugging, screenshots are heavy)
                 await conn.execute("DELETE FROM bug_reports WHERE created_at < NOW() - INTERVAL '90 days'")
 
+                # ── Drop FK on batch_log.siren (A2 audit observability fix) ──────
+                # batch_log is an audit table — free-text sentinel SIRENs like
+                # "A2PENDING" or "FILTERED_xxx" are valid audit content.
+                # The FK adds no value and silently blocks observability writes.
+                await conn.execute(
+                    "ALTER TABLE batch_log DROP CONSTRAINT IF EXISTS batch_log_siren_fkey"
+                )
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
