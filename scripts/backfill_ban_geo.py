@@ -266,13 +266,18 @@ async def replay_step_2_6(
     if cand is None:
         return None
 
-    # Candidate found — build link_signals payload (BLOCKER 1 fix)
-    top_score = cand.get("geo_proximity_top_score", cand.get("score", 0.0))
-    dominance = top_score - cand.get("geo_proximity_2nd_score", 0.0)
+    # Candidate found — build link_signals payload (BLOCKER 1 fix).
+    # Mirrors discovery.py's Phase 2 stamping convention exactly
+    # (same key names) so the frontend tooltip + QA SQL treat backfill
+    # rows the same as live cascade rows. The backfill-only fields
+    # (geo_proximity_backfill, ban_score, thresholds) are appended.
     link_signals = json.dumps({
+        "geo_proximity_distance_m": cand.get("geo_proximity_distance_m"),
+        "geo_proximity_top_score": cand.get("geo_proximity_top_score"),
+        "geo_proximity_2nd_score": cand.get("geo_proximity_2nd_score"),
+        "geo_proximity_pool_size": cand.get("geo_proximity_pool_size"),
+        "geo_proximity_quality": cand.get("geo_proximity_quality"),
         "geo_proximity_backfill": True,
-        "top_score": round(top_score, 4),
-        "dominance": round(dominance, 4),
         "ban_score": round(ban_score, 4),
         "thresholds": {"top": BACKFILL_TOP_THRESHOLD, "dominance": BACKFILL_DOMINANCE_THRESHOLD},
     }, ensure_ascii=False)
