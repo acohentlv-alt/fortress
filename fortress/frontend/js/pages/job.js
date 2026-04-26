@@ -63,6 +63,8 @@ function buildScoreboardCard(job, linkStats, summary) {
             chain: 'company.linkReasonChain',
             gemini_judge: 'company.linkReasonGeminiJudge',
             geo_proximity: 'company.linkReasonGeoProximity',
+            cp_name_disamb: 'company.linkReasonCpNameDisamb',
+            cp_name_disamb_indiv: 'company.linkReasonCpNameDisambIndiv',
         };
         return map[m] ? t(map[m]) : m;
     };
@@ -349,7 +351,9 @@ function buildScoreboardCard(job, linkStats, summary) {
             ` : ''}
             ${methodEntries.length > 0 ? `
                 <div style="font-size:var(--font-xs); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-sm); font-weight:700; margin-top:var(--space-md)">
-                    ${t('job.linkStatsByMethod')}
+                    <span title="${escapeHtml(t('job.linkStatsByMethodTooltip'))}" style="border-bottom:1px dotted var(--text-muted); cursor:help">
+                        ${t('job.linkStatsByMethod')} ⓘ
+                    </span>
                 </div>
                 <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:0 var(--space-xl)">
                     ${methodRows}
@@ -723,15 +727,24 @@ async function loadCompanies(batchId, page, sort, filter = '') {
     const totalPages = Math.ceil((data.total || 0) / (data.page_size || 20));
     const totalCompanies = data.total || 0;
 
+    // Pending badge: toggles the same 'pending' filter the legend row uses,
+    // so users can drill from the count straight into the entities-to-review list.
+    const pendingActive = _currentFilter === 'pending';
     const listHeaderHtml = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-md); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
             <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">
                 ${totalCompanies} ${totalCompanies > 1 ? 'entreprises' : 'entreprise'}
             </span>
             ${(_currentPendingCount > 0) ? `
-                <span style="color:rgb(245,158,11); font-size:var(--font-sm); font-weight:600">
+                <button id="job-pending-badge"
+                        title="${pendingActive ? 'Retirer le filtre' : 'Voir les entités en attente'}"
+                        style="background:${pendingActive ? 'rgba(245,158,11,0.18)' : 'transparent'};
+                               border:1px solid rgba(245,158,11,${pendingActive ? '0.6' : '0.35'});
+                               color:rgb(245,158,11); font-size:var(--font-sm); font-weight:600;
+                               padding:4px 10px; border-radius:var(--radius-sm); cursor:pointer;
+                               transition:background 0.15s, border-color 0.15s">
                     ⏳ ${_currentPendingCount} en attente
-                </span>
+                </button>
             ` : ''}
         </div>
     `;
@@ -753,6 +766,24 @@ async function loadCompanies(batchId, page, sort, filter = '') {
         </div>
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort, filter))}
     `;
+
+    // ⏳ N en attente badge — toggle the 'pending' filter (same as the legend
+    // row). Sync the legend row's active class so both stay visually aligned.
+    const pendingBadge = document.getElementById('job-pending-badge');
+    if (pendingBadge) {
+        pendingBadge.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const wasActive = _currentFilter === 'pending';
+            _currentFilter = wasActive ? '' : 'pending';
+            // Sync legend row visual state
+            document.querySelectorAll('.legend-row').forEach(r => {
+                r.classList.toggle('active', !wasActive && r.dataset.filter === 'pending');
+            });
+            _currentPage = 1;
+            await loadCompanies(batchId, 1, sort, _currentFilter);
+            document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }
 
     // Restore checkbox state after re-render
     if (selectionMode) {

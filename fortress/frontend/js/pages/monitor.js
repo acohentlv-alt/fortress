@@ -152,15 +152,31 @@ async function renderMonitorList(container) {
     }
     _monitorListAbort = new AbortController();
     // Use capture:true so this fires before the job-card inline onclick can
-    // navigate away — stopPropagation() then prevents that navigation.
+    // navigate away — stop propagation + prevent default + stop further capture
+    // listeners ALL fire so the parent .job-card inline onclick navigation
+    // cannot win the race in any browser.
     container.addEventListener('click', async (event) => {
         const btn = event.target.closest('.btn-delete-job');
         if (!btn) return;
         event.stopPropagation();
+        event.stopImmediatePropagation();
+        event.preventDefault();
 
         const batchId = btn.dataset.batchId;
         const batchName = btn.dataset.batchName;
         const isRunning = btn.dataset.running === 'true';
+
+        // Surface the real API failure reason in the toast instead of a
+        // generic "Erreur lors de la suppression". The previous text hid
+        // 401/404/409 paths so users couldn't tell why delete failed.
+        const explainError = (result) => {
+            if (!result) return 'Erreur lors de la suppression.';
+            if (result._status === 401) return 'Session expirée — reconnectez-vous.';
+            if (result._status === 403) return 'Accès refusé.';
+            if (result._status === 404) return 'Batch introuvable (déjà supprimé ?).';
+            if (result._status === 409) return result.error || 'Arrêtez le batch en cours d\'abord.';
+            return result.error || 'Erreur lors de la suppression.';
+        };
 
         if (isRunning) {
             showConfirmModal({
@@ -181,7 +197,7 @@ async function renderMonitorList(container) {
                         showToast(`Batch « ${batchName} » supprimé.`, 'success');
                         await renderMonitorList(container);
                     } else {
-                        showToast('Erreur lors de la suppression.', 'error');
+                        showToast(explainError(result), 'error');
                     }
                 },
             });
@@ -200,7 +216,7 @@ async function renderMonitorList(container) {
                         showToast(`Batch « ${batchName} » supprimé.`, 'success');
                         await renderMonitorList(container);
                     } else {
-                        showToast('Erreur lors de la suppression.', 'error');
+                        showToast(explainError(result), 'error');
                     }
                 },
             });
