@@ -351,6 +351,32 @@ async def lifespan(app: FastAPI):
                     ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()
                 """)
 
+                # ── companies_geom side table (TOP 1 Phase 1) ────────────────
+                # Single source of truth for ALL geocodes (Maps panel, INSEE
+                # bulk SIRENE, BAN backfill). companies.latitude/longitude
+                # remain legacy / unused. See CLAUDE.md Decision 3 (Apr 26).
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS companies_geom (
+                        siren            VARCHAR(9) PRIMARY KEY,
+                        lat              NUMERIC(10, 7) NOT NULL,
+                        lng              NUMERIC(10, 7) NOT NULL,
+                        source           TEXT NOT NULL,
+                        geocode_quality  TEXT,
+                        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                # Bounding-box index for proximity queries (Phase 2 Step 2.6).
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_geom_latlng
+                    ON companies_geom (lat, lng)
+                """)
+                # Source-filtered scans (admin queries, backfill enumeration).
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_geom_source
+                    ON companies_geom (source)
+                """)
+
                 # ── Query Memory table ────────────────────────────────
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS query_memory (

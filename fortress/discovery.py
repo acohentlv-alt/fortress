@@ -1999,6 +1999,7 @@ async def run(batch_id: str) -> None:
                 triage_counts: dict[str, int] = {"black": 0, "green": 0, "yellow": 0, "red": 0}
                 _query_dedup_count: int = 0
                 _query_filtered_count: int = 0
+                _query_geo_capture_count: int = 0
                 _current_search_query: str = ""  # Tracks which query is active
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
                 _sector_word: str = ""  # Sector word for relevance filtering
@@ -2106,7 +2107,7 @@ async def run(batch_id: str) -> None:
                 # already-saved businesses are retained.
 
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
-                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged
+                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged, _query_geo_capture_count
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
@@ -2820,6 +2821,28 @@ async def run(batch_id: str) -> None:
                         await upsert_company(conn, company)
                         await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
                         await upsert_contact(conn, contact)
+
+                        # ── Phase 1 — persist Maps panel coordinates if captured ───────
+                        _maps_lat = maps_result.get("lat")
+                        _maps_lng = maps_result.get("lng")
+                        if _maps_lat is not None and _maps_lng is not None:
+                            try:
+                                await conn.execute(
+                                    """INSERT INTO companies_geom
+                                           (siren, lat, lng, source, geocode_quality)
+                                       VALUES (%s, %s, %s, 'maps_panel', NULL)
+                                       ON CONFLICT (siren) DO UPDATE SET
+                                           lat = EXCLUDED.lat,
+                                           lng = EXCLUDED.lng,
+                                           source = EXCLUDED.source,
+                                           updated_at = NOW()
+                                       WHERE companies_geom.source = 'maps_panel'""",
+                                    (siren, _maps_lat, _maps_lng),
+                                )
+                                _query_geo_capture_count += 1
+                            except Exception as e:
+                                log.debug("discovery.geom_insert_failed",
+                                          siren=siren, error=str(e))
 
                         # Default link state: pending. Auto-confirm logic (Phase A):
                         # - Strong method + NAF verified → always auto-confirm
@@ -3766,6 +3789,7 @@ async def run(batch_id: str) -> None:
                     _max_cards = _remaining * 3 if _remaining > 0 else 0
                     _query_dedup_count = 0
                     _query_filtered_count = 0
+                    _query_geo_capture_count = 0
                     _pre_query_discovered = companies_discovered
                     _query_start = time.monotonic()
                     results = await maps_scraper.search_all(
@@ -3928,6 +3952,13 @@ async def run(batch_id: str) -> None:
                     discovered=companies_discovered,
                     qualified=qualified,
                     shutdown=_shutdown,
+                )
+                log.info(
+                    "discovery.batch_geo_capture_rate",
+                    batch_id=batch_id,
+                    geo_captured=_query_geo_capture_count,
+                    total_entities=companies_discovered,
+                    rate=(_query_geo_capture_count / companies_discovered) if companies_discovered else 0.0,
                 )
 
                 # ── Workspace notification on batch complete ──────────────

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import random
 import re
 from typing import Any
@@ -40,6 +41,61 @@ from fortress.config.sector_relevance import is_irrelevant_name
 from fortress.config.settings import settings
 
 log = structlog.get_logger(__name__)
+
+# ── French-bounds rectangle (mainland + Corsica) ─────────────────────────────
+# Decision 3: DOM-TOM excluded from geo matching (out of scope, distant).
+_GEO_LAT_MIN = 41.0   # Corsica south tip
+_GEO_LAT_MAX = 51.0   # Dunkerque
+_GEO_LNG_MIN = -5.0   # Brest / Brittany
+_GEO_LNG_MAX = 10.0   # Strasbourg / Corsica east
+
+
+def parse_maps_lat_lng(url: str | None) -> tuple[float, float] | None:
+    """Extract (lat, lng) from a Google Maps panel URL.
+
+    Preferred forms in priority order:
+      1. Place-detail URL with ``!3d{lat}!4d{lng}`` segment
+         (most reliable — Google's place-anchor format).
+      2. Camera URL with ``@{lat},{lng},{zoom}z``
+         (search-results URL — less precise but always present).
+
+    Returns None if:
+      - url is None / empty / not a Maps URL
+      - neither form parses
+      - lat or lng is non-numeric / non-finite
+      - coords fall outside French mainland+Corsica bounds
+        (lat ∈ [41, 51], lng ∈ [-5, 10]) — Decision 3
+    """
+    if not url:
+        return None
+    try:
+        # Form 1: place-detail anchor — search for !3d{lat} and !4d{lng}
+        # independently since they can appear in either order in the URL.
+        # !3d encodes latitude; !4d encodes longitude.
+        m_lat = re.search(r'!3d(-?\d+\.\d+)', url)
+        m_lng = re.search(r'!4d(-?\d+\.\d+)', url)
+        if m_lat and m_lng:
+            lat = float(m_lat.group(1))
+            lng = float(m_lng.group(1))
+        else:
+            # Form 2: camera position (@lat,lng,zoomz) — fallback
+            m2 = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+),', url)
+            if not m2:
+                return None
+            lat = float(m2.group(1))
+            lng = float(m2.group(2))
+
+        # Validate: finite values and within French mainland+Corsica bounds
+        if (
+            math.isfinite(lat) and math.isfinite(lng)
+            and _GEO_LAT_MIN <= lat <= _GEO_LAT_MAX
+            and _GEO_LNG_MIN <= lng <= _GEO_LNG_MAX
+        ):
+            return (lat, lng)
+        return None
+    except Exception:
+        return None
+
 
 # ── Stealth config (ported from mega scrapper/settings.py) ────────────────
 _STEALTH_UA = (
@@ -1478,6 +1534,12 @@ class PlaywrightMapsScraper:
         current_url = page.url
         if current_url and "google.com/maps" in current_url:
             result["maps_url"] = current_url
+            coords = parse_maps_lat_lng(current_url)
+            if coords is not None:
+                result["lat"] = coords[0]
+                result["lng"] = coords[1]
+                # Otherwise leave both keys absent — discovery._persist_result
+                # will treat missing as "no coords".
 
         log.info(
             "maps_scraper.search_done",
@@ -1490,6 +1552,7 @@ class PlaywrightMapsScraper:
             has_rating=bool(result.get("rating")),
             has_reviews=bool(result.get("review_count")),
             has_maps_url=bool(result.get("maps_url")),
+            has_lat_lng=bool(result.get("lat") is not None),
             has_category=bool(result.get("category")),
             maps_name=result.get("maps_name"),
             maps_category=result.get("category", ""),
