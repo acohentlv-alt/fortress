@@ -104,8 +104,15 @@ _EXPORT_JOINS = """
 async def _fetch_export_data(batch_id: str) -> list[dict]:
     """Fetch all companies + contacts for a specific batch.
 
-    Scoped via batch_log (per-batch batch_id), not batch_tags (shared
-    batch_name), so each batch export contains only its own companies.
+    Scoped via batch_tags (one row per actual Maps result, keyed by
+    batch_id). Earlier we used batch_log, but batch_log also stores A2
+    candidate-lookup audit rows under each candidate's real SIREN —
+    that polluted exports with empty ghost rows.
+
+    Returns ALL MAPS entities for the batch regardless of link status
+    (confirmed/pending/unmatched) so Cindy gets every scraped contact.
+    The SIREN column is populated only for confirmed matches; pending
+    and unlinked rows leave it blank.
     """
     job = await fetch_one(
         "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
@@ -114,13 +121,12 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         return []
 
     return await fetch_all(f"""
-        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s')}
+        WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s')}
         SELECT {_EXPORT_SELECT}
-        FROM (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s) sa
+        FROM (SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+        WHERE co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge')
         ORDER BY co.denomination
     """, (batch_id, batch_id))
 
