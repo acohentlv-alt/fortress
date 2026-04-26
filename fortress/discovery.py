@@ -2426,10 +2426,10 @@ async def run(batch_id: str) -> None:
                             await log_audit(
                                 _a2_log_conn,
                                 batch_id=batch_id,
-                                siren=(candidate or {}).get("siren") or "A2PENDING",
+                                siren="A2PENDING",
                                 action="a2_entry",
                                 result="success",
-                                detail=f"maps_name={maps_name[:200]} | has_candidate={candidate is not None} | a2_enabled={settings.a2_mentions_legales_enabled} | has_website={bool(maps_website)}",
+                                detail=f"maps_name={maps_name[:200]} | has_candidate={candidate is not None} | candidate_siren={(candidate or {}).get('siren', '')} | a2_enabled={settings.a2_mentions_legales_enabled} | has_website={bool(maps_website)}",
                                 search_query=_current_search_query or None,
                                 workspace_id=batch_workspace_id,
                             )
