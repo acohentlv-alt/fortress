@@ -1,6 +1,7 @@
 from fortress.matching.contacts import (
     _accept_siren,
     _HOSTING_SIRENS,
+    _trim_post_capture,
     extract_legal_denomination,
     extract_siren_from_html,
     extract_siret,
@@ -381,3 +382,50 @@ def test_trim_trailing_immatriculee_au_rcs():
     assert "immatriculée" not in result.lower() and "immatriculee" not in result.lower()
     assert "bordeaux" not in result.lower()
     assert "123456789" not in result
+
+
+def test_trim_phase2_dirty_patterns():
+    """A2 phase 2 (Apr 27): new boundaries for agency credits, CTA, dash TVA, spaced SIRET."""
+    cases = [
+        ("domaine Boutique Nous contacter 0", "domaine Boutique"),
+        ("GROUPE SEASONOVA – SARL 538 695 560 00010 – TVA", "GROUPE SEASONOVA – SARL"),
+        ("CAMPING X Réalisé par Studio Y", "CAMPING X"),
+        ("SARL FOO Réalisation du site bar.fr", "SARL FOO"),
+        ("FOO Conception graphique Studio Bar", "FOO"),
+        ("FOO Conception et réalisation: Bar", "FOO"),
+        ("FOO Développement du site par Bar", "FOO"),
+        ("FOO Création du site par Bar", "FOO"),
+        ("SARL TEST - TVA payée", "SARL TEST"),  # regular-hyphen TVA variant
+    ]
+    for input_str, expected in cases:
+        assert _trim_post_capture(input_str) == expected, \
+            f"Expected {expected!r}, got {_trim_post_capture(input_str)!r} for input {input_str!r}"
+
+
+def test_trim_phase2_false_positive_guards():
+    """Phase 2 must NOT trim legitimate names containing 'Réalisation'/'Conception'/'Création' alone.
+
+    The all-caps RÉALISATION pattern was explicitly rejected during /review because
+    'CAMPING DE LA REALISATION' is a real company name and would over-trim.
+    """
+    clean = [
+        "HUTTOPIA SA",
+        "ONLYCAMP SAS",
+        "PLEIN AIR LOCATIONS SARL",
+        "Domaine de Pouchou",
+        "Domaine le Poteau",
+        "GROUPE SEASONOVA",
+        "CAMPING DE LA REALISATION",     # bare all-caps RÉALISATION at end — must NOT trim
+        "STUDIO CONCEPTION",              # bare CONCEPTION — must NOT trim
+        "AGENCE CREATION",                # bare CREATION — must NOT trim
+        "CABINET DE DÉVELOPPEMENT",       # bare DÉVELOPPEMENT — must NOT trim
+        "NOUS RESTAURANT",                # 'Nous' as start of name (no 'contacter' follow-up)
+        "Studio de Réalisation a",        # mixed-case Réalisation, lowercase next char
+        "Atelier Réalisation Bordeaux",   # mixed-case Réalisation, capitalized city
+        "Société Réalisation Pro",        # mixed-case Réalisation, capitalized word
+        "Cabinet Conception",             # bare Conception, no follow-up
+        "Société Création Architecture",  # bare Création, no 'du site'/'par'/etc
+    ]
+    for name in clean:
+        assert _trim_post_capture(name) == name, \
+            f"False-positive: {name!r} got trimmed to {_trim_post_capture(name)!r}"

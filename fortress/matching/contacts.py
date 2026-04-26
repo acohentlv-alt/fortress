@@ -837,6 +837,20 @@ _POST_CAPTURE_BOUNDARIES_RE = re.compile(
     r"|immatricul[ée]e?\s+(?:au|sur|aux)\b"          # "immatriculée au RCS ..."
     r"|enregistr[ée]e?\s+(?:au|sur|aux)\b"           # "enregistrée au registre ..."
     r"|inscrit[e]?\s+(?:au|sur|aux)\s+"              # "inscrit(e) au RCS ..."
+    # NEW (Apr 27): A2 phase 2 — agency-credit hooks, CTA, spaced SIRET, dash TVA.
+    # Verified against 9 dirty samples + 16 clean names — including the
+    # specific false-positive guards that v1 of this brief tripped on:
+    # "Studio de Réalisation a", "Atelier Réalisation Bordeaux", "Cabinet Conception".
+    # Note: bare all-caps "RÉALISATION" pattern was rejected by /review as
+    # ambiguous — see "CAMPING DE LA REALISATION" guard. Out of scope for now.
+    r"|nous\s+contacter\b"                                        # "Nous contacter" + phone
+    r"|r[ée]alisation\s+du\s+site\b"                              # "Réalisation du site"
+    r"|r[ée]alis[ée]\s+par\b"                                     # "Réalisé par X"
+    r"|conception\s+(?:graphique|et\s+r[ée]alisation|du\s+site)"  # "Conception graphique" / etc
+    r"|d[ée]veloppement\s+(?:du\s+)?site\b"                       # "Développement du site"
+    r"|cr[ée]ation\s+(?:du\s+)?site\b"                            # "Création du site"
+    r"|[-–]\s+tva\b"                                              # "- TVA" or "– TVA"
+    r"|\d{3}\s+\d{3}\s+\d{3}\s+\d{5}\b"                          # Spaced SIRET "538 695 560 00010"
     r")",
     re.IGNORECASE,
 )
