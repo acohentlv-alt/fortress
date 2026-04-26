@@ -823,6 +823,18 @@ _POST_CAPTURE_BOUNDARIES_RE = re.compile(
     r"|PA\s+"                                     # "PA de ..." (Parc d'Activités)
     r"|\d+\s+(?:rue|avenue|av\.|bd|boulevard|place|chemin|impasse|all[ée]e|route|rte|quai|cours)\b"  # "488 Rambla" / "12 rue des..."
     r"|\d{5}(?=\s+[A-ZÀ-Ü])"                      # "29250 SAINT-POL-DE-LEON" — postal+city pattern only
+    # NEW (Apr 26): French legal-preamble boundaries — strip everything from
+    # phrases that follow the company name in mentions-légales boilerplate.
+    # Order: longer/more-specific first.
+    r"|dont\s+(?:le\s+)?si[èe]ge\s+social\b"        # "dont le siège social ..."
+    r"|si[èe]ge\s+social\b"                          # standalone "siège social ..."
+    r"|ayant\s+son\s+si[èe]ge\b"                     # "ayant son siège à ..."
+    r"|domicili[ée]e?\s+"                            # "domicilié(e) à ..."
+    r"|repr[ée]sent[ée]e?\s+par\b"                   # "représentée par X"
+    r"|soci[ée]t[ée]\s+immatricul[ée]e?\b"           # "société immatriculée"
+    r"|immatricul[ée]e?\s+(?:au|sur|aux)\b"          # "immatriculée au RCS ..."
+    r"|enregistr[ée]e?\s+(?:au|sur|aux)\b"           # "enregistrée au registre ..."
+    r"|inscrit[e]?\s+(?:au|sur|aux)\s+"              # "inscrit(e) au RCS ..."
     r")",
     re.IGNORECASE,
 )

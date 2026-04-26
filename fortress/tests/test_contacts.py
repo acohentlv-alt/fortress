@@ -299,3 +299,80 @@ def test_trim_trailing_ZI_address_block():
     assert "CARMES" not in result.upper()
     assert "29250" not in result
     assert "SAINT-POL" not in result.upper()
+
+
+# ── Apr 26 TOP 3: legal-preamble boundary tests ──
+# Real production junk patterns surfaced by Apr 25 QA.
+# Each fixture intentionally includes a preamble token ("Éditeur :",
+# "Raison sociale :") so the existing extractor patterns 1 or 2 fire
+# FIRST — without that, the extractor returns None and trim never runs.
+
+SAMPLE_TOMESA_DONT_SIEGE_SOCIAL = """
+<html><body>
+<p>Éditeur : SARL TOMESA dont le siège social est sis chemin du camping, 40170 Lit-et-Mixe.</p>
+</body></html>
+"""
+
+SAMPLE_AYANT_SON_SIEGE = """
+<html><body>
+<p>Raison sociale : SARL CAMPING DU LAC ayant son siège à Brive-la-Gaillarde.</p>
+</body></html>
+"""
+
+SAMPLE_REPRESENTEE_PAR = """
+<html><body>
+<p>Éditeur : SAS LES PINS représentée par Jean DUPONT, gérant.</p>
+</body></html>
+"""
+
+SAMPLE_IMMATRICULEE_AU_RCS = """
+<html><body>
+<p>Éditeur : SARL DOMAINE DE LA PINEDE immatriculée au RCS de Bordeaux sous le n° 123456789.</p>
+</body></html>
+"""
+
+
+def test_trim_trailing_dont_siege_social_preamble():
+    # Real fixture from Apr 25 QA: "TOMESA dont le siège social est sis
+    # chemin du camping" — junk preamble after the name. Trim must stop
+    # at "dont le siège social" so INPI gets a clean "SARL TOMESA" query.
+    result = extract_legal_denomination(SAMPLE_TOMESA_DONT_SIEGE_SOCIAL)
+    assert result is not None
+    assert "TOMESA" in result.upper()
+    assert "siège" not in result.lower() and "siege" not in result.lower()
+    assert "camping" not in result.lower()
+    assert "lit-et-mixe" not in result.lower()
+
+
+def test_trim_trailing_ayant_son_siege_preamble():
+    # Variant: "ayant son siège à" instead of "dont le siège social est".
+    # Different regex branch but same semantic — strip from "ayant" onward.
+    result = extract_legal_denomination(SAMPLE_AYANT_SON_SIEGE)
+    assert result is not None
+    assert "CAMPING DU LAC" in result.upper()
+    assert "ayant" not in result.lower()
+    assert "brive" not in result.lower()
+
+
+def test_trim_trailing_representee_par_director():
+    # Director-name suffix after the company is junk for INPI query.
+    # The new "représentée par" branch must trim everything from
+    # "représentée" onward.
+    result = extract_legal_denomination(SAMPLE_REPRESENTEE_PAR)
+    assert result is not None
+    assert "LES PINS" in result.upper()
+    assert "représentée" not in result.lower() and "representee" not in result.lower()
+    assert "DUPONT" not in result
+
+
+def test_trim_trailing_immatriculee_au_rcs():
+    # The bare "rcs" branch already exists; this test exercises the longer
+    # "immatriculée au RCS de ..." preamble that comes BEFORE "RCS" and
+    # would otherwise leak into the INPI query.
+    result = extract_legal_denomination(SAMPLE_IMMATRICULEE_AU_RCS)
+    assert result is not None
+    # Note: PINEDE may render as PINEDE or PINÈDE depending on extractor.
+    assert "PINEDE" in result.upper() or "PINÈDE" in result.upper()
+    assert "immatriculée" not in result.lower() and "immatriculee" not in result.lower()
+    assert "bordeaux" not in result.lower()
+    assert "123456789" not in result
