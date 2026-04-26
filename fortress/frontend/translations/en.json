@@ -500,7 +500,7 @@
     "metricFailed": "Failed",
     "metricDuration": "Duration",
     "metricSubstitutions": "Substitutions",
-    "ringLabelQualRate": "Qualification rate",
+    "ringLabelQualRate": "Contact rate",
     "ringLabelNoResult": "Batch with no results",
     "poolBreakdown": "Pool breakdown",
     "dataQuality": "Enriched data quality",

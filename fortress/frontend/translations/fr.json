@@ -505,7 +505,7 @@
     "metricFailed": "Échouées",
     "metricDuration": "Durée",
     "metricSubstitutions": "Substitutions",
-    "ringLabelQualRate": "Taux de qualification",
+    "ringLabelQualRate": "Taux de contact",
     "ringLabelNoResult": "Batch sans résultat",
     "poolBreakdown": "Répartition du pool",
     "dataQuality": "Qualité des données enrichies",
