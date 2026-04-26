@@ -579,9 +579,9 @@ async def get_job(batch_id: str, request: Request):
 
     pending_row = await fetch_one("""
         SELECT COUNT(DISTINCT co.siren) AS pending_links
-        FROM batch_log bl
-        JOIN companies co ON co.siren = bl.siren
-        WHERE bl.batch_id = %s AND co.link_confidence = 'pending'
+        FROM batch_tags bt
+        JOIN companies co ON co.siren = bt.siren
+        WHERE bt.batch_id = %s AND co.link_confidence = 'pending'
     """, (batch_id,))
     pending_links = (pending_row or {}).get("pending_links", 0)
 
@@ -598,9 +598,9 @@ async def get_job(batch_id: str, request: Request):
             END AS state,
             COALESCE(co.link_method, 'native_sirene') AS method,
             COUNT(DISTINCT co.siren) AS n
-        FROM batch_log bl
-        JOIN companies co ON co.siren = bl.siren
-        WHERE bl.batch_id = %s
+        FROM batch_tags bt
+        JOIN companies co ON co.siren = bt.siren
+        WHERE bt.batch_id = %s
         GROUP BY state, method
     """, (batch_id,))
     link_stats = {
@@ -629,9 +629,9 @@ async def get_job(batch_id: str, request: Request):
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'verified') AS verified,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'mismatch') AS mismatch,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated
-        FROM batch_log bl
-        JOIN companies co ON co.siren = bl.siren
-        WHERE bl.batch_id = %s
+        FROM batch_tags bt
+        JOIN companies co ON co.siren = bt.siren
+        WHERE bt.batch_id = %s
     """, (batch_id,))
     if naf_row:
         link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
@@ -667,9 +667,9 @@ async def get_job(batch_id: str, request: Request):
     from fortress.config.naf_codes import get_naf_label  # noqa: E402
     naf_per_code = await fetch_all("""
         SELECT co.naf_code, COUNT(DISTINCT co.siren) AS n
-        FROM batch_log bl
-        JOIN companies co ON co.siren = bl.siren
-        WHERE bl.batch_id = %s
+        FROM batch_tags bt
+        JOIN companies co ON co.siren = bt.siren
+        WHERE bt.batch_id = %s
           AND co.naf_code IS NOT NULL
           AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)
           AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
@@ -880,10 +880,12 @@ async def get_job_companies(
         "date": "co.date_creation DESC NULLS LAST",
     }.get(sort, "completude DESC")
 
-    # Count total — scoped to this specific batch via batch_log
+    # Count total — scoped to this specific batch via batch_tags
+    # (batch_log includes A2 candidate-lookup audit rows under candidate
+    # SIRENs which would inflate the count; batch_tags = real Maps results.)
     count_row = await fetch_one(f"""
         SELECT COUNT(DISTINCT co.siren) AS total
-        FROM batch_log sa
+        FROM batch_tags sa
         JOIN companies co ON co.siren = sa.siren
         WHERE sa.batch_id = %s {where_extra}
     """, tuple([qid] + search_params))
@@ -894,13 +896,10 @@ async def get_job_companies(
     # best value per field across all contact rows for a given SIREN.
     params_fetch = search_params + [page_size, offset]
     rows = await fetch_all(f"""
-        WITH audit_query AS (
-            SELECT DISTINCT ON (siren) siren, search_query
-            FROM batch_log
-            WHERE batch_id = %s
-            ORDER BY siren, timestamp ASC
+        WITH batch_sirens AS (
+            SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s
         ),
-        {merged_contacts_cte('SELECT siren FROM audit_query')}
+        {merged_contacts_cte('SELECT siren FROM batch_sirens')}
         SELECT
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.forme_juridique, co.adresse, co.code_postal, co.ville,
@@ -913,10 +912,9 @@ async def get_job_companies(
             mc.phone_source, mc.email_source, mc.website_source,
             CASE WHEN mc.phone IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN mc.email IS NOT NULL THEN 1 ELSE 0 END +
-            CASE WHEN mc.website IS NOT NULL THEN 1 ELSE 0 END AS completude,
-            aq.search_query
-        FROM audit_query aq
-        JOIN companies co ON co.siren = aq.siren
+            CASE WHEN mc.website IS NOT NULL THEN 1 ELSE 0 END AS completude
+        FROM batch_sirens bs
+        JOIN companies co ON co.siren = bs.siren
         LEFT JOIN merged_contacts mc ON mc.siren = co.siren
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}
@@ -930,8 +928,10 @@ async def get_job_companies(
 async def get_job_quality(batch_id: str, request: Request):
     """Data quality breakdown scoped to THIS specific batch only.
 
-    Uses batch_log (which has batch_id per company) instead of batch_tags
-    (which shares batch_name across batches) so each batch shows its own stats.
+    Uses batch_tags (one row per actual Maps result, keyed by batch_id).
+    batch_log would also include A2 candidate-lookup audit rows under
+    each candidate's real SIREN — those would inflate stats with rows
+    that aren't real Maps results.
     """
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
@@ -950,7 +950,7 @@ async def get_job_quality(batch_id: str, request: Request):
 
     stats = await fetch_one(f"""
         WITH batch_sirens AS (
-            SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s
+            SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s
         ),
         {merged_contacts_cte('SELECT siren FROM batch_sirens')}
         SELECT
@@ -990,7 +990,7 @@ async def get_job_quality(batch_id: str, request: Request):
     # For Maps Discovery batches, officers/financials live on the linked real SIREN,
     # not on the MAPS entity — so we follow linked_siren via COALESCE.
     inpi_stat = await fetch_one("""
-        WITH bs AS (SELECT DISTINCT siren FROM batch_log WHERE batch_id = %s)
+        WITH bs AS (SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s)
         SELECT
             COUNT(DISTINCT CASE WHEN o.siren IS NOT NULL THEN bs.siren END) AS with_officers,
             COUNT(DISTINCT CASE WHEN real.chiffre_affaires IS NOT NULL THEN bs.siren END) AS with_financials
