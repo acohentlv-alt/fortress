@@ -424,6 +424,8 @@ _HOSTING_SIRENS: frozenset[str] = frozenset({
     # Cross-CP-leak SIRENs surfaced by Part 2 of D1b retrofit (2026-04-23)
     "330375486",  # LYON NORD — real-estate SIREN leaking onto 2 unrelated hotels (Brit + ibis)
     "483834164",  # J.T.L. EDITIONS — IT/editions company appearing in mentions-légales footers
+    # Phase 1b additions (2026-04-26)
+    "533670709",  # Sandaya — camping chain (Apr 26)
 })
 
 

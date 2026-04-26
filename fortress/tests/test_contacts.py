@@ -105,6 +105,11 @@ def test_hosting_sirens_blocks_franchise_umbrellas():
     assert _accept_siren("790303838") is None  # FONCIERE HUTTOPIA EUROPE
 
 
+def test_hosting_sirens_blocks_sandaya():
+    # Phase 1b addition (Apr 26) — Sandaya camping chain
+    assert _accept_siren("533670709") is None  # Sandaya — camping chain
+
+
 def test_accept_siren_passes_unknown_siren_through():
     assert _accept_siren("123456789") == "123456789"
 
@@ -115,9 +120,9 @@ def test_accept_siren_handles_none_and_empty():
 
 
 def test_hosting_sirens_frozenset_size():
-    # Sanity: 5 hosting + 5 franchise umbrella + 2 cross-CP HQ leaks = 12 entries.
+    # Sanity: 5 hosting + 5 franchise umbrella + 2 cross-CP HQ leaks + 1 Phase 1b = 13 entries.
     # When adding a new entry, bump this count and document the source above.
-    assert len(_HOSTING_SIRENS) == 12
+    assert len(_HOSTING_SIRENS) == 13
 
 
 def test_extract_siret_rejects_franchise_footer():

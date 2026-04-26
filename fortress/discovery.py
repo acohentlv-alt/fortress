@@ -819,6 +819,45 @@ async def _cp_name_disamb_match(
     }
 
 
+async def _is_franchise_live(
+    conn: Any,
+    proposed_siren: str,
+    current_maps_cp: str | None,
+) -> tuple[bool, int]:
+    """Phase 2 live check: reject siren_website match when SIREN is already
+    confirmed for a different MAPS entity at a DIFFERENT code_postal.
+
+    Returns (should_reject: bool, conflicting_count: int).
+
+    Logic:
+    - Queries the companies table for MAPS entities that already have
+      linked_siren == proposed_siren AND link_confidence == 'confirmed'
+      AND code_postal != current_maps_cp.
+    - If any such row exists, this is a franchise HQ leak (same parent SIREN
+      confirmed for multiple local sites in different postal codes).
+    - Same-CP case is NOT a leak (same business, duplicate entry handled by
+      existing dedup) — deliberately excluded from the reject logic.
+    - If current_maps_cp is None we cannot safely compare → do not reject.
+    """
+    if not current_maps_cp:
+        return False, 0
+    try:
+        cur = await conn.execute(
+            """SELECT COUNT(*) FROM companies
+               WHERE linked_siren = %s
+                 AND link_confidence = 'confirmed'
+                 AND code_postal != %s
+                 AND siren LIKE 'MAPS%%'""",
+            (proposed_siren, current_maps_cp),
+        )
+        row = await cur.fetchone()
+        count = int(row[0]) if row else 0
+        return count > 0, count
+    except Exception as exc:
+        log.debug("discovery.franchise_live_check_error", error=str(exc))
+        return False, 0
+
+
 async def _match_to_sirene(
     conn: Any,
     maps_name: str,
@@ -1075,21 +1114,41 @@ async def _match_to_sirene(
 
             if same_dept or name_overlap:
                 validated_by = "dept" if same_dept else "name"
-                log.info(
-                    "discovery.siren_website_validated",
-                    maps_name=maps_name,
-                    siren=extracted_siren,
-                    validated_by=validated_by,
+                # ── Phase 2 live franchise-leak check ────────────────────
+                # Before accepting: verify this SIREN isn't already confirmed
+                # for a DIFFERENT MAPS entity at a DIFFERENT postal code.
+                # That pattern means it's a franchise HQ (e.g. Sandaya, Siblu)
+                # whose parent SIREN appears in every storefront's footer.
+                _is_franchise, _conflict_count = await _is_franchise_live(
+                    conn, extracted_siren, maps_cp
                 )
-                return {
-                    "siren": siren_row[0],
-                    "denomination": sirene_denom,
-                    "enseigne": sirene_enseigne,
-                    "score": 0.95,
-                    "method": "siren_website",
-                    "adresse": siren_row[3] or "",
-                    "ville": siren_row[4] or "",
-                }
+                if _is_franchise:
+                    log.warning(
+                        "discovery.siren_website_rejected",
+                        action="siren_website_rejected_franchise_live",
+                        maps_name=maps_name,
+                        siren=extracted_siren,
+                        maps_cp=maps_cp,
+                        conflicting_cp_count=_conflict_count,
+                        reason="franchise_hq_already_confirmed_at_different_cp",
+                    )
+                    # Fall through to next matcher step (enseigne, phone, etc.)
+                else:
+                    log.info(
+                        "discovery.siren_website_validated",
+                        maps_name=maps_name,
+                        siren=extracted_siren,
+                        validated_by=validated_by,
+                    )
+                    return {
+                        "siren": siren_row[0],
+                        "denomination": sirene_denom,
+                        "enseigne": sirene_enseigne,
+                        "score": 0.95,
+                        "method": "siren_website",
+                        "adresse": siren_row[3] or "",
+                        "ville": siren_row[4] or "",
+                    }
             else:
                 log.warning(
                     "discovery.siren_website_rejected",

@@ -1,6 +1,10 @@
-"""Tests for _validate_inpi_step0_hit — A1.1 substring-pair loosen (Apr 22)."""
+"""Tests for _validate_inpi_step0_hit — A1.1 substring-pair loosen (Apr 22).
+Also tests _is_franchise_live — Phase 2 live franchise-leak check (Apr 26).
+"""
 
-from fortress.discovery import _validate_inpi_step0_hit, _normalize_name, _INDUSTRY_WORDS
+from unittest.mock import AsyncMock, MagicMock
+
+from fortress.discovery import _validate_inpi_step0_hit, _normalize_name, _INDUSTRY_WORDS, _is_franchise_live
 
 
 def _mt(name: str) -> list[str]:
@@ -84,3 +88,63 @@ def test_chic_choc_loosen_accepts():
         local_denom="CHICCHOC", local_enseigne="",
         local_cp="69001", local_dept="69",
     ) is True
+
+
+# ── _is_franchise_live — Phase 2 live franchise-leak check (Apr 26) ──────────
+# Three candidate scenarios:
+#   A) SIREN already confirmed for a MAPS entity at a DIFFERENT CP → reject
+#   B) SIREN only confirmed at the SAME CP → do not reject (same-business dedup)
+#   C) No prior confirmed MAPS for this SIREN → do not reject (first occurrence)
+
+
+def _make_conn(count: int) -> MagicMock:
+    """Build a minimal async conn mock that returns `count` from COUNT(*)."""
+    cursor = AsyncMock()
+    cursor.fetchone = AsyncMock(return_value=(count,))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=cursor)
+    return conn
+
+
+async def test_franchise_live_rejects_different_cp():
+    """Scenario A: 3 confirmed MAPS entities at different CPs → should reject."""
+    conn = _make_conn(3)
+    should_reject, count = await _is_franchise_live(conn, "533670709", "34000")
+    assert should_reject is True
+    assert count == 3
+
+
+async def test_franchise_live_passes_same_cp():
+    """Scenario B: SIREN confirmed only at same CP → do not reject (dedup case)."""
+    # SQL filters code_postal != current_maps_cp, so same-CP rows are excluded.
+    # If DB returns 0 (no conflicts at different CP), we should NOT reject.
+    conn = _make_conn(0)
+    should_reject, count = await _is_franchise_live(conn, "533670709", "66140")
+    assert should_reject is False
+    assert count == 0
+
+
+async def test_franchise_live_passes_no_prior_confirmed():
+    """Scenario C: No previous confirmed MAPS for this SIREN → first occurrence, do not reject."""
+    conn = _make_conn(0)
+    should_reject, count = await _is_franchise_live(conn, "999999999", "75001")
+    assert should_reject is False
+    assert count == 0
+
+
+async def test_franchise_live_passes_when_no_cp():
+    """When current_maps_cp is None we cannot compare → do not reject (safe default)."""
+    conn = AsyncMock()  # should never be called
+    should_reject, count = await _is_franchise_live(conn, "533670709", None)
+    assert should_reject is False
+    assert count == 0
+    conn.execute.assert_not_called()
+
+
+async def test_franchise_live_handles_db_error():
+    """If DB query fails, return (False, 0) — never crash the pipeline."""
+    conn = AsyncMock()
+    conn.execute = AsyncMock(side_effect=Exception("DB timeout"))
+    should_reject, count = await _is_franchise_live(conn, "533670709", "34000")
+    assert should_reject is False
+    assert count == 0
