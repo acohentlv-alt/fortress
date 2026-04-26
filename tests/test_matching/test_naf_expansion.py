@@ -65,14 +65,18 @@ def test_none_matched_naf_is_mismatch():
     assert _compute_naf_status(None, ["10.71C"], None) == "mismatch"
 
 
-def test_seed_map_has_47_keys():
+def test_seed_map_key_count():
     """Regression: accidental edits to the map that drop/add entries should trip.
-    Count updated from 45 → 47 after Apr 19 clique enrichment:
-    +2 for hôtellerie clique (55.20Z and 55.90Z are new keys; 55.10Z and 55.30Z were already keys)
-    +0 net for restauration (56.10A, 56.10C, 56.21Z were all already keys — count unchanged)
-    45 original + 2 new hôtellerie = 47 total.
+
+    History:
+      - 45 original
+      - +2 (Apr 19) for hôtellerie clique — 55.20Z and 55.90Z added as new keys
+        (55.10Z and 55.30Z were already keys); restauration 56.10A/56.10C/56.21Z
+        already keys, no net change.
+      - +4 (Apr 26) for horticulture clique — 01.30Z, 01.19Z, 46.22Z, 47.76Z
+        all new keys (Pépinières de Vair Sur Loire regression).
     """
-    assert len(SECTOR_EXPANSIONS) == 47
+    assert len(SECTOR_EXPANSIONS) == 51
 
 
 def test_seed_map_all_values_are_frozenset():
@@ -209,6 +213,24 @@ def test_restauration_clique_full():
     assert same_sector_group("56.10C", "56.21Z") is True  # rapide ↔ traiteur
     # Cross-clique still rejected: hôtel vs restaurant
     assert same_sector_group("55.10Z", "56.10A") is False
+
+
+def test_horticulture_clique_full():
+    """Apr 26: Pépinières de Vair Sur Loire (44150) regression — picker 01.30Z
+    + SIRENE 46.22Z held pending despite enseigne+address agree and 50m geo
+    distance, because the matcher's NAF gate didn't know production ↔ wholesale
+    of plants is the same filière. Clique fixes that.
+    """
+    horti = ["01.30Z", "01.19Z", "46.22Z", "47.76Z"]
+    assert all_same_sector_group(horti) is True
+    # Spot-check the regression case directly
+    assert same_sector_group("01.30Z", "46.22Z") is True  # production ↔ wholesale (the regression)
+    assert same_sector_group("46.22Z", "47.76Z") is True  # wholesale ↔ retail
+    assert same_sector_group("01.19Z", "01.30Z") is True  # autres cultures ↔ pépinière
+    # Documented exclusions stay rejected
+    assert same_sector_group("01.30Z", "01.13Z") is False  # vs maraîchage (légumes)
+    assert same_sector_group("01.30Z", "81.30Z") is False  # vs paysagisme (service)
+    assert same_sector_group("46.22Z", "46.21Z") is False  # vs céréales/aliments bétail
 
 
 def test_platrerie_remains_singleton():
