@@ -7,6 +7,8 @@ All users share the same database (companies, contacts, etc.).
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -689,3 +691,54 @@ async def deploy_status(request: Request):
         "message": "✅ Aucun batch en cours — déploiement sûr." if len(active_jobs) == 0
                    else f"⚠️ {len(active_jobs)} batch(s) en cours — attendez avant de déployer.",
     }
+
+
+@router.post("/backfill-geo")
+async def backfill_geo(request: Request):
+    """Trigger the BAN geo backfill script for ws174 historical MAPS entities.
+
+    Admin-only. Spawns the script as a subprocess so the long job is
+    isolated from the API process, which returns immediately.
+
+    Body: {"workspace_id": 174, "limit": <int|null>}
+
+    Non-admin → 403 "Admin requis."
+    workspace_id != 174 → 400 (V1 restriction — ws1 Cindy retrofit is a
+    separate session after sample-audit of ws174 precision).
+    """
+    admin = _get_admin(request)
+    if not admin:
+        return JSONResponse(status_code=403, content={"error": "Admin requis."})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    ws = int(body.get("workspace_id", 0))
+    limit = body.get("limit")
+
+    if ws != 174:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": (
+                    "Backfill restreint au workspace 174 dans la V1. "
+                    "Le retrofit ws1 (Cindy) sera lancé séparément."
+                ),
+            },
+        )
+
+    args = ["python3", "-m", "scripts.backfill_ban_geo", "--workspace", "174"]
+    if limit:
+        args += ["--limit", str(int(limit))]
+
+    # cwd = repo root so `-m scripts.backfill_ban_geo` resolves correctly
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+    subprocess.Popen(args, cwd=repo_root)
+
+    logger.info("admin.backfill_geo_spawned by=%s ws=%s limit=%s", admin.username, ws, limit)
+    return JSONResponse({
+        "ok": True,
+        "message": "Backfill lancé en arrière-plan.",
+    })
