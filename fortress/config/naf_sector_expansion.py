@@ -173,6 +173,24 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     "56.10A": frozenset({"56.10A", "56.10C", "56.21Z"}),
     "56.10C": frozenset({"56.10C", "56.10A", "56.21Z"}),  # Symétrie : rapide ↔ traditionnelle/traiteur
     "56.21Z": frozenset({"56.21Z", "56.10A", "56.10C"}),  # Symétrie : traiteur ↔ traditionnelle/rapide
+
+    # ═══ Horticulture / pépinières / fleuristes ═══
+    # Une pépinière physique peut être enregistrée côté production (01.30Z reproduction
+    # de plantes), côté autres cultures permanentes (01.19Z — fleurs coupées, plantes
+    # ornementales en plein champ), côté commerce de gros (46.22Z — vente aux fleuristes
+    # et paysagistes), ou côté commerce de détail (47.76Z — boutique avec comptoir).
+    # Du point de vue Cindy (recherche "pépinière 49"), ces 4 codes sont la même filière
+    # horticole. Régression Pépinières de Vair Sur Loire (44150) — 26 avril : picker 01.30Z,
+    # SIREN 821086378 enregistré 46.22Z (vente en gros), match enseigne+adresse confirmé,
+    # quarantaine Gemini D1b par mismatch de section. Clique mutuelle pour rattraper.
+    # Excluded: 01.13Z légumes / maraîchage (filière distincte — chaîne d'approvisionnement
+    #           différente, pas de pépinière ornementale), 46.21Z céréales/semences/aliments
+    #           bétail (recouvrement faible — semences agricoles ≠ semences ornementales),
+    #           81.30Z paysagisme (métier de service, pas de production/négoce de plantes).
+    "01.30Z": frozenset({"01.30Z", "01.19Z", "46.22Z", "47.76Z"}),
+    "01.19Z": frozenset({"01.19Z", "01.30Z", "46.22Z", "47.76Z"}),  # Symétrie : autres cultures ↔ pépinière/gros/détail
+    "46.22Z": frozenset({"46.22Z", "01.30Z", "01.19Z", "47.76Z"}),  # Symétrie : gros plantes ↔ production/détail
+    "47.76Z": frozenset({"47.76Z", "01.30Z", "01.19Z", "46.22Z"}),  # Symétrie : détail plantes ↔ production/gros
 }
 
 
