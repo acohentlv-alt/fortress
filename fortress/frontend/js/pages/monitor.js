@@ -23,6 +23,7 @@ import { getCachedUser } from '../api.js';
 import { t, getLang } from '../i18n.js';
 
 let pollInterval = null;
+let _monitorListAbort = null; // AbortController for renderMonitorList event listener
 
 /**
  * Build the summary HTML from polled job data (no extra API call needed).
@@ -145,6 +146,13 @@ async function renderMonitorList(container) {
     `;
 
     // ── Event delegation for delete buttons ──────────────────────────
+    // Abort any previous listener on this container (prevent stacking on re-render).
+    if (_monitorListAbort) {
+        _monitorListAbort.abort();
+    }
+    _monitorListAbort = new AbortController();
+    // Use capture:true so this fires before the job-card inline onclick can
+    // navigate away — stopPropagation() then prevents that navigation.
     container.addEventListener('click', async (event) => {
         const btn = event.target.closest('.btn-delete-job');
         if (!btn) return;
@@ -197,7 +205,7 @@ async function renderMonitorList(container) {
                 },
             });
         }
-    });
+    }, { capture: true, signal: _monitorListAbort.signal });
 }
 
 async function renderJobMonitor(container, batchId) {
