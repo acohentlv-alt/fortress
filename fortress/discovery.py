@@ -64,6 +64,11 @@ _CP_NAME_DISAMB_BAND_B_POOL_MAX = 5      # Band B: pool size ceiling
 _CP_NAME_DISAMB_BAND_B_DOMINANCE = 0.15  # Band B: top-1 must beat top-2 by this
 # Flip to True after 7 days of clean Band B audit (manual decision per Alan).
 _BAND_B_AUTO_CONFIRM_ENABLED: bool = False
+# TOP 2 — Individual cat_jur 1000 pass-2 threshold (Apr 26).
+# Lower than Band A (0.90) because individual enseignes tend to match Maps storefronts
+# verbatim, and pass 2 is already heavily gated (agriculture-only, code-1000-only,
+# non-empty-enseigne-only, enseigne-scored-only).
+_CP_NAME_DISAMB_INDIV_BAND_A_SIM = 0.85
 
 
 def _compute_naf_status(
@@ -580,6 +585,7 @@ _STRONG_METHODS = frozenset({
     "chain",  # Agent B — franchise/chain detector
     "gemini_judge",  # D1b rescue (April 22) — Gemini upgraded a weak/maps_only candidate
     "cp_name_disamb",  # P3 Step 2.5 — CP-restricted NAF-filtered name disambiguation
+    "cp_name_disamb_indiv",  # TOP 2 — code 1000 agriculture pass 2 (Apr 26)
 })
 
 # Weak match methods — A2 mentions-légales rescue is allowed to replace these.
@@ -761,13 +767,100 @@ async def _cp_name_disamb_match(
         [maps_name, maps_name, maps_cp] + naf_params,
     )
     rows = await cur.fetchall()
+
+    # Pass 1 scoring (always computed, used to decide if pass 2 fires).
+    pool_size = len(rows)
+    top_sim = float(rows[0][18] or 0.0) if rows else 0.0
+    second_sim = float(rows[1][18] or 0.0) if pool_size >= 2 else 0.0
+
+    # Detect Band A immediately so the pass-2 trigger has a single source of truth:
+    # "did pass 1 land an auto-confirmable Band A candidate?"
+    pass1_has_band_a = pool_size > 0 and top_sim >= _CP_NAME_DISAMB_BAND_A_SIM
+
+    # ── Pass 2: Individual cat_jur 1000 fallback (agriculture only) ──
+    # Fires whenever pass 1 fails to identify a Band A candidate AND the picker is
+    # agriculture (every active NAF prefix starts with '01.').
+    # Includes the empty-rows case (pass 1 found nothing in NAF+CP) and the more
+    # common case (pass 1 found rows but the GREATEST(enseigne, denomination) scoring
+    # topped out below 0.90 because EARL/SCEA `denomination` rows in the same pool
+    # washed out the individuals' `enseigne` similarity).
+    # Pass 2 re-scores the same pool subset (filtered to forme_juridique='1000' +
+    # non-empty enseigne) using `similarity(enseigne, maps_name)` ONLY — the trade
+    # name `enseigne` is the load-bearing field for individual entrepreneurs.
+    if not pass1_has_band_a and all(p.startswith("01.") for p in naf_prefixes):
+        cur2 = await conn.execute(
+            f"""SELECT siren, siret_siege, denomination, enseigne, naf_code, naf_libelle,
+                       forme_juridique, adresse, code_postal, ville, departement,
+                       region, statut, date_creation, tranche_effectif,
+                       latitude, longitude, fortress_id,
+                       similarity(COALESCE(enseigne,''), %s) AS sim_enseigne
+                FROM companies
+                WHERE code_postal = %s
+                  AND statut = 'A'
+                  AND siren NOT LIKE 'MAPS%%'
+                  AND ({naf_like_clauses})
+                  AND forme_juridique = '1000'
+                  AND enseigne IS NOT NULL
+                  AND enseigne <> ''
+                ORDER BY sim_enseigne DESC
+                LIMIT 100""",  # noqa: S608
+            [maps_name, maps_cp] + naf_params,
+        )
+        rows2 = await cur2.fetchall()
+        if rows2:
+            top2 = rows2[0]
+            top2_sim = float(top2[18] or 0.0)
+            if top2_sim >= _CP_NAME_DISAMB_INDIV_BAND_A_SIM:
+                log.info(
+                    "discovery.cp_name_disamb_indiv_match",
+                    maps_name=maps_name, maps_cp=maps_cp,
+                    band="A_indiv",
+                    siren=top2[0],
+                    denomination=top2[2], enseigne=top2[3],
+                    matched_naf=top2[4],
+                    top_sim_enseigne=round(top2_sim, 3),
+                    pool_size=len(rows2),
+                    pass1_pool_size=pool_size,
+                    pass1_top_sim=round(top_sim, 3),
+                    naf_strict_prefix_matched=True,
+                    candidates_considered=len(rows2),
+                )
+                return {
+                    "siren": top2[0],
+                    "denomination": top2[2] or "",
+                    "enseigne": top2[3] or "",
+                    "score": round(top2_sim, 2),
+                    "method": "cp_name_disamb_indiv",
+                    "adresse": top2[7] or "",
+                    "ville": top2[9] or "",
+                    "cp_name_disamb_meta": {
+                        "top_sim_enseigne": round(top2_sim, 3),
+                        "pool_size": len(rows2),
+                        "candidates_considered": len(rows2),
+                        "naf_strict_prefix_matched": True,
+                        "forme_juridique_filter": "1000",
+                        "pass": 2,
+                        "pass1_pool_size": pool_size,
+                        "pass1_top_sim": round(top_sim, 3),
+                    },
+                }
+            else:
+                log.info(
+                    "discovery.cp_name_disamb_indiv_no_band",
+                    maps_name=maps_name, maps_cp=maps_cp,
+                    top_sim_enseigne=round(top2_sim, 3),
+                    pool_size=len(rows2),
+                    pass1_pool_size=pool_size,
+                    pass1_top_sim=round(top_sim, 3),
+                )
+                # fall through to pass 1 band detection below
+        # if rows2 is empty, also fall through to pass 1 band detection
+
+    # ── Pass 1 band detection (unchanged from pre-Apr-26) ──
     if not rows:
         return None
 
-    pool_size = len(rows)
     top_row = rows[0]
-    top_sim = float(top_row[18] or 0.0)
-    second_sim = float(rows[1][18] or 0.0) if len(rows) >= 2 else 0.0
 
     band: str | None = None
     if top_sim >= _CP_NAME_DISAMB_BAND_A_SIM:
@@ -2858,6 +2951,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_chain"
                                 elif method == "cp_name_disamb":
                                     audit_action = "auto_linked_cp_name_disamb"
+                                elif method == "cp_name_disamb_indiv":
+                                    audit_action = "auto_linked_individual_match"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
