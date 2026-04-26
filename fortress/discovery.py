@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import signal
 import sys
@@ -586,6 +587,7 @@ _STRONG_METHODS = frozenset({
     "gemini_judge",  # D1b rescue (April 22) — Gemini upgraded a weak/maps_only candidate
     "cp_name_disamb",  # P3 Step 2.5 — CP-restricted NAF-filtered name disambiguation
     "cp_name_disamb_indiv",  # TOP 2 — code 1000 agriculture pass 2 (Apr 26)
+    "geo_proximity",  # Phase 2 (TOP 1) — 400m bounding-box proximity matcher
 })
 
 # Weak match methods — A2 mentions-légales rescue is allowed to replace these.
@@ -600,6 +602,44 @@ _A2_WEAK_ELIGIBLE = frozenset({
     "enseigne_weak",
     "phone_weak",
 })
+
+# ── Phase 2 — Geo proximity matcher (Step 2.6) ────────────────────────────
+# 400m radius (single global default — no per-dept variation in v1).
+# Lat/lng deltas at French latitudes:
+#   1° lat  ≈ 111km                  -> 400m ≈ 0.0036°
+#   1° lng  ≈ 111km × cos(46°N)≈77km -> 400m ≈ 0.0050°
+# Across France's lat range (42°N–51°N) the lng delta of 0.0050°
+# corresponds to roughly 349m–419m of east-west distance —
+# acceptable variance for v1; can be made dynamic later.
+_GEO_RADIUS_M = 400
+_GEO_LAT_DELTA = 0.0036
+_GEO_LNG_DELTA = 0.0050
+# Default auto-confirm thresholds (Phase 2 v1).
+# Phase 3 will OVERRIDE these via kwargs when sweeping
+# ban_backfilled historical entities (tighter: 0.95 / 0.20).
+_GEO_CONFIRM_TOP_SCORE = 0.85
+_GEO_CONFIRM_DOMINANCE = 0.15
+# INSEE geocode_quality enum: '11' exact, '12' street-interpolated,
+# '21'/'22' "voie probable" (geocode itself is up to ~200m fuzzy).
+# For loose-quality candidates we tighten the name-similarity bar to
+# 0.95 — the spatial side is already noisy, so the name side has to
+# carry more of the burden. Quality '11'/'12'/NULL keep the default.
+_GEO_LOOSE_QUALITIES = frozenset({"21", "22"})
+_GEO_LOOSE_QUALITY_TOP_SCORE = 0.95
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in metres between two WGS84 points."""
+    R = 6_371_000.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+        * math.sin(dlng / 2) ** 2
+    )
+    return 2 * R * math.asin(math.sqrt(a))
+
 
 _LEGAL_FORM_TOKENS = frozenset({
     "earl", "gaec", "scea", "scev", "sci", "sarl", "sas",
@@ -951,6 +991,118 @@ async def _is_franchise_live(
         return False, 0
 
 
+async def _geo_proximity_match(
+    conn: Any,
+    maps_name: str,
+    maps_lat: float,
+    maps_lng: float,
+    picked_nafs: list[str] | None,
+    naf_division_whitelist: list[str] | None,
+    *,
+    top_threshold: float = _GEO_CONFIRM_TOP_SCORE,
+    dominance_threshold: float = _GEO_CONFIRM_DOMINANCE,
+) -> dict | None:
+    """Step 2.6: 400m proximity-restricted name disambiguation.
+
+    Bounding box derived from _GEO_LAT_DELTA / _GEO_LNG_DELTA.
+    Joins companies_geom (sirene_geo + ban_backfill rows) to
+    companies for name/enseigne/naf/cp.
+
+    Threshold kwargs (top_threshold / dominance_threshold):
+      - Default 0.85 / 0.15 = Phase 2 v1 (Maps panel coords,
+        relatively trustworthy).
+      - Phase 3 callers override with 0.95 / 0.20 for BAN-
+        geocoded historical entities (less trustworthy).
+
+    Returns a candidate dict matching Step 2/3/4/5 shape:
+      {"siren": str, "score": float, "method": "geo_proximity",
+       "geo_proximity_distance_m": int,
+       "geo_proximity_top_score": float,
+       "geo_proximity_2nd_score": float,
+       "geo_proximity_pool_size": int}
+    or None when:
+      - bounding box is empty (no candidates within 400m)
+      - top score < top_threshold
+      - top score - 2nd score < dominance_threshold
+        (forces ambiguous pools to fail this step rather than
+         produce a low-confidence pending — better to let later
+         steps try.)
+
+    NAF filtering: this helper does NOT pre-filter by picked_nafs
+    inside the SQL. The bounding box is the discriminator.
+    naf_status is computed in the caller (_match_to_sirene's
+    shared decision block) using the candidate's matched_naf vs picker.
+    """
+    lat_min = maps_lat - _GEO_LAT_DELTA
+    lat_max = maps_lat + _GEO_LAT_DELTA
+    lng_min = maps_lng - _GEO_LNG_DELTA
+    lng_max = maps_lng + _GEO_LNG_DELTA
+
+    cur = await conn.execute(
+        """
+        SELECT cg.siren,
+               cg.lat, cg.lng, cg.geocode_quality,
+               co.denomination, co.enseigne, co.naf_code,
+               co.code_postal, co.adresse, co.statut
+        FROM companies_geom cg
+        JOIN companies co ON co.siren = cg.siren
+        WHERE cg.source IN ('sirene_geo', 'ban_backfill')
+          AND cg.lat BETWEEN %s AND %s
+          AND cg.lng BETWEEN %s AND %s
+          AND co.statut = 'A'
+          AND co.siren NOT LIKE 'MAPS%%'
+        """,
+        (lat_min, lat_max, lng_min, lng_max),
+    )
+    rows = await cur.fetchall()
+
+    if not rows:
+        return None
+
+    scored = []
+    for row in rows:
+        siren_, lat_, lng_, quality, denom, enseigne_, naf_, cp_, addr_, _statut = row
+        best_name = max(
+            _name_match_score(maps_name, denom or ""),
+            _name_match_score(maps_name, enseigne_ or ""),
+        )
+        dist_m = _haversine_m(maps_lat, maps_lng, float(lat_), float(lng_))
+        scored.append({
+            "siren": siren_, "score": best_name, "dist_m": int(dist_m),
+            "denom": denom, "enseigne": enseigne_, "naf": naf_, "cp": cp_,
+            "quality": quality,
+        })
+
+    scored.sort(key=lambda r: r["score"], reverse=True)
+    top = scored[0]
+    second_score = scored[1]["score"] if len(scored) >= 2 else 0.0
+
+    # Tighten the top-score bar when the matched coord has loose INSEE
+    # quality ('21'/'22' = "voie probable"). Caller-provided override
+    # (Phase 3 BAN backfill) wins over the loose-quality bump only when
+    # the override is already stricter.
+    effective_top = top_threshold
+    top_quality = top.get("quality")
+    if top_quality in _GEO_LOOSE_QUALITIES:
+        effective_top = max(effective_top, _GEO_LOOSE_QUALITY_TOP_SCORE)
+
+    if top["score"] < effective_top:
+        return None
+    if (top["score"] - second_score) < dominance_threshold:
+        return None
+
+    return {
+        "siren": top["siren"],
+        "score": top["score"],
+        "method": "geo_proximity",
+        "geo_proximity_distance_m": top["dist_m"],
+        "geo_proximity_top_score": top["score"],
+        "geo_proximity_2nd_score": second_score,
+        "geo_proximity_pool_size": len(scored),
+        "geo_proximity_quality": top_quality,
+    }
+
+
 async def _match_to_sirene(
     conn: Any,
     maps_name: str,
@@ -963,6 +1115,8 @@ async def _match_to_sirene(
     picked_nafs: list[str] | None = None,               # NEW — Step 2.5 CP name disamb
     naf_division_whitelist: list[str] | None = None,    # NEW — Step 2.5 CP name disamb
     maps_cp: str | None = None,                         # NEW — Step 2.5 CP name disamb
+    maps_lat: float | None = None,                      # NEW — Phase 2 geo proximity
+    maps_lng: float | None = None,                      # NEW — Phase 2 geo proximity
 ) -> dict | None:
     """Try to find a matching company in the SIRENE database.
 
@@ -1357,6 +1511,33 @@ async def _match_to_sirene(
         )
         if cp_cand is not None:
             return cp_cand
+
+    # ── Step 2.6: Geo proximity match (Phase 2 of TOP 1) ─────────────────
+    # Fires when prior steps missed AND Maps panel produced lat/lng.
+    # Uses a 400m bounding box against companies_geom (sirene_geo +
+    # ban_backfill). Auto-confirm gating happens in the caller's
+    # shared NAF gate; this helper only returns the candidate.
+    if maps_lat is not None and maps_lng is not None:
+        geo_cand = await _geo_proximity_match(
+            conn, maps_name, maps_lat, maps_lng,
+            picked_nafs, naf_division_whitelist,
+        )
+        if geo_cand is not None:
+            log.info(
+                "discovery.step_2_6_triggered",
+                maps_name=maps_name,
+                pool_size=geo_cand.get("geo_proximity_pool_size"),
+                top_score=geo_cand.get("geo_proximity_top_score"),
+                second_score=geo_cand.get("geo_proximity_2nd_score"),
+                distance_m=geo_cand.get("geo_proximity_distance_m"),
+                target_siren=geo_cand.get("siren"),
+            )
+            return geo_cand
+    else:
+        log.debug(
+            "discovery.step_2_6_skipped_no_coords",
+            maps_name=maps_name,
+        )
 
     # ── Step 3: Phone match (unique identifier, no postal code) ──────────
     # A phone number is unique to one business — postal code check not needed.
@@ -2229,6 +2410,8 @@ async def run(batch_id: str) -> None:
                             picked_nafs=picked_nafs,
                             naf_division_whitelist=naf_division_whitelist,
                             maps_cp=maps_cp,
+                            maps_lat=maps_result.get("lat"),
+                            maps_lng=maps_result.get("lng"),
                         )
 
                     log.info(
@@ -2879,6 +3062,16 @@ async def run(batch_id: str) -> None:
                                     conn, target_siren, maps_name, maps_phone, maps_address, extracted_siren
                                 )
                                 agree_count = sum(1 for v in link_signals.values() if v is True)
+                                # Step 2.6 geo telemetry — stamp proximity metadata into link_signals
+                                # so the frontend tooltip and QA SQL can surface it.
+                                if method == "geo_proximity" and _pending_link is not None:
+                                    link_signals["geo_proximity_distance_m"] = _pending_link.get("geo_proximity_distance_m")
+                                    link_signals["geo_proximity_top_score"] = _pending_link.get("geo_proximity_top_score")
+                                    link_signals["geo_proximity_2nd_score"] = _pending_link.get("geo_proximity_2nd_score")
+                                    link_signals["geo_proximity_pool_size"] = _pending_link.get("geo_proximity_pool_size")
+                                    link_signals["geo_proximity_quality"] = _pending_link.get("geo_proximity_quality")
+                                    if naf_status == "mismatch":
+                                        link_signals["sector_mismatch"] = True
                                 if naf_status == "verified":
                                     auto_confirm = True
                                 elif naf_status == "mismatch" and method == "siren_website" and link_signals.get("siren_website_match"):
@@ -2888,9 +3081,15 @@ async def run(batch_id: str) -> None:
                                 elif naf_status == "mismatch" and agree_count >= 2:
                                     auto_confirm = True
                                 elif picked_nafs == []:
-                                    # Safeguard: INPI-based strong methods with no NAF filter
-                                    # require ≥ 1 secondary signal for auto-confirm
-                                    if method in {"inpi", "inpi_fuzzy_agree", "inpi_mentions_legales", "chain"}:
+                                    # Safeguard: name-only strong methods with no NAF filter
+                                    # require ≥ 1 secondary signal for auto-confirm.
+                                    # geo_proximity added here (Phase 2 fix): a 400m bounding-box
+                                    # match on name-similarity alone with no sector filter is
+                                    # too permissive — requires ≥1 signal same as INPI-family.
+                                    if method in {
+                                        "inpi", "inpi_fuzzy_agree", "inpi_mentions_legales",
+                                        "chain", "geo_proximity",
+                                    }:
                                         auto_confirm = agree_count >= 1
                                     else:
                                         auto_confirm = True
@@ -2976,6 +3175,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_cp_name_disamb"
                                 elif method == "cp_name_disamb_indiv":
                                     audit_action = "auto_linked_individual_match"
+                                elif method == "geo_proximity":
+                                    audit_action = "auto_linked_geo_proximity"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":

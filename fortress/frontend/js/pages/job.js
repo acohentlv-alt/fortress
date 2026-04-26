@@ -62,6 +62,7 @@ function buildScoreboardCard(job, linkStats, summary) {
             inpi_mentions_legales: 'company.linkReasonInpiMentionsLegales',
             chain: 'company.linkReasonChain',
             gemini_judge: 'company.linkReasonGeminiJudge',
+            geo_proximity: 'company.linkReasonGeoProximity',
         };
         return map[m] ? t(map[m]) : m;
     };

@@ -278,6 +278,7 @@
     "linkReasonInpiMentionsLegales": "Nom légal extrait des mentions légales",
     "linkReasonChain": "Enseigne de réseau détectée (franchise / chaîne)",
     "linkReasonGeminiJudge": "Correspondance validée par IA (Gemini)",
+    "linkReasonGeoProximity": "Liaison par proximité géographique",
     "methodLabelAddress": "Même adresse",
     "methodLabelFuzzy": "Nom similaire",
     "methodLabelPhone": "Même téléphone",

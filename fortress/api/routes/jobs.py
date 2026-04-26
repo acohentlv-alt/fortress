@@ -646,14 +646,15 @@ async def get_job(batch_id: str, request: Request):
         JOIN companies co ON co.siren = bl.siren
         WHERE bl.batch_id = %s
           AND co.naf_status = 'verified'
-          AND bl.action IN ('auto_linked_verified', 'auto_linked_expanded')
+          AND bl.action IN ('auto_linked_verified', 'auto_linked_expanded',
+                            'auto_linked_geo_proximity')
         GROUP BY bl.action
     """, (batch_id,))
     naf_exact = 0
     naf_related = 0
     for row in naf_split_rows:
-        if row["action"] == "auto_linked_verified":
-            naf_exact = int(row["n"] or 0)
+        if row["action"] in ("auto_linked_verified", "auto_linked_geo_proximity"):
+            naf_exact += int(row["n"] or 0)
         elif row["action"] == "auto_linked_expanded":
             naf_related = int(row["n"] or 0)
     link_stats["naf_exact"] = naf_exact

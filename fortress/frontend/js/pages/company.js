@@ -36,7 +36,7 @@ function effectifLabel(code) {
 
 function nafStatusBadge(status, ctx) {
     // ctx = { link_confidence, link_method, link_signals } — optional, from company detail API
-    const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address', 'inpi_fuzzy_agree', 'inpi_mentions_legales', 'chain', 'gemini_judge']);
+    const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address', 'inpi_fuzzy_agree', 'inpi_mentions_legales', 'chain', 'gemini_judge', 'geo_proximity']);
 
     const map = {
         verified:  { cls: 'glass-badge--green',  icon: '✓', labelKey: 'company.nafVerified' },
@@ -237,6 +237,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         if (method === 'inpi_mentions_legales') return t('company.linkReasonInpiMentionsLegales');
         if (method === 'chain') return t('company.linkReasonChain');
         if (method === 'gemini_judge') return t('company.linkReasonGeminiJudge');
+        if (method === 'geo_proximity') return t('company.linkReasonGeoProximity');
         return t('company.linkReasonAuto');
     };
 
