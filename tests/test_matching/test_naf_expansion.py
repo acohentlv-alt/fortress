@@ -42,6 +42,11 @@ def test_cross_sector_mismatch_critical_guardrail():
     # Restauration rapide must NOT auto-confirm resto traditionnel — NOW REVERSED: they are cliqued
     # This test is updated: 56.10A IS now in 56.10C's expansion (restauration clique Apr 19)
     assert _compute_naf_status("56.10A", ["56.10C"], None) == "verified"
+    # Apr 27 second pass — maraîchage cross-clique guardrails
+    assert _compute_naf_status("01.24Z", ["01.13Z"], None) == "mismatch"
+    assert _compute_naf_status("01.13Z", ["01.24Z"], None) == "mismatch"
+    assert _compute_naf_status("01.30Z", ["01.13Z"], None) == "mismatch"
+    assert _compute_naf_status("01.13Z", ["01.30Z"], None) == "mismatch"
 
 
 def test_section_whitelist_still_wins():
@@ -80,8 +85,10 @@ def test_seed_map_key_count():
         +4 viticulture (01.21Z, 11.02A, 11.02B, 46.34Z)
         +7 arboriculture (01.22Z, 01.23Z, 01.24Z, 01.25Z, 01.26Z, 01.29Z, 10.39B)
         +2 EHPAD (87.10A, 87.30A)
+      - +4 (Apr 27 second pass) for maraîchage clique — 01.13Z, 10.39A, 46.31Z,
+        47.21Z all new keys; ws174 4 regression cases.
     """
-    assert len(SECTOR_EXPANSIONS) == 65
+    assert len(SECTOR_EXPANSIONS) == 69
 
 
 def test_seed_map_all_values_are_frozenset():
@@ -372,3 +379,13 @@ def test_ehpad_clique_full():
     assert same_sector_group("87.10A", "87.10B") is False  # vs handicapés enfants
     assert same_sector_group("87.10A", "87.20Z") is False  # vs maladies mentales
     assert same_sector_group("87.10A", "86.10Z") is False  # vs hôpital aigu
+
+
+def test_maraichage_clique_full():
+    """All 4 maraîchage members verify against each other (symmetry)."""
+    members = ["01.13Z", "10.39A", "46.31Z", "47.21Z"]
+    for picker in members:
+        for matched in members:
+            assert _compute_naf_status(matched, [picker], None) == "verified", (
+                f"maraichage clique broken: picker={picker} matched={matched}"
+            )

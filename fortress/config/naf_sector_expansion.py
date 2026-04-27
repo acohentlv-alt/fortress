@@ -257,6 +257,31 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     #           (hôpital aigu ≠ résidence, même si un EHPAD peut être rattaché à un CH).
     "87.10A": frozenset({"87.10A", "87.30A"}),
     "87.30A": frozenset({"87.30A", "87.10A"}),  # Symétrie : résidence autonomie ↔ EHPAD médicalisé
+
+    # ═══ Maraîchage / cultures légumières ═══
+    # Une exploitation maraîchère (légumes plein champ ou serre, melons, salades,
+    # racines) peut être enregistrée côté production (01.13Z), côté transformation
+    # (10.39A — légumes transformés/conserves), côté gros (46.31Z — commerce de
+    # gros fruits & légumes), ou côté détail (47.21Z — primeurs).
+    # Régressions ws174 14j : "Au Jardin des Sables" + "SCEA de Guyenne" (47, 01.13Z),
+    # "DOMAINE LOS PENEDES" + "Ferme des 3 soleils" (46.31Z) — pickers divers,
+    # match strong-method bloqué par mismatch NAF.
+    #
+    # CROSS-CLIQUE NOTE — 46.31Z asymétrie : le code 46.31Z est aussi pertinent côté
+    # arboriculture (commerce gros fruits ET légumes), mais le clique arboriculture
+    # l'exclut explicitement comme "trop large". On accepte 46.31Z ici côté
+    # maraîchage uniquement — picker 01.13Z + match 46.31Z = verified, mais picker
+    # 01.24Z + match 46.31Z reste mismatch (asymétrie intentionnelle). Si 46.31Z est
+    # un jour ajouté au clique arboriculture, auditer les deux blocs.
+    #
+    # Excluded: 01.11Z céréales (filière distincte), 01.16Z sucre (industriel),
+    #           01.30Z pépinière (horticulture clique), 10.39B fruits (arbo clique),
+    #           46.21Z céréales/semences/aliments bétail, 46.39Z gros alim générale
+    #           (trop large), 81.30Z paysagisme (service ≠ production).
+    "01.13Z": frozenset({"01.13Z", "10.39A", "46.31Z", "47.21Z"}),
+    "10.39A": frozenset({"10.39A", "01.13Z", "46.31Z", "47.21Z"}),
+    "46.31Z": frozenset({"46.31Z", "01.13Z", "10.39A", "47.21Z"}),
+    "47.21Z": frozenset({"47.21Z", "01.13Z", "10.39A", "46.31Z"}),
 }
 
 
