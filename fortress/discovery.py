@@ -3375,6 +3375,11 @@ async def run(batch_id: str) -> None:
                                                     maps_name, _frank_denom, _frank_enseigne,
                                                 )
                                                 if not _is_frank:
+                                                    # Capture the original method BEFORE mutating _pending_link.
+                                                    # _pending_link aliases `candidate` (line ~2958), so the next
+                                                    # mutation also overwrites candidate["method"]. The audit
+                                                    # detail below reads original_method via this captured value.
+                                                    _original_method = _pending_link["method"]
                                                     # Quarantine: flip to pending, retag method, roll back companies row.
                                                     _pending_link["method"] = "gemini_quarantine"
                                                     await conn.execute(
@@ -3397,7 +3402,7 @@ async def run(batch_id: str) -> None:
                                                         result="success",
                                                         detail=json.dumps({
                                                             "quarantined_siren": _target_for_frank,
-                                                            "original_method": candidate["method"] if candidate else None,
+                                                            "original_method": _original_method,
                                                             "gemini_confidence": _vconf,
                                                             "gemini_reasoning": (_verdict.get("reasoning") or "")[:200],
                                                             "frankenstein_checked": True,

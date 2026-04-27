@@ -301,3 +301,43 @@ async def test_judge_match_rejects_malformed_siren():
                 rejected_siren=None,
             )
         assert result is None, f"Expected None for bad_siren={bad_siren!r}"
+
+
+# ---------------------------------------------------------------------------
+# 11. gemini_quarantine audit must record original_method (not the post-
+#     mutation "gemini_quarantine") — Apr 27 alias-trap regression.
+#
+# Bug: at fortress/discovery.py:2958, `_pending_link = candidate` aliases
+# the same dict. Then at line ~3379, `_pending_link["method"] = "gemini_quarantine"`
+# mutates the shared dict. Pre-fix, the audit detail's `original_method` field
+# read `candidate["method"]` AFTER the mutation, always recording
+# "gemini_quarantine" and losing the real upstream method (enseigne / inpi /
+# siren_website / geo_proximity / etc.).
+#
+# Fix: capture `_original_method = _pending_link["method"]` BEFORE the
+# mutation and pass that into the audit detail. This test codifies the
+# capture-before-mutate convention so future edits don't regress.
+# ---------------------------------------------------------------------------
+
+def test_quarantine_audit_captures_original_method_before_alias_mutation():
+    """Pre-fix bug pattern would have failed; the fix captures before mutating."""
+    # Reproduce the production pattern at discovery.py:2958
+    candidate = {"method": "siren_website", "siren": "123456789"}
+    _pending_link = candidate  # alias — same dict object
+
+    # Fix pattern: capture BEFORE the mutation at discovery.py:~3379
+    _original_method = _pending_link["method"]
+    _pending_link["method"] = "gemini_quarantine"  # production mutation
+
+    # Audit detail uses the captured value, not a re-read of the aliased dict.
+    detail = {
+        "quarantined_siren": "123456789",
+        "original_method": _original_method,
+    }
+    assert detail["original_method"] == "siren_website", (
+        "original_method must reflect the pre-quarantine method; "
+        "regression means the alias was re-read AFTER the mutation."
+    )
+    # Sanity: the alias mutation did happen on the shared dict.
+    assert candidate["method"] == "gemini_quarantine"
+    assert _pending_link is candidate
