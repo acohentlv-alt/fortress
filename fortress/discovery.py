@@ -1043,7 +1043,7 @@ async def _geo_proximity_match(
         SELECT cg.siren,
                cg.lat, cg.lng, cg.geocode_quality,
                co.denomination, co.enseigne, co.naf_code,
-               co.code_postal, co.adresse, co.statut
+               co.code_postal, co.adresse, co.ville, co.statut
         FROM companies_geom cg
         JOIN companies co ON co.siren = cg.siren
         WHERE cg.source IN ('sirene_geo', 'ban_backfill')
@@ -1061,7 +1061,7 @@ async def _geo_proximity_match(
 
     scored = []
     for row in rows:
-        siren_, lat_, lng_, quality, denom, enseigne_, naf_, cp_, addr_, _statut = row
+        siren_, lat_, lng_, quality, denom, enseigne_, naf_, cp_, addr_, ville_, _statut = row
         best_name = max(
             _name_match_score(maps_name, denom or ""),
             _name_match_score(maps_name, enseigne_ or ""),
@@ -1070,6 +1070,7 @@ async def _geo_proximity_match(
         scored.append({
             "siren": siren_, "score": best_name, "dist_m": int(dist_m),
             "denom": denom, "enseigne": enseigne_, "naf": naf_, "cp": cp_,
+            "addr": addr_, "ville": ville_,
             "quality": quality,
         })
 
@@ -1095,6 +1096,11 @@ async def _geo_proximity_match(
         "siren": top["siren"],
         "score": top["score"],
         "method": "geo_proximity",
+        "denomination": top.get("denom") or "",
+        "enseigne": top.get("enseigne") or "",
+        "adresse": top.get("addr") or "",
+        "ville": top.get("ville") or "",
+        "naf_code": top.get("naf"),
         "geo_proximity_distance_m": top["dist_m"],
         "geo_proximity_top_score": top["score"],
         "geo_proximity_2nd_score": second_score,

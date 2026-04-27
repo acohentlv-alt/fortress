@@ -178,14 +178,39 @@ def _build_prompt(
         if rejected_siren else "No INPI near-miss rejection on file."
     )
     return (
-        "You are a French business-matching judge. Decide whether any of the "
-        "SIRENE candidates below is the same business as the Google Maps entity.\n\n"
+        "You are reviewing a French Maps→SIRENE match that the matcher ALREADY concluded.\n"
+        "Your job is ANOMALY DETECTION — not re-verification. The matcher's method and score are themselves strong evidence.\n"
+        "Default to MATCH unless a specific red flag fires.\n\n"
+
         f"MAPS ENTITY:\n{json.dumps(maps_block, ensure_ascii=False, indent=2)}\n\n"
         f"{cand_section}\n\n"
         f"REJECTED NEAR-MISS CONTEXT:\n{rej_block}\n\n"
+
+        "RED FLAGS — reject if ANY of these clearly fires:\n"
+        "1. CITY MISMATCH on a single-establishment sector. The candidate's siège city differs from the Maps city, "
+        "AND the sector is one where each location is typically its own legal entity (small restaurants, single-shop bakeries, "
+        "vigneron, individual artisans, single-site campings). For chain-prone sectors (hotel groups, hospital groups, "
+        "multi-site camping groups, SCEA farms with multiple parcels, public collectivités), city mismatch is NOT a red flag — "
+        "the candidate may be the siège of an entity whose physical site is in the Maps city.\n"
+        "2. SECTOR CONTRADICTION. The candidate's NAF section (first letter of NAF code) is incompatible with the Maps "
+        "business category. Sibling NAF codes inside a related sector are NOT a contradiction — examples: 46.22Z wholesale "
+        "flowers↔01.30Z plant nursery (both legitimate for 'pépinière'), 55.10Z↔56.10A (hôtellerie clique).\n"
+        "3. FRANKENSTEIN PARENT. The candidate's denomination is a clear holding-style name (HOLDING / SCI / SCM / "
+        "GROUPEMENT FONCIER / SOCIETE CIVILE) that does not operate the business at the Maps location. The Maps entity is "
+        "operating under a trade name and the candidate is a passive owner.\n\n"
+
+        "GREY ZONES — these alone are NOT red flags:\n"
+        "- The candidate has empty/null/sparse metadata fields. The matcher's method (e.g. geo_proximity at 50m, "
+        "INPI by name, enseigne+postal-code) is itself the verification. Trust it.\n"
+        "- Slight name variation (PEPINIERES DE X vs Pépinières de X, casing or accent differences).\n"
+        "- Sibling NAF codes within the same sector.\n\n"
+
+        "When the only signal you have is the matcher's method+score (because metadata is sparse), the matcher's signal "
+        "is decisive. Do not demand fresh proof — answer MATCH and explain that you trusted the matcher's signal.\n\n"
+
         "Respond with a JSON object and NOTHING else:\n"
         '{"verdict": "match"|"no_match"|"ambiguous", '
         '"confidence": 0.0-1.0, '
         '"picked_siren": "<9-digit SIREN from candidates> or null", '
-        '"reasoning": "<≤ 200 chars, French or English, plain text>"}'
+        '"reasoning": "<≤ 200 chars; cite which red flag fired or why you defaulted to match>"}'
     )
