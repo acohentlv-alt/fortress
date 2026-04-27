@@ -647,7 +647,8 @@ _LEGAL_FORM_TOKENS = frozenset({
 })
 
 _SURNAME_PREFIXES = frozenset({
-    "domaine", "mas", "chateau", "cave", "vignoble", "clos",
+    "bastide", "cave", "chateau", "clos", "domaine", "ferme",
+    "maison", "manoir", "mas", "moulin", "villa", "vignoble",
 })
 
 _FOREIGN_INDICATORS = frozenset({
