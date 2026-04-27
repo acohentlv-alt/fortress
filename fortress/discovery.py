@@ -454,6 +454,7 @@ _INDUSTRY_WORDS = {
     "vacances", "loisirs", "tourisme", "club",
     "ferme", "auberge", "gite", "relais",
     "hotellerie", "restauration",
+    "glacier", "patisserie",  # Apr 27 — protège la dernière-token gate de Step 4b contre les FP "Maison X Pâtisserie", "Maison X Glacier".
 }
 
 
@@ -647,8 +648,18 @@ _LEGAL_FORM_TOKENS = frozenset({
 })
 
 _SURNAME_PREFIXES = frozenset({
-    "bastide", "cave", "chateau", "clos", "domaine", "ferme",
-    "maison", "manoir", "mas", "moulin", "villa", "vignoble",
+    "bastide", "bergerie", "cave", "chateau", "clos", "domaine", "ferme",
+    "maison", "manoir", "mas", "moulin", "verger", "villa", "vignoble",
+    # "bergerie" — élevage ovin/caprin (ws174 dept 66) ; "verger" — arboriculture fruitière (ws174 30j)
+})
+
+# Tokens qui, présents N'IMPORTE OÙ dans le nom Maps, bloquent l'extraction Step 4b.
+# Plus large que _INDUSTRY_WORDS (qui ne protège que la dernière-token gate).
+# Cible : EHPAD avec dernière-token non-industriel (ex. "Maison de Retraite Publique"
+# où dernière-token = "publique" passe la gate _INDUSTRY_WORDS).
+_HARD_REJECT_TOKENS = frozenset({
+    "retraite",  # "Maison de Retraite [X]" — EHPAD, pas un nom de famille
+    "ehpad",     # explicite EHPAD
 })
 
 _FOREIGN_INDICATORS = frozenset({
@@ -1741,6 +1752,7 @@ async def _match_to_sirene(
         and len(name_tokens_4b) >= 2
         and len(name_tokens_4b[-1]) >= 3
         and name_tokens_4b[-1] not in _INDUSTRY_WORDS
+        and not (set(name_tokens_4b) & _HARD_REJECT_TOKENS)  # Apr 27 — bloque "Maison de Retraite X"
     ):
         surname_candidate = name_tokens_4b[-1]
         pattern = f"%{surname_candidate}%"

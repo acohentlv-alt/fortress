@@ -15,14 +15,14 @@ def test_baseline_prefixes_unchanged():
 
 def test_new_prefixes_added():
     """Apr 27 expansion — taxonomy brief #2."""
-    for p in ("ferme", "maison", "villa", "bastide", "moulin", "manoir"):
-        assert p in _SURNAME_PREFIXES, f"new prefix {p!r} not added"
+    for tok in ("ferme", "maison", "villa", "bastide", "moulin", "manoir", "verger", "bergerie"):
+        assert tok in _SURNAME_PREFIXES, f"missing new prefix: {tok}"
 
 
-def test_total_prefix_count_is_12():
+def test_total_prefix_count_is_14():
     """Tripwire — fail loudly if anyone removes or accidentally adds prefixes."""
-    assert len(_SURNAME_PREFIXES) == 12, (
-        f"expected 12 prefixes, got {len(_SURNAME_PREFIXES)}: {sorted(_SURNAME_PREFIXES)}"
+    assert len(_SURNAME_PREFIXES) == 14, (
+        f"expected 14 prefixes, got {len(_SURNAME_PREFIXES)}: {sorted(_SURNAME_PREFIXES)}"
     )
 
 
@@ -87,3 +87,43 @@ def test_real_world_ws174_samples_pass_gate():
         assert tokens[0] in _SURNAME_PREFIXES, f"{sample!r} prefix not recognized"
         assert len(tokens[-1]) >= 3, f"{sample!r} last token too short"
         assert tokens[-1] not in _INDUSTRY_WORDS, f"{sample!r} last token blocked"
+
+
+def test_normalize_then_prefix_lookup_verger_martin():
+    """Verger Martin (regression — ws174 30j) → first token = verger."""
+    tokens = _normalize_name("Verger Martin").split()
+    assert tokens[0] == "verger"
+    assert tokens[0] in _SURNAME_PREFIXES
+    assert tokens[-1] == "martin"
+    assert tokens[-1] not in _INDUSTRY_WORDS
+
+
+def test_normalize_then_prefix_lookup_bergerie_dels_monts():
+    """Bergerie dels Monts (ws174, dept 66)."""
+    tokens = _normalize_name("Bergerie dels Monts").split()
+    assert tokens[0] == "bergerie"
+    assert tokens[0] in _SURNAME_PREFIXES
+    assert tokens[-1] == "monts"
+    assert tokens[-1] not in _INDUSTRY_WORDS
+
+
+def test_maison_de_retraite_blocked_by_hard_reject():
+    """Maison de Retraite Publique — must NOT trigger Step 4b extraction."""
+    from fortress.discovery import _HARD_REJECT_TOKENS
+    tokens = _normalize_name("Maison de Retraite Publique").split()
+    assert tokens[0] == "maison"
+    assert tokens[0] in _SURNAME_PREFIXES
+    assert tokens[-1] == "publique"
+    assert tokens[-1] not in _INDUSTRY_WORDS
+    assert "retraite" in _HARD_REJECT_TOKENS
+    assert "retraite" in tokens
+    assert bool(set(tokens) & _HARD_REJECT_TOKENS) is True
+
+
+def test_maison_artisan_still_works():
+    """Maison Cantarel — must STILL trigger extraction (no retraite token)."""
+    from fortress.discovery import _HARD_REJECT_TOKENS
+    tokens = _normalize_name("Maison Cantarel").split()
+    assert tokens[0] in _SURNAME_PREFIXES
+    assert tokens[-1] not in _INDUSTRY_WORDS
+    assert not (set(tokens) & _HARD_REJECT_TOKENS)
