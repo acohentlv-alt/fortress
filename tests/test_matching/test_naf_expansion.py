@@ -75,8 +75,13 @@ def test_seed_map_key_count():
         already keys, no net change.
       - +4 (Apr 26) for horticulture clique — 01.30Z, 01.19Z, 46.22Z, 47.76Z
         all new keys (Pépinières de Vair Sur Loire regression).
+      - +14 (Apr 27) for taxonomy-driven systematic pass:
+        +1 boulangerie (10.71B added to existing 10.71C/10.71D clique)
+        +4 viticulture (01.21Z, 11.02A, 11.02B, 46.34Z)
+        +7 arboriculture (01.22Z, 01.23Z, 01.24Z, 01.25Z, 01.26Z, 01.29Z, 10.39B)
+        +2 EHPAD (87.10A, 87.30A)
     """
-    assert len(SECTOR_EXPANSIONS) == 51
+    assert len(SECTOR_EXPANSIONS) == 65
 
 
 def test_seed_map_all_values_are_frozenset():
@@ -104,6 +109,13 @@ def test_asymmetric_reverses_closed():
     # Picker 10.71D, SIRENE 10.71C → must now be verified.
     assert _compute_naf_status("10.71C", ["10.71D"], None) == "verified"
     assert _compute_naf_status("10.71D", ["10.71C"], None) == "verified"
+
+    # 10.71B reverse (Apr 27 — cuisson de produits ↔ boulangerie traditionnelle)
+    # Regression: "Le fournil auvergnat" (SIREN 795194810) picker 10.71C, SIRENE 10.71B.
+    assert _compute_naf_status("10.71C", ["10.71B"], None) == "verified"
+    assert _compute_naf_status("10.71B", ["10.71C"], None) == "verified"
+    assert _compute_naf_status("10.71D", ["10.71B"], None) == "verified"
+    assert _compute_naf_status("10.71B", ["10.71D"], None) == "verified"
 
     # fret cluster — 49.41C reverse
     assert _compute_naf_status("49.41A", ["49.41C"], None) == "verified"
@@ -248,9 +260,9 @@ def test_sector_expansions_are_cliques():
     in its expansion: for every C in SECTOR_EXPANSIONS[K], either C is itself a
     key whose expansion contains K, OR (C, K) is a documented one-way inclusion.
 
-    Currently only one one-way inclusion exists: 47.24Z appears in 10.71C and
+    Currently only one one-way inclusion exists: 47.24Z appears in 10.71B, 10.71C and
     10.71D expansions but is NOT a key (per Alan's "singleton one-way" decision,
-    file line 107).
+    file line ~117).
 
     If a future edit breaks the clique property without adding to the allow-list
     below, this test fails.
@@ -275,3 +287,88 @@ def test_sector_expansions_are_cliques():
                 f"but {key} does NOT appear in {sibling}'s expansion. "
                 f"Make this a mutual relationship or document as one-way."
             )
+
+
+# ── New cliques added Apr 27: boulangerie, viticulture, arboriculture, EHPAD ──
+
+def test_boulangerie_clique_full():
+    """Apr 27: 10.71B (cuisson de produits de boulangerie) added to existing
+    boulangerie clique. Regression: 'Le fournil auvergnat' (SIREN 795194810, 15000)
+    and 'Le Pain de Mon Moulin' (SIREN 752972141, 66000) — picker 10.71C,
+    SIRENE 10.71B, enseigne+adresse confirm same artisan baker.
+    """
+    boulan = ["10.71B", "10.71C", "10.71D"]
+    assert all_same_sector_group(boulan) is True
+    # Full cross-check
+    assert same_sector_group("10.71B", "10.71C") is True  # regression fix
+    assert same_sector_group("10.71C", "10.71B") is True
+    assert same_sector_group("10.71B", "10.71D") is True
+    assert same_sector_group("10.71D", "10.71B") is True
+    # One-way inclusion 47.24Z still works via 10.71B
+    assert _compute_naf_status("47.24Z", ["10.71B"], None) == "verified"
+    # 47.24Z still not a key: picking 47.24Z must NOT verify fabrication codes
+    assert _compute_naf_status("10.71C", ["47.24Z"], None) == "mismatch"
+    assert _compute_naf_status("10.71B", ["47.24Z"], None) == "mismatch"
+    # Documented exclusions: industriel and biscuits stay rejected
+    assert same_sector_group("10.71B", "10.71A") is False  # industriel
+    assert same_sector_group("10.71C", "10.71A") is False  # industriel
+    assert same_sector_group("10.71C", "10.72Z") is False  # biscuits
+
+
+def test_viticulture_clique_full():
+    """Apr 27: viticulture clique — 01.21Z (vigne) + 11.02A (effervescents) +
+    11.02B (vinification) + 46.34Z (négoce boissons/vin). Regression: Domaine
+    Boudau (SIREN 394702583, 66) picker section A, SIRENE 46.34Z, enseigne match.
+    """
+    viti = ["01.21Z", "11.02A", "11.02B", "46.34Z"]
+    assert all_same_sector_group(viti) is True
+    # Spot-check key pairs
+    assert same_sector_group("01.21Z", "46.34Z") is True  # vigne ↔ négoce (regression)
+    assert same_sector_group("11.02B", "46.34Z") is True  # vinif ↔ négoce
+    assert same_sector_group("11.02A", "01.21Z") is True  # effervescents ↔ vigne
+    # Documented exclusions
+    assert same_sector_group("01.21Z", "56.30Z") is False  # vs débits de boissons
+    assert same_sector_group("01.21Z", "11.05Z") is False  # vs bière
+    assert same_sector_group("46.34Z", "47.25Z") is False  # vs caviste détail
+    # Must not cross into other agricultural cliques
+    assert same_sector_group("01.21Z", "01.24Z") is False  # vigne ≠ arboriculture
+    assert same_sector_group("01.21Z", "01.30Z") is False  # vigne ≠ horticulture
+
+
+def test_arboriculture_clique_full():
+    """Apr 27: arboriculture clique — fruits à pépins/noyau (01.24Z), noix
+    (01.25Z), agrumes (01.23Z), fruits tropicaux (01.22Z), oléagineux (01.26Z),
+    autres cultures permanentes (01.29Z), transformation de fruits (10.39B).
+    Regression: RIVIERE Exploitation Agricole (MAPS02893, 47) — picker 01.25Z,
+    SIRENE 10.39B (ROUGELINE ACHATS).
+    """
+    arbori = ["01.22Z", "01.23Z", "01.24Z", "01.25Z", "01.26Z", "01.29Z", "10.39B"]
+    assert all_same_sector_group(arbori) is True
+    # Spot-check the regression case
+    assert same_sector_group("01.25Z", "10.39B") is True  # noix ↔ transformation (regression)
+    assert same_sector_group("01.24Z", "01.25Z") is True  # pépins ↔ noix
+    assert same_sector_group("01.23Z", "01.24Z") is True  # agrumes ↔ pépins
+    assert same_sector_group("10.39B", "01.22Z") is True  # transfo ↔ tropicaux
+    # Documented exclusions
+    assert same_sector_group("01.24Z", "01.13Z") is False  # fruits ≠ maraîchage
+    assert same_sector_group("01.24Z", "01.21Z") is False  # fruits ≠ vigne
+    assert same_sector_group("01.24Z", "01.11Z") is False  # fruits ≠ céréales
+    assert same_sector_group("10.39B", "46.31Z") is False  # transfo fruits ≠ négoce gros légumes
+    # Must not cross into horticultural clique
+    assert same_sector_group("01.24Z", "01.30Z") is False  # arbo ≠ pépinière
+    assert same_sector_group("01.24Z", "01.19Z") is False  # arbo ≠ cultures ornementales
+
+
+def test_ehpad_clique_full():
+    """Apr 27: EHPAD clique — 87.10A (hébergement médicalisé personnes âgées)
+    + 87.30A (hébergement social personnes âgées / résidence autonomie). Cindy
+    searches 'EHPAD 46' and may find establishments registered under either code.
+    """
+    ehpad = ["87.10A", "87.30A"]
+    assert all_same_sector_group(ehpad) is True
+    assert same_sector_group("87.10A", "87.30A") is True
+    assert same_sector_group("87.30A", "87.10A") is True
+    # Documented exclusions — handicap and psychiatric facilities are different clientèle
+    assert same_sector_group("87.10A", "87.10B") is False  # vs handicapés enfants
+    assert same_sector_group("87.10A", "87.20Z") is False  # vs maladies mentales
+    assert same_sector_group("87.10A", "86.10Z") is False  # vs hôpital aigu

@@ -101,16 +101,23 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     "10.13A": frozenset({"10.13A", "10.13B"}),  # Symétrie : transformation viande ↔ charcuterie
     # Excluded: 47.22Z retail (clientèle différente)
 
-    # ═══ Boulangerie ═══
+    # ═══ Boulangerie artisanale ═══
     # Alan a explicitement approuvé 47.24Z (commerce de détail pain) dans l'expansion —
     # une boulangerie avec comptoir retail enregistrée en 47.24Z reste la cible Cindy.
+    # 10.71B (cuisson de produits de boulangerie) est ajouté au clique 26 avr. :
+    # le code désigne en pratique les artisans qui cuisent sur place mais dont la mise
+    # à jour SIRENE n'est pas alignée sur 10.71C. Régressions : "Le fournil auvergnat"
+    # (SIREN 795194810, 15000) et "Le Pain de Mon Moulin" (SIREN 752972141, 66000) —
+    # picker 10.71C, SIRENE 10.71B, enseigne+adresse confirment le même artisan.
     # Seul saut inter-section (C fabrication → G commerce) du map.
-    "10.71C": frozenset({"10.71C", "10.71D", "47.24Z"}),
-    "10.71D": frozenset({"10.71D", "10.71C", "47.24Z"}),  # Symétrie : cuisson pain ↔ boulangerie traditionnelle (+ retail pain)
+    "10.71B": frozenset({"10.71B", "10.71C", "10.71D", "47.24Z"}),  # Symétrie : cuisson ↔ boulangerie traditionnelle
+    "10.71C": frozenset({"10.71C", "10.71B", "10.71D", "47.24Z"}),
+    "10.71D": frozenset({"10.71D", "10.71B", "10.71C", "47.24Z"}),  # Symétrie : pâtisserie ↔ boulangerie/cuisson (+ retail pain)
     # Régression ANTONE Artisan Boulanger (boulangerie 33000, 18 avr.) — picker 10.71D, SIREN 10.71C.
     # 47.24Z reste intentionnellement absent comme clé (décision Alan : singleton one-way).
-    # Excluded: 10.71A industriel (échelle différente), 10.71B cuisson surgelés (métier distinct),
-    #           47.11X épicerie (sector distinct), 56.XX restauration
+    # Excluded: 10.71A industriel — fabrication en chambre froide à grande échelle, pas un artisan de quartier.
+    #           10.72Z biscuits/biscottes — industriel, conservation longue durée.
+    #           47.11X épicerie (secteur distinct), 56.XX restauration.
 
     # ═══ Garage auto ═══
     # Entretien VL — métier isolé côté grand public.
@@ -191,6 +198,65 @@ SECTOR_EXPANSIONS: dict[str, frozenset[str]] = {
     "01.19Z": frozenset({"01.19Z", "01.30Z", "46.22Z", "47.76Z"}),  # Symétrie : autres cultures ↔ pépinière/gros/détail
     "46.22Z": frozenset({"46.22Z", "01.30Z", "01.19Z", "47.76Z"}),  # Symétrie : gros plantes ↔ production/détail
     "47.76Z": frozenset({"47.76Z", "01.30Z", "01.19Z", "46.22Z"}),  # Symétrie : détail plantes ↔ production/gros
+
+    # ═══ Viticulture / domaines viticoles ═══
+    # Un domaine viticole physique peut être enregistré côté production (01.21Z culture
+    # de la vigne), côté transformation (11.02B vinification ou 11.02A vins effervescents
+    # pour les bulles/crémants), ou côté négoce (46.34Z commerce de gros de boissons —
+    # cas des maisons de négoce en vin ou des caves coopératives). Du point de vue Cindy
+    # (recherche "domaine viticole 66" ou "exploitation vigne 11"), un même domaine peut
+    # être sous l'un quelconque de ces 4 codes selon l'activité dominante déclarée.
+    # Régressions ws174 : Domaine Boudau (SIREN 394702583, 66) — picker 01 (section A),
+    # SIRENE 46.34Z (négoce boissons), match enseigne. Les Clos de Paulilles (SIREN
+    # 317809093, 66) — picker section A, SIRENE 46.34Z, match siren_website.
+    # Excluded: 56.30Z débits de boissons (bar/cave de consommation sur place — métier
+    #           distinct, pas de production), 47.25Z commerce de détail boissons
+    #           (caviste grand public ≠ producteur), 11.05Z bière (filière distincte),
+    #           11.07B sodas (filière distincte).
+    "01.21Z": frozenset({"01.21Z", "11.02A", "11.02B", "46.34Z"}),
+    "11.02A": frozenset({"11.02A", "01.21Z", "11.02B", "46.34Z"}),  # Symétrie : effervescents ↔ vigne/vinif/négoce
+    "11.02B": frozenset({"11.02B", "01.21Z", "11.02A", "46.34Z"}),  # Symétrie : vinification ↔ vigne/effervescents/négoce
+    "46.34Z": frozenset({"46.34Z", "01.21Z", "11.02A", "11.02B"}),  # Symétrie : négoce boissons ↔ vigne/vinif/effervescents
+
+    # ═══ Arboriculture / exploitation fruitière ═══
+    # Une exploitation arboricole (pommiers, pruniers, noyers, amandiers, agrumes,
+    # avocatiers, olives) peut être enregistrée sous plusieurs codes selon la variété
+    # dominante. En pratique, Cindy cible l'ensemble du spectre "fruit" dans les
+    # départements 47, 66, 83, 84. Un même verger peut basculer de 01.24Z (pépins/noyau)
+    # à 01.25Z (noix/noisettes) voire 01.29Z (autres permanentes : figues, kiwis, etc.)
+    # selon la déclaration SIRENE. La coopérative ou le négoce acquéreur est souvent
+    # 10.39B (transformation et conservation de fruits — ex. France Prune, Rougeline).
+    # Régressions ws174 : RIVIERE Exploitation Agricole (MAPS02893, 47) — picker 01.25Z,
+    # SIRENE 941661613 (ROUGELINE ACHATS) NAF 10.39B. Également SCEA de Guyenne
+    # (SIREN 450850383, 47) — picker 01.24Z, SIRENE 01.13Z (légumes) — cas EXCLU
+    # car maraîchage ≠ arboriculture.
+    # Excluded: 01.13Z légumes/maraîchage (chaîne d'approvisionnement distincte,
+    #           cultures saisonnières annuelles vs arbres pérennes), 01.21Z vigne
+    #           (déjà son propre clique viticulture), 01.11Z céréales (filière distincte),
+    #           46.31Z commerce gros fruits&légumes (trop large — couvre aussi légumes).
+    "01.22Z": frozenset({"01.22Z", "01.23Z", "01.24Z", "01.25Z", "01.26Z", "01.29Z", "10.39B"}),  # Symétrie : fruits tropicaux
+    "01.23Z": frozenset({"01.23Z", "01.22Z", "01.24Z", "01.25Z", "01.26Z", "01.29Z", "10.39B"}),  # Symétrie : agrumes
+    "01.24Z": frozenset({"01.24Z", "01.22Z", "01.23Z", "01.25Z", "01.26Z", "01.29Z", "10.39B"}),  # Symétrie : pépins/noyau ↔ autres fruits
+    "01.25Z": frozenset({"01.25Z", "01.22Z", "01.23Z", "01.24Z", "01.26Z", "01.29Z", "10.39B"}),  # Symétrie : noix/châtaignes
+    "01.26Z": frozenset({"01.26Z", "01.22Z", "01.23Z", "01.24Z", "01.25Z", "01.29Z", "10.39B"}),  # Symétrie : oléagineux
+    "01.29Z": frozenset({"01.29Z", "01.22Z", "01.23Z", "01.24Z", "01.25Z", "01.26Z", "10.39B"}),  # Symétrie : autres cultures permanentes
+    "10.39B": frozenset({"10.39B", "01.22Z", "01.23Z", "01.24Z", "01.25Z", "01.26Z", "01.29Z"}),  # Symétrie : transformation fruits ↔ vergers
+
+    # ═══ EHPAD / hébergement médicalisé personnes âgées ═══
+    # Un EHPAD peut être enregistré sous 87.10A (hébergement médicalisé personnes
+    # âgées — EHPAD "full médical") ou 87.30A (hébergement social personnes âgées —
+    # résidence autonomie, anciennement "foyer-logement"). Du point de vue Cindy
+    # (recherche "EHPAD 46"), les deux codes correspondent au même type d'établissement
+    # accueillant des seniors. Régression ws174 : "EHPAD du Centre Hospitalier"
+    # (SIREN 264600172, 46) — picker 87.10A, match inpi. La distinction médicalisé vs
+    # non-médicalisé dépend du niveau de soins dispensés mais l'établissement reste
+    # "une maison de retraite" pour Cindy.
+    # Excluded: 87.10B hébergement handicapés enfants (clientèle entièrement distincte),
+    #           87.10C adultes handicapés (idem), 87.20Z maladies mentales/addictions
+    #           (filière psychiatrique, pas personnes âgées), 86.10Z activités hospitalières
+    #           (hôpital aigu ≠ résidence, même si un EHPAD peut être rattaché à un CH).
+    "87.10A": frozenset({"87.10A", "87.30A"}),
+    "87.30A": frozenset({"87.30A", "87.10A"}),  # Symétrie : résidence autonomie ↔ EHPAD médicalisé
 }
 
 
