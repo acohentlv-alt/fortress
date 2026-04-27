@@ -1121,6 +1121,120 @@ async def _geo_proximity_match(
     }
 
 
+async def _geo_proximity_top_n(
+    conn,
+    maps_name: str,
+    maps_lat: float | None,
+    maps_lng: float | None,
+    *,
+    k: int = 3,
+    exclude_siren: str | None = None,
+) -> list[dict]:
+    """Return up to k SIRENE candidates in the geo bounding box, sorted by name score.
+
+    Unlike _geo_proximity_match, applies NO threshold or dominance gate —
+    the caller (_gather_alternatives) decides how to use these candidates.
+    Used to expand the Gemini multi-candidate prompt with geo-local alternatives.
+    """
+    if maps_lat is None or maps_lng is None:
+        return []
+
+    lat_min = maps_lat - _GEO_LAT_DELTA
+    lat_max = maps_lat + _GEO_LAT_DELTA
+    lng_min = maps_lng - _GEO_LNG_DELTA
+    lng_max = maps_lng + _GEO_LNG_DELTA
+
+    cur = await conn.execute(
+        """
+        SELECT cg.siren,
+               co.denomination, co.enseigne, co.adresse, co.ville, co.naf_code
+        FROM companies_geom cg
+        JOIN companies co ON co.siren = cg.siren
+        WHERE cg.source IN ('sirene_geo', 'ban_backfill')
+          AND cg.lat BETWEEN %s AND %s
+          AND cg.lng BETWEEN %s AND %s
+          AND co.statut = 'A'
+          AND co.siren NOT LIKE 'MAPS%%'
+        """,
+        (lat_min, lat_max, lng_min, lng_max),
+    )
+    rows = await cur.fetchall()
+
+    if not rows:
+        return []
+
+    scored = []
+    for row in rows:
+        siren_, denom, enseigne_, adresse_, ville_, naf_ = row
+        name_score = max(
+            _name_match_score(maps_name, denom or ""),
+            _name_match_score(maps_name, enseigne_ or ""),
+        )
+        scored.append({
+            "siren": siren_,
+            "score": name_score,
+            "method": "geo_proximity_alt",
+            "denomination": denom or "",
+            "enseigne": enseigne_ or "",
+            "adresse": adresse_ or "",
+            "ville": ville_ or "",
+            "naf_code": naf_,
+        })
+
+    scored.sort(key=lambda r: r["score"], reverse=True)
+
+    # Filter out exclude_siren before capping at k
+    result = [r for r in scored if r["siren"] != exclude_siren]
+    return result[:k]
+
+
+async def _gather_alternatives(
+    conn,
+    maps_name: str,
+    maps_lat: float | None,
+    maps_lng: float | None,
+    dept_filter: str | None,
+    *,
+    exclude_siren: str,
+    k: int = 3,
+) -> list[dict]:
+    """Gather up to k alternative SIRENE candidates from trigram + geo sources.
+
+    Used to build the multi-candidate prompt for the Gemini swap path.
+    Returns [] on any internal failure (must never crash the pipeline).
+    """
+    try:
+        # Trigram candidates (department-filtered)
+        trigram_cands = await _fetch_trigram_candidates(conn, maps_name, dept_filter, limit=k)
+
+        # Geo proximity candidates (only when coordinates are available)
+        if maps_lat is not None and maps_lng is not None:
+            geo_cands = await _geo_proximity_top_n(
+                conn, maps_name, maps_lat, maps_lng, k=k, exclude_siren=exclude_siren
+            )
+        else:
+            geo_cands = []
+
+        # Merge: trigram first, then geo; dedup by siren; drop exclude_siren; cap at k
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for cand in trigram_cands + geo_cands:
+            siren_ = cand["siren"]
+            if siren_ == exclude_siren:
+                continue
+            if siren_ in seen:
+                continue
+            seen.add(siren_)
+            merged.append(cand)
+            if len(merged) >= k:
+                break
+
+        return merged
+    except Exception:
+        log.warning("discovery.gather_alternatives_failed", maps_name=maps_name)
+        return []
+
+
 async def _match_to_sirene(
     conn: Any,
     maps_name: str,
@@ -3286,7 +3400,17 @@ async def run(batch_id: str) -> None:
                                         candidate is None and not _rejected_for_this
                                     )
                                     if candidate is not None:
-                                        _candidates_for_prompt = [candidate]
+                                        if (
+                                            settings.gemini_multi_candidate_enabled
+                                            and candidate.get("method") != "chain"
+                                        ):
+                                            _alternatives = await _gather_alternatives(
+                                                conn, maps_name, _maps_lat, _maps_lng,
+                                                dept_filter, exclude_siren=candidate["siren"], k=3,
+                                            )
+                                            _candidates_for_prompt = [candidate] + _alternatives
+                                        else:
+                                            _candidates_for_prompt = [candidate]
                                     elif _trigram_path_needed:
                                         try:
                                             _candidates_for_prompt = await _fetch_trigram_candidates(
@@ -3363,12 +3487,125 @@ async def run(batch_id: str) -> None:
 
                                         # ── D1b Hybrid: act on Gemini verdict ──
                                         if settings.gemini_d1b_hybrid_enabled:
+                                            # ── Swap path (NEW) ──
+                                            # Fire when: currently auto-confirmed, Gemini says match
+                                            # but to a DIFFERENT SIREN than the one we just confirmed,
+                                            # at high confidence, AND this is NOT a chain match.
+                                            if (
+                                                _v == "match"
+                                                and _vpicked is not None
+                                                and _pending_link is not None
+                                                and _just_auto_confirmed
+                                                and _vpicked != _pending_link["siren"]
+                                                and _vconf >= settings.gemini_d1b_quarantine_threshold
+                                                and _pending_link["method"] != "chain"
+                                            ):
+                                                _target_for_swap = _vpicked
+                                                _original_siren = _pending_link["siren"]
+                                                _original_method = _pending_link["method"]
+
+                                                # (a) Hosting-SIREN guardrail — placed BEFORE any DB write.
+                                                from fortress.matching.contacts import _HOSTING_SIRENS
+                                                if _target_for_swap in _HOSTING_SIRENS:
+                                                    await log_audit(
+                                                        conn, batch_id=batch_id, siren=siren,
+                                                        action="gemini_swap_rejected_hosting", result="skipped",
+                                                        detail=json.dumps({
+                                                            "original_siren": _original_siren,
+                                                            "picked_siren": _target_for_swap,
+                                                            "gemini_confidence": _vconf,
+                                                        }, ensure_ascii=False),
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+                                                else:
+                                                    # (b) Verify target SIRENE row exists and is active.
+                                                    _swap_cur = await conn.execute(
+                                                        """SELECT siren, denomination, enseigne, adresse, ville, naf_code
+                                                             FROM companies
+                                                            WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                                                            LIMIT 1""",
+                                                        (_target_for_swap,),
+                                                    )
+                                                    _swap_row = await _swap_cur.fetchone()
+                                                    if not _swap_row:
+                                                        await log_audit(
+                                                            conn, batch_id=batch_id, siren=siren,
+                                                            action="gemini_swap_rejected_inactive", result="skipped",
+                                                            detail=json.dumps({
+                                                                "original_siren": _original_siren,
+                                                                "picked_siren": _target_for_swap,
+                                                            }, ensure_ascii=False),
+                                                            workspace_id=batch_workspace_id,
+                                                        )
+                                                    else:
+                                                        async with conn.transaction():
+                                                            # (c) Roll back original SIRENE-data copy; NULL link_signals + naf_status.
+                                                            await conn.execute(
+                                                                """UPDATE companies
+                                                                      SET siret_siege = NULL, naf_code = NULL, naf_libelle = NULL,
+                                                                          forme_juridique = NULL, date_creation = NULL,
+                                                                          tranche_effectif = NULL,
+                                                                          link_signals = NULL, naf_status = NULL
+                                                                    WHERE siren = %s""",
+                                                                (siren,),
+                                                            )
+                                                            # (d) Apply new SIREN's reference data + recompute naf_status.
+                                                            await _copy_sirene_reference_data(conn, siren, _target_for_swap)
+                                                            _swap_naf = _swap_row[5] or ""
+                                                            _swap_status = None
+                                                            if picked_nafs:
+                                                                _swap_status = _compute_naf_status(
+                                                                    _swap_naf, picked_nafs, naf_division_whitelist,
+                                                                )
+                                                                await conn.execute(
+                                                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
+                                                                    (_swap_status, siren),
+                                                                )
+                                                            # (e) Update link state.
+                                                            await conn.execute(
+                                                                """UPDATE companies
+                                                                      SET linked_siren = %s,
+                                                                          link_confidence = 'confirmed',
+                                                                          link_method = 'gemini_judge'
+                                                                    WHERE siren = %s""",
+                                                                (_target_for_swap, siren),
+                                                            )
+                                                            # (f) Success audit — INSIDE transaction.
+                                                            await log_audit(
+                                                                conn, batch_id=batch_id, siren=siren,
+                                                                action="auto_linked_gemini_swap", result="success",
+                                                                detail=json.dumps({
+                                                                    "original_siren": _original_siren,
+                                                                    "original_method": _original_method,
+                                                                    "swapped_to_siren": _target_for_swap,
+                                                                    "gemini_confidence": _vconf,
+                                                                    "naf_status": _swap_status,
+                                                                    "gemini_reasoning": (_verdict.get("reasoning") or "")[:200],
+                                                                }, ensure_ascii=False),
+                                                                workspace_id=batch_workspace_id,
+                                                            )
+
+                                                        # Outside transaction:
+                                                        _pending_link = {
+                                                            "siren": _target_for_swap,
+                                                            "denomination": _swap_row[1] or "",
+                                                            "enseigne": _swap_row[2] or "",
+                                                            "adresse": _swap_row[3] or "",
+                                                            "ville": _swap_row[4] or "",
+                                                            "method": "gemini_judge",
+                                                            "score": _vconf,
+                                                        }
+                                                        log.info("discovery.gemini_swap",
+                                                                 maps_name=maps_name, maps_siren=siren,
+                                                                 original_siren=_original_siren,
+                                                                 swapped_to_siren=_target_for_swap, confidence=_vconf)
+
                                             # ── Quarantine path ──
                                             # Fire when: currently auto-confirmed, strong method,
                                             #            Gemini says no_match with high confidence,
                                             #            AND this is NOT a chain match,
                                             #            AND the Frankenstein signature does NOT trigger.
-                                            if (
+                                            elif (
                                                 _v == "no_match"
                                                 and _vconf >= settings.gemini_d1b_quarantine_threshold
                                                 and _pending_link is not None

@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     #             UNLESS the Frankenstein display-bug signature triggers).
     # Kill switch: set to False to revert to shadow-only behavior.
     gemini_d1b_hybrid_enabled: bool = True
+
+    # Phase 1 multi-candidate (April 27) — when True, _gather_alternatives() adds
+    # up to 3 extra SIRENE candidates (trigram + geo) to the Gemini prompt,
+    # enabling the swap path to redirect an auto-confirm to a better SIREN.
+    gemini_multi_candidate_enabled: bool = False
     gemini_d1b_rescue_threshold: float = 0.85
     gemini_d1b_quarantine_threshold: float = 0.85
 
