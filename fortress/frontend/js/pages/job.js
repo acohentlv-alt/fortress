@@ -236,7 +236,11 @@ function buildScoreboardCard(job, linkStats, summary) {
                     siblingLabel: siblingNafs[0].label,
                 });
             } else {
-                const siblingList = siblingNafs.slice(0, 3).map(s => `${s.code} (${s.label})`).join(', ');
+                const top3SiblingsStr = siblingNafs.slice(0, 3).map(s => `${s.code} (${s.label})`).join(', ');
+                const moreSiblings = Math.max(0, siblingNafs.length - 3);
+                const siblingList = moreSiblings > 0
+                    ? `${top3SiblingsStr} ${t('job.scoreboardSubtextSiblingsMoreSuffix', { count: moreSiblings })}`
+                    : top3SiblingsStr;
                 sectorSubtext = t('job.scoreboardSubtextSectorManySiblings', {
                     verified: nafVerified,
                     pickedCode,
@@ -254,7 +258,11 @@ function buildScoreboardCard(job, linkStats, summary) {
                     label: dominantNaf.label,
                 });
             } else {
-                const siblingList = otherNafs.slice(0, 3).map(s => `${s.code} (${s.label})`).join(', ');
+                const top3OthersStr = otherNafs.slice(0, 3).map(s => `${s.code} (${s.label})`).join(', ');
+                const moreOthers = Math.max(0, otherNafs.length - 3);
+                const siblingList = moreOthers > 0
+                    ? `${top3OthersStr} ${t('job.scoreboardSubtextSiblingsMoreSuffix', { count: moreOthers })}`
+                    : top3OthersStr;
                 sectorSubtext = t('job.scoreboardSubtextSectorImpliedMixed', {
                     N: dominantNaf.count,
                     code: dominantNaf.code,

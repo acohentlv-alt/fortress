@@ -625,6 +625,7 @@
     "legendSectorOneSibling": "Identifiées mais en {{code}} ({{label}}) — secteur proche",
     "legendSectorTwoSiblings": "Identifiées en {{code1}} ({{label1}}), {{code2}} ({{label2}}) — secteurs proches",
     "legendSectorManySiblings": "Identifiées dans {{count}} autres secteurs — voir le détail",
+    "scoreboardSubtextSiblingsMoreSuffix": "et {{count}} autre(s) secteur(s)",
     "legendPending": "À vérifier (le matcher hésite)",
     "legendUnlinked": "Sans correspondance dans le registre SIRENE",
     "chipContactable": "{{count}} contactables",
