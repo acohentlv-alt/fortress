@@ -51,9 +51,14 @@ def _make_geo_row(
     naf="55.30Z",
     cp="19000",
     adresse="1 route du lac",
+    ville="Tulle",  # added Apr 27 to match fc90c00's 11-column SELECT in _geo_proximity_match
     statut="A",
 ):
-    return (siren, lat, lng, quality, denom, enseigne, naf, cp, adresse, statut)
+    # Column order matches the SQL SELECT in _geo_proximity_match (discovery.py ~1037-1046):
+    # cg.siren, cg.lat, cg.lng, cg.geocode_quality,
+    # co.denomination, co.enseigne, co.naf_code,
+    # co.code_postal, co.adresse, co.ville, co.statut
+    return (siren, lat, lng, quality, denom, enseigne, naf, cp, adresse, ville, statut)
 
 
 def _make_conn_stub(rows):
@@ -197,6 +202,12 @@ async def test_match_dict_shape():
         "geo_proximity_2nd_score",
         "geo_proximity_pool_size",
         "geo_proximity_quality",
+        # SIRENE evidence fields propagated to Gemini (added fc90c00, Apr 27).
+        "denomination",
+        "enseigne",
+        "adresse",
+        "ville",
+        "naf_code",
     }
     assert required_keys == set(result.keys()), (
         f"Missing keys: {required_keys - set(result.keys())}, "
@@ -205,6 +216,12 @@ async def test_match_dict_shape():
     assert result["method"] == "geo_proximity"
     assert isinstance(result["geo_proximity_distance_m"], int)
     assert isinstance(result["geo_proximity_pool_size"], int)
+    # SIRENE evidence is non-None for the matched row (drives Gemini's prompt).
+    assert result["denomination"] is not None
+    assert result["enseigne"] is not None
+    assert result["adresse"] is not None
+    assert result["ville"] is not None
+    assert result["naf_code"] is not None
 
 
 # ---------------------------------------------------------------------------
