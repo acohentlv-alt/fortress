@@ -429,3 +429,79 @@ def test_trim_phase2_false_positive_guards():
     for name in clean:
         assert _trim_post_capture(name) == name, \
             f"False-positive: {name!r} got trimmed to {_trim_post_capture(name)!r}"
+
+
+# ── HTML entity decode (Apr 27) ───────────────────────────────────────
+
+SAMPLE_MENTIONS_RSQUO_BLOCKING_TRIM = """
+<html><body>
+<p>Raison sociale : SARL DUPOND L&rsquo;ATELIER, au capital de 10000 €</p>
+<p>RCS Lyon 123456789</p>
+</body></html>
+"""
+
+SAMPLE_MENTIONS_AMP_IN_NAME = """
+<html><body>
+<p>Société : SAS PIC&amp;MIE EDITIONS, RCS Paris 999888777, capital 50000€</p>
+</body></html>
+"""
+
+SAMPLE_MENTIONS_NBSP_BETWEEN_TOKENS = """
+<html><body>
+<p>Raison sociale : SARL&nbsp;CAMPING&nbsp;DU&nbsp;LAC, capital 50000€</p>
+</body></html>
+"""
+
+SAMPLE_MENTIONS_EACUTE_ENTITY = """
+<html><body>
+<p>&Eacute;diteur : SAS &Eacute;DITIONS DUMOULIN, RCS Bordeaux 444555666, capital 100000€</p>
+</body></html>
+"""
+
+
+def test_rsquo_entity_decoded_before_trim():
+    """The Apr 26 Mairie de Saint-Yrieix case: &rsquo; survived raw and blocked
+    the trim regex from finding boundaries. After decode, the apostrophe is
+    a real character and the captured name renders cleanly."""
+    result = extract_legal_denomination(SAMPLE_MENTIONS_RSQUO_BLOCKING_TRIM)
+    assert result is not None
+    assert "&rsquo;" not in result
+    assert "&" not in result  # No leftover entity fragments
+    assert "DUPOND" in result.upper()
+
+
+def test_amp_entity_decoded_in_legal_name():
+    """&amp; in a legal name (e.g. 'PIC&amp;MIE') decodes to '&'."""
+    result = extract_legal_denomination(SAMPLE_MENTIONS_AMP_IN_NAME)
+    assert result is not None
+    assert "&amp;" not in result
+    assert "PIC&MIE" in result.upper()
+
+
+def test_nbsp_entity_collapses_to_space():
+    """&nbsp; (U+00A0 after decode) is matched by \\s+ in the subsequent
+    whitespace collapse. The captured name ends up with normal spaces."""
+    result = extract_legal_denomination(SAMPLE_MENTIONS_NBSP_BETWEEN_TOKENS)
+    assert result is not None
+    assert "&nbsp;" not in result
+    assert " " not in result  # U+00A0 collapsed to regular space
+    assert "CAMPING DU LAC" in result.upper()
+
+
+def test_eacute_entity_decoded_to_accented_char():
+    """&Eacute; decodes to É — preserves the accented character in the
+    captured legal name. Not previously possible because the entity blocked
+    the boundary regex from matching cleanly."""
+    result = extract_legal_denomination(SAMPLE_MENTIONS_EACUTE_ENTITY)
+    assert result is not None
+    assert "&Eacute;" not in result
+    assert "&" not in result
+    assert "DUMOULIN" in result.upper()
+
+
+def test_entity_free_html_unchanged():
+    """Idempotency check — HTML without entities still works as before."""
+    result = extract_legal_denomination(SAMPLE_MENTIONS_SARL)  # existing fixture in this file
+    assert result is not None
+    assert "IBTISSAM" in result.upper()
+    assert "SARL" in result.upper()

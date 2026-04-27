@@ -13,6 +13,7 @@ Handles:
 
 from __future__ import annotations
 
+import html as _html  # avoid name collision with `html` parameter in extract functions
 import json
 import re
 import unicodedata
@@ -1038,8 +1039,12 @@ def extract_legal_denomination(html: str | None) -> str | None:
     if not html:
         log.info("a2_extract_none", reason="empty_html")
         return None
-    # Strip HTML tags and collapse whitespace
+    # Strip HTML tags, decode entities, collapse whitespace.
+    # Entity decode (Apr 27) prevents &rsquo;/&amp;/&nbsp; surviving into the
+    # trim regex and blocking boundary detection (e.g. Apr 26 ws174 case
+    # "Mairie de Saint-Yrieix Boulevard de l&rsquo").
     text = re.sub(r"<[^>]+>", " ", html)
+    text = _html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     # Slice off hébergeur section — everything after is hosting provider.
     # Uses _HEBERGEUR_KEYWORDS plus a bare "hébergeur" word-boundary match
@@ -1149,8 +1154,11 @@ def extract_mentions_legales(
         "siren_match": None,  # True/False/None
     }
 
-    # Strip HTML tags for text analysis
+    # Strip HTML tags, decode entities, collapse whitespace.
+    # Entity decode keeps director-name regex from breaking on
+    # &nbsp;-separated names (e.g. "Édouard&nbsp;Lefèvre").
     text = re.sub(r"<[^>]+>", " ", html)
+    text = _html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
 
     # ── Split at hébergeur section ─────────────────────────────────
