@@ -753,6 +753,14 @@ _FOREIGN_INDICATORS = frozenset({
     "united kingdom", "royaume-uni",
 })
 
+# Storefront-descriptor fallback for associations/fondations.
+# Pattern: "Association/Asso/Fondation <legal-name> - <site descriptor>"
+# (e.g., "Association Vivre le 3ème âge - EHPAD Jean Rostand"). Used by the
+# Step 0 INPI fallback to retry with the prefix-only name when the full search
+# misses. Gated narrowly to associations/fondations — generic " - " fallback
+# would catch too many false-positive patterns (lawyer names, branch suffixes).
+_ASSOC_PREFIX_RE = re.compile(r"^\s*(association|asso|fondation)\b", re.IGNORECASE)
+
 
 def _parse_maps_address(addr: str | None) -> tuple[str | None, str | None]:
     """Extract (code_postal, ville) from a Google Maps address string.
@@ -1488,6 +1496,40 @@ async def _match_to_sirene(
         except Exception:
             _inpi_cache[maps_name] = None
             _inpi_hit = None
+
+        # Storefront-descriptor fallback (Apr 28, Taxonomy 7): when the full
+        # Step 0 search misses AND the name starts with Association/Asso/Fondation
+        # AND has a " - <site>" descriptor (e.g., "Fondation Partage et Vie -
+        # EHPAD Jean Balat"), retry with only the prefix before " - ". Catches
+        # association-run EHPADs whose Maps name embeds the storefront site name.
+        if _inpi_hit is None and " - " in maps_name and _ASSOC_PREFIX_RE.match(maps_name):
+            _stripped_prefix = maps_name.split(" - ", 1)[0].strip()
+            _stripped_norm = _normalize_name(_stripped_prefix)
+            if _stripped_norm and _stripped_norm != _normalize_name(maps_name):
+                try:
+                    if _timing_batch_id is not None:
+                        async with time_step(conn, _timing_batch_id, None, "inpi_step0_assoc_fallback"):
+                            _inpi_hit = await _inpi_search(
+                                query=_stripped_norm,
+                                dept=departement,
+                                cp=_inpi_cp,
+                            )
+                    else:
+                        _inpi_hit = await _inpi_search(
+                            query=_stripped_norm,
+                            dept=departement,
+                            cp=_inpi_cp,
+                        )
+                    log.info(
+                        "discovery.inpi_storefront_fallback",
+                        maps_name=maps_name,
+                        stripped=_stripped_prefix,
+                        hit=bool(_inpi_hit),
+                        hit_siren=_inpi_hit[0] if _inpi_hit else None,
+                    )
+                    _inpi_cache[maps_name] = _inpi_hit
+                except Exception:
+                    pass  # _inpi_hit stays None — fall through to other steps
 
         if _inpi_hit:
             inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp = _inpi_hit
