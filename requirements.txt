@@ -41,3 +41,6 @@ python-dotenv>=1.0
 
 # Rate limiting
 slowapi==0.1.9
+
+# Process memory telemetry (used in discovery.py heartbeat loop)
+psutil>=5.9

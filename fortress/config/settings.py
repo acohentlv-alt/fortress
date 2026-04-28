@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # Kill switch: default OFF — behaviour is unchanged at deploy time.
     # Set WORKER_POOL_ENABLED=true in Render env to enable.
     worker_pool_enabled: bool = False              # env: WORKER_POOL_ENABLED
-    worker_pool_size: int = 4                      # env: WORKER_POOL_SIZE
+    worker_pool_size: int = 2                      # env: WORKER_POOL_SIZE — lowered Apr 28 from 4 to fit Render 2GB RAM cap (each worker holds ~50MB crawl HTML)
     worker_pool_queue_maxsize: int = 8             # bounded backpressure (typically 2 * worker_pool_size)
 
     # Per-primary cumulative yield floor. Below this, dry-streak stop is SUPPRESSED —

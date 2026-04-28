@@ -2194,13 +2194,28 @@ async def _update_job_safe(
 
 
 async def _heartbeat_loop(batch_id: str) -> None:
-    """Touch updated_at every 60s so the watchdog knows we're alive."""
+    """Touch updated_at every 60s so the watchdog knows we're alive.
+
+    Also logs process RSS in MB every cycle so OOM regressions are visible early.
+    Threshold 1500 MB = 75% of Render standard plan's 2 GB cap.
+    """
     conn = None
     try:
         conn = await psycopg.AsyncConnection.connect(
             settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
         )
         while True:
+            # ── Memory telemetry — log RSS every cycle, warn if >1500MB (75% of 2GB cap) ──
+            try:
+                import psutil
+                rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
+                log.info("discovery.heartbeat_rss", batch_id=batch_id, rss_mb=round(rss_mb, 1))
+                if rss_mb > 1500:
+                    log.warning("discovery.heartbeat_rss_high", batch_id=batch_id, rss_mb=round(rss_mb, 1))
+            except Exception as _rss_exc:
+                # Heartbeat must continue even if psutil somehow fails (container quirk, etc.)
+                log.debug("discovery.heartbeat_rss_failed", error=str(_rss_exc))
+
             try:
                 await conn.execute(
                     "UPDATE batch_data SET updated_at = NOW() WHERE batch_id = %s",
@@ -4121,6 +4136,14 @@ async def run(batch_id: str) -> None:
                                 )
                         except Exception:
                             pass
+
+                    # ── Free crawl HTML — last reader was the mentions-légales scan at line ~4049 ──
+                    # Each crawl_result.all_html dict can hold 5-50MB of full-page HTML across multiple
+                    # URLs (homepage + /contact + /mentions-legales etc). With N workers in flight,
+                    # not freeing this means N × 50MB of dead bytes lingering until function exit.
+                    # Clearing here, ~30s before function return, drops steady-state RSS by O(workers × 50MB).
+                    if crawl_result is not None:
+                        crawl_result.all_html.clear()
 
                     # Heartbeat before INPI — website crawl can be slow, keep updated_at fresh
                     await _update_job_safe(
