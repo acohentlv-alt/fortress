@@ -100,13 +100,15 @@ async def write_timing(
         sql = """INSERT INTO pipeline_timings (batch_id, siren, step, duration_ms, fired)
                  VALUES (%s, %s, %s, %s, %s)"""
         params = (batch_id, siren, step[:40], duration_ms, fired)
-        # Detect pool vs direct connection by checking for .connection() attribute
-        if hasattr(db, "connection"):
+        # Detect pool vs direct connection: connections have .execute(); pools do not.
+        # NOTE: AsyncConnection also has a .connection property (returns self), so
+        # `hasattr(db, "connection")` cannot distinguish the two — use .execute instead.
+        if hasattr(db, "execute"):
+            # It's a direct psycopg connection — use inline
+            await db.execute(sql, params)
+        else:
             # It's a pool — acquire a fresh connection
             async with db.connection() as conn:
                 await conn.execute(sql, params)
-        else:
-            # It's a direct psycopg connection — use inline
-            await db.execute(sql, params)
     except Exception as e:
         log.warning("timing.write_failed", step=step, error=str(e))
