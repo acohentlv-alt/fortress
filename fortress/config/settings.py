@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     # same pattern as gemini_multi_candidate_enabled.
     cp_widening_enabled: bool = False
 
+    # Lever A worker pool — decouple Maps scraping from post-Maps enrichment.
+    # Kill switch: default OFF — behaviour is unchanged at deploy time.
+    # Set WORKER_POOL_ENABLED=true in Render env to enable.
+    worker_pool_enabled: bool = False              # env: WORKER_POOL_ENABLED
+    worker_pool_size: int = 4                      # env: WORKER_POOL_SIZE
+    worker_pool_queue_maxsize: int = 8             # bounded backpressure (typically 2 * worker_pool_size)
+
     # Per-primary cumulative yield floor. Below this, dry-streak stop is SUPPRESSED —
     # widening force-continues until candidates exhaust or hard cap hits.
     # Rationale: <50 entities is "close to redundant" per Alan; we'd rather exhaust

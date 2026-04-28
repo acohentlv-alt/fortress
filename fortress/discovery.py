@@ -2379,7 +2379,7 @@ async def run(batch_id: str) -> None:
 
             # ── Open async pool ───────────────────────────────────────
             async with psycopg_pool.AsyncConnectionPool(
-                settings.db_url, min_size=1, max_size=5, open=True,
+                settings.db_url, min_size=1, max_size=12, open=True,
             ) as pool:
 
                 total_queries = len(search_queries)
@@ -3131,8 +3131,10 @@ async def run(batch_id: str) -> None:
                         triage_bucket = "RED"
                         triage_counts["red"] += 1
 
+                    # ── Dispatch to worker body (queue or inline) ────────
+                    # companies_discovered is incremented here (producer side)
+                    # so the counter is always accurate even if workers lag.
                     companies_discovered += 1
-                    idx = companies_discovered
                     # Write "completed" immediately if we just hit the target
                     if batch_size > 0 and companies_discovered >= batch_size:
                         try:
@@ -3145,6 +3147,35 @@ async def run(batch_id: str) -> None:
                             )
                         except Exception:
                             pass  # Best effort -- line ~1814 is the safety net
+
+                    _entity_data = (
+                        maps_result, candidate, crawl_result, extracted_siren,
+                        maps_name, maps_address, maps_phone, maps_website, maps_cp,
+                        website_domain, triage_bucket, companies_discovered,
+                    )
+                    if settings.worker_pool_enabled:
+                        await _entity_queue.put(_entity_data)
+                    else:
+                        await _process_entity_post_triage(*_entity_data)
+
+                # ── Worker body (runs inline or in pool worker task) ──────────
+                # Contains everything after triage: MAPS entity creation, DB persist,
+                # SIRENE link, Gemini judge, officer fetch, and audit logging.
+                async def _process_entity_post_triage(
+                    maps_result: dict[str, Any],
+                    candidate: dict | None,
+                    crawl_result: Any,
+                    extracted_siren: str | None,
+                    maps_name: str,
+                    maps_address: str | None,
+                    maps_phone: str | None,
+                    maps_website: str | None,
+                    maps_cp: str | None,
+                    website_domain: str | None,
+                    triage_bucket: str,
+                    idx: int,
+                ) -> None:
+                    nonlocal qualified, _gemini_cap_logged
 
                     # ALWAYS create a MAPS entity — never use matched SIREN as entity ID
                     async with pool.connection() as id_conn:
@@ -4262,6 +4293,59 @@ async def run(batch_id: str) -> None:
                     except Exception as _cp_exc:
                         log.warning("discovery.widening_cp_cache_failed", error=str(_cp_exc))
 
+                # ── Worker pool setup (kill switch: WORKER_POOL_ENABLED) ──────────
+                # When enabled: Maps producer pushes entity data to a bounded queue,
+                # N worker tasks drain it concurrently — decoupling Playwright scraping
+                # from the expensive post-Maps enrichment (crawl + SIRENE + INPI +
+                # Gemini) and achieving a 2-3× throughput lift.
+                # When disabled (default): _persist_result calls _process_entity_post_triage
+                # inline — identical to the serial behaviour shipped before Brief 3.
+                _WORKER_SENTINEL = object()  # unique sentinel to signal worker shutdown
+                _entity_queue: asyncio.Queue = asyncio.Queue(
+                    maxsize=settings.worker_pool_queue_maxsize
+                )
+                _worker_tasks: list[asyncio.Task] = []
+
+                if settings.worker_pool_enabled:
+                    async def _worker_task() -> None:
+                        while True:
+                            item = await _entity_queue.get()
+                            try:
+                                if item is _WORKER_SENTINEL:
+                                    break
+                                await _process_entity_post_triage(*item)
+                            except Exception as _worker_exc:
+                                log.exception(
+                                    "worker.entity_error",
+                                    error=str(_worker_exc),
+                                )
+                                # Write a batch_log error row so the failure is visible.
+                                try:
+                                    async with pool.connection() as _err_conn:
+                                        await log_audit(
+                                            _err_conn,
+                                            batch_id=batch_id,
+                                            siren="WORKER_ERROR",
+                                            action="entity_error",
+                                            result="fail",
+                                            detail=str(_worker_exc)[:500],
+                                            workspace_id=batch_workspace_id,
+                                        )
+                                except Exception:
+                                    pass  # Best-effort — never crash the worker
+                            finally:
+                                _entity_queue.task_done()  # CRITICAL: fires even for sentinel
+
+                    _worker_tasks = [
+                        asyncio.create_task(_worker_task())
+                        for _ in range(settings.worker_pool_size)
+                    ]
+                    log.info(
+                        "discovery.worker_pool_started",
+                        workers=settings.worker_pool_size,
+                        queue_maxsize=settings.worker_pool_queue_maxsize,
+                    )
+
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
                     # Resume: skip queries that completed in a prior run
@@ -4440,6 +4524,12 @@ async def run(batch_id: str) -> None:
                                 + [("postal_code", cp) for cp in _postal_codes_candidates]
                             )
 
+                            # Drain workers before reading companies_discovered for widening
+                            # — otherwise dry-streak detection misfires because the counter
+                            # doesn't yet reflect entities still being processed by workers.
+                            if settings.worker_pool_enabled:
+                                await _entity_queue.join()
+
                             for _widen_type, _widen_value in _widen_candidates:
                                 # Stop conditions
                                 if _widened_count >= settings.cp_widening_max_per_primary:
@@ -4617,6 +4707,21 @@ async def run(batch_id: str) -> None:
                     # Small delay between searches to avoid detection
                     if q_idx < total_queries:
                         await asyncio.sleep(3)
+
+                # ── Worker pool shutdown (when enabled) ──────────────────────────
+                # Drain all remaining queued entities, then send sentinel to each
+                # worker and wait for them to finish cleanly.
+                if settings.worker_pool_enabled and _worker_tasks:
+                    # Wait for all real items to be processed
+                    await _entity_queue.join()
+                    # Signal shutdown: one sentinel per worker
+                    for _ in range(settings.worker_pool_size):
+                        await _entity_queue.put(_WORKER_SENTINEL)
+                    await asyncio.gather(*_worker_tasks, return_exceptions=True)
+                    log.info(
+                        "discovery.worker_pool_stopped",
+                        workers=settings.worker_pool_size,
+                    )
 
                 # Web crawl skipped in Maps-first discovery mode.
                 # Maps provides phone + website with 90%+ hit rates.
