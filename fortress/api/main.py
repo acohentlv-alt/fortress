@@ -423,6 +423,21 @@ async def lifespan(app: FastAPI):
                     ON rgpd_oppositions (LOWER(email))
                 """)
 
+                # ── Pipeline instrumentation table ───────────────────────
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS pipeline_timings (
+                        id           BIGSERIAL PRIMARY KEY,
+                        batch_id     INTEGER REFERENCES batch_data(id) ON DELETE CASCADE,
+                        siren        VARCHAR(20),
+                        step         VARCHAR(40) NOT NULL,
+                        duration_ms  INTEGER NOT NULL,
+                        fired        BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at   TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_timings_batch ON pipeline_timings(batch_id)")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_timings_step ON pipeline_timings(step)")
+
                 # ── RGPD data retention cleanup ──────────────────────────
                 # Contact form submissions: 12 months (lead capture, consent-based)
                 await conn.execute("DELETE FROM contact_requests WHERE created_at < NOW() - INTERVAL '12 months'")
