@@ -354,21 +354,8 @@ async function renderJobMonitor(container, batchId) {
             <div style="display:flex; gap:var(--space-2xl); justify-content:center" id="mon-gauges">—</div>
         </div>
 
-        <!-- Batch Summary -->
-        <div class="card" style="margin-bottom:var(--space-xl)">
-            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                Résumé de la recherche
-            </h3>
-            <div id="mon-summary">—</div>
-        </div>
-
-        <!-- Queries Panel (TOP 3 widening) -->
-        <div class="card" style="margin-bottom:var(--space-xl)" id="mon-queries-card">
-            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                ${t('monitor.queriesPanel')}
-            </h3>
-            <div id="mon-queries-list">—</div>
-        </div>
+        <!-- Batch Summary + Queries Panel removed (Apr 28) — no useful data
+             during a running batch; available on the job detail page (#/job/:id). -->
 
         <!-- Completion CTA (hidden by default) -->
         <div id="mon-completion" style="display:none; margin-bottom:var(--space-xl)"></div>
