@@ -60,7 +60,7 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
         const primaryId = `qp-primary-${Math.random().toString(36).slice(2, 8)}`;
 
         if (collapsible) {
-            // Level 1: collapsible primary row
+            // Level 1: primary row. If no expansions ran, render flat (no chevron, no click).
             const summaryParts = [
                 `${primaryEntityCount} ${t('monitor.queriesNewEntities')}`,
             ];
@@ -69,28 +69,40 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
             }
             if (durationStr) summaryParts.push(`${durationStr}`);
 
-            lines.push(`
-                <div style="margin-bottom:var(--space-sm)">
-                    <div
-                        style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
-                        onclick="(function(el){
-                            var body=document.getElementById('${primaryId}');
-                            if(!body) return;
-                            var chevron=el.querySelector('.qp-chevron');
-                            var hidden=body.style.display==='none';
-                            body.style.display=hidden?'':'none';
-                            if(chevron) chevron.style.transform=hidden?'rotate(90deg)':'';
-                        })(this)"
-                    >
-                        <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
-                        <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
-                        <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+            if (expansionCount === 0) {
+                // Flat row — nothing to expand
+                lines.push(`
+                    <div style="margin-bottom:var(--space-sm)">
+                        <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)">
+                            <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
+                            <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+                        </div>
                     </div>
-                    <div id="${primaryId}" style="display:none; padding-left:var(--space-lg); padding-top:var(--space-xs)">
-                        ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
+                `);
+            } else {
+                lines.push(`
+                    <div style="margin-bottom:var(--space-sm)">
+                        <div
+                            style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
+                            onclick="(function(el){
+                                var body=document.getElementById('${primaryId}');
+                                if(!body) return;
+                                var chevron=el.querySelector('.qp-chevron');
+                                var hidden=body.style.display==='none';
+                                body.style.display=hidden?'':'none';
+                                if(chevron) chevron.style.transform=hidden?'rotate(90deg)':'';
+                            })(this)"
+                        >
+                            <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
+                            <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
+                            <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+                        </div>
+                        <div id="${primaryId}" style="display:none; padding-left:var(--space-lg); padding-top:var(--space-xs)">
+                            ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
+                        </div>
                     </div>
-                </div>
-            `);
+                `);
+            }
         } else {
             // Live monitor: fully expanded, no chevrons
             const summaryParts = [

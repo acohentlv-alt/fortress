@@ -82,8 +82,10 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
-                <div class="gemini-controls">
-                    <span class="gemini-controls-label">${t('newBatch.timeCapLabel')}</span>
+                <div style="text-align: center; margin: var(--space-md) 0;">
+                    <div style="color: var(--text-secondary); font-size: var(--font-sm); margin-bottom: var(--space-sm);">
+                        ${t('newBatch.timeCapLabel')}
+                    </div>
                     <div class="time-cap-pills" id="time-cap-pills" role="radiogroup">
                         <button type="button" class="cap-pill" data-cap-min="5">5 min</button>
                         <button type="button" class="cap-pill" data-cap-min="10">10 min</button>
