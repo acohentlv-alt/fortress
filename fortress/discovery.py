@@ -47,6 +47,7 @@ from fortress.processing.dedup import (
     upsert_contact,
 )
 from fortress.utils.phone import normalize_phone, PHONE_NORMALIZE_SQL
+from fortress.utils.timing import time_step, write_timing, batch_id_var, pool_var
 from fortress.matching.budget_tracker import BudgetTracker
 from fortress.matching import gemini as _gemini_judge
 
@@ -1457,22 +1458,32 @@ async def _match_to_sirene(
     # Guard: require dept, OR dense-urban CP (where CP is kept as location filter).
     # Prevents firing a global INPI name-search when dept is unknown and CP is stripped.
     _step0_dept_prefix = (maps_cp or "")[:2]
-    if (
+    _inpi_step0_fires = (
         not extracted_siren
         and meaningful_terms
         and (departement or (maps_cp and _step0_dept_prefix in _DENSE_URBAN_DEPTS))
-    ):
+    )
+    _timing_batch_id = batch_id_var.get()
+    if _inpi_step0_fires:
         try:
             from fortress.matching.inpi import search_by_name as _inpi_search
             # Pass CP only for dense-urban depts (arrondissements are distinct neighborhoods).
             # For other depts, CP would over-narrow — SIREN siège can be at any CP in dept.
             # Aligns with _validate_inpi_step0_hit's strict_postal logic.
             _inpi_cp = maps_cp if _step0_dept_prefix in _DENSE_URBAN_DEPTS else None
-            _inpi_hit = await _inpi_search(
-                query=_normalize_name(maps_name),
-                dept=departement,
-                cp=_inpi_cp,
-            )
+            if _timing_batch_id is not None:
+                async with time_step(conn, _timing_batch_id, None, "inpi_step0"):
+                    _inpi_hit = await _inpi_search(
+                        query=_normalize_name(maps_name),
+                        dept=departement,
+                        cp=_inpi_cp,
+                    )
+            else:
+                _inpi_hit = await _inpi_search(
+                    query=_normalize_name(maps_name),
+                    dept=departement,
+                    cp=_inpi_cp,
+                )
             _inpi_cache[maps_name] = _inpi_hit
         except Exception:
             _inpi_cache[maps_name] = None
@@ -1522,6 +1533,10 @@ async def _match_to_sirene(
                     if rejected_siren_sink is not None:
                         rejected_siren_sink[maps_name] = inpi_siren
         # fall through to Steps 0.5, 1-5
+    else:
+        if _timing_batch_id is not None:
+            async with time_step(conn, _timing_batch_id, None, "inpi_step0", fired=False):
+                pass
 
     # ── Step 0.5: Chain/franchise detector (Agent B, v2 — moved from Step 4.5) ──
     # Fires BEFORE Step 1 (siren_website) to prevent the franchise HQ-leak bug:
@@ -2037,18 +2052,27 @@ async def _match_to_sirene(
     # Uses the same search_by_name as Step 0 for cache-shape consistency.
     # Same dense-urban gating as Step 0 — require dept or dense-urban CP.
     _step5_dept_prefix = (maps_cp or "")[:2]
-    if (
+    _step5_inpi_fires = (
         maps_name not in _inpi_cache
         and (departement or (maps_cp and _step5_dept_prefix in _DENSE_URBAN_DEPTS))
-    ):
+    )
+    if _step5_inpi_fires:
         try:
             from fortress.matching.inpi import search_by_name as _inpi_search
             _inpi_cp = maps_cp if _step5_dept_prefix in _DENSE_URBAN_DEPTS else None
-            _inpi_hit = await _inpi_search(
-                query=_normalize_name(maps_name),
-                dept=departement,
-                cp=_inpi_cp,
-            )
+            if _timing_batch_id is not None:
+                async with time_step(conn, _timing_batch_id, None, "inpi_step0"):
+                    _inpi_hit = await _inpi_search(
+                        query=_normalize_name(maps_name),
+                        dept=departement,
+                        cp=_inpi_cp,
+                    )
+            else:
+                _inpi_hit = await _inpi_search(
+                    query=_normalize_name(maps_name),
+                    dept=departement,
+                    cp=_inpi_cp,
+                )
             _inpi_cache[maps_name] = _inpi_hit
         except Exception:
             _inpi_cache[maps_name] = None
@@ -2275,7 +2299,7 @@ async def run(batch_id: str) -> None:
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
                 """SELECT batch_name, search_queries, filters_json, batch_size,
-                          workspace_id, completed_queries_count, queries_json
+                          workspace_id, completed_queries_count, queries_json, id
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -2290,6 +2314,10 @@ async def run(batch_id: str) -> None:
             batch_workspace_id: int | None = row[4]
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
+            batch_int_id: int = int(row[7])  # INTEGER PK of batch_data row — used for pipeline_timings FK
+
+            # Set ContextVar so Maps scraper can write timing rows without threading batch_id through callbacks
+            batch_id_var.set(batch_int_id)
 
             # Parse optional department + NAF filter list from filters.
             # Accepts new key `naf_codes` (list) written by batch.py after the multi-NAF
@@ -2381,6 +2409,8 @@ async def run(batch_id: str) -> None:
             async with psycopg_pool.AsyncConnectionPool(
                 settings.db_url, min_size=1, max_size=5, open=True,
             ) as pool:
+                # Publish pool to ContextVar so Maps scraper can write timing rows
+                pool_var.set(pool)
 
                 total_queries = len(search_queries)
                 companies_discovered = 0
@@ -2577,18 +2607,22 @@ async def run(batch_id: str) -> None:
                     crawl_result = None
                     if maps_website:
                         try:
-                            crawl_result = await crawl_website(
-                                url=maps_website,
-                                client=curl_client,
-                                company_name=maps_name,
-                                department=dept_filter or "",
-                                siren="",
-                            )
-                            extracted_siren = crawl_result.siren_from_website
+                            async with time_step(pool, batch_int_id, None, "crawl"):
+                                crawl_result = await crawl_website(
+                                    url=maps_website,
+                                    client=curl_client,
+                                    company_name=maps_name,
+                                    department=dept_filter or "",
+                                    siren="",
+                                )
+                            extracted_siren = crawl_result.siren_from_website if crawl_result else None
                             if extracted_siren:
                                 log.info("discovery.siren_extracted", name=maps_name, siren=extracted_siren, website=maps_website)
                         except Exception as exc:
                             log.debug("discovery.siren_extract_failed", website=maps_website, error=str(exc))
+                    else:
+                        async with time_step(pool, batch_int_id, None, "crawl", fired=False):
+                            pass
 
                     # ── Level 4: SIREN dedup ──────────────────────────────
                     if extracted_siren:
@@ -2614,18 +2648,23 @@ async def run(batch_id: str) -> None:
                         _query_filtered_count += 1
                         return
 
+                    # ── entity_total timer — records full per-entity processing time ──
+                    # Placed after early-exit filters; covers SIRENE match through final DB write.
+                    _entity_t0 = time.perf_counter()
+
                     # ── SIRENE matching — all methods in one function ──────────────
                     candidate = None
                     async with pool.connection() as conn:
-                        candidate = await _match_to_sirene(
-                            conn, maps_name, maps_address, dept_filter, maps_phone, extracted_siren,
-                            rejected_siren_sink=_inpi_step0_rejected,
-                            picked_nafs=picked_nafs,
-                            naf_division_whitelist=naf_division_whitelist,
-                            maps_cp=maps_cp,
-                            maps_lat=maps_result.get("lat"),
-                            maps_lng=maps_result.get("lng"),
-                        )
+                        async with time_step(pool, batch_int_id, None, "match_cascade"):
+                            candidate = await _match_to_sirene(
+                                conn, maps_name, maps_address, dept_filter, maps_phone, extracted_siren,
+                                rejected_siren_sink=_inpi_step0_rejected,
+                                picked_nafs=picked_nafs,
+                                naf_division_whitelist=naf_division_whitelist,
+                                maps_cp=maps_cp,
+                                maps_lat=maps_result.get("lat"),
+                                maps_lng=maps_result.get("lng"),
+                            )
 
                     log.info(
                         "discovery.a2_entry",
@@ -3031,6 +3070,7 @@ async def run(batch_id: str) -> None:
                             _shadow_judge_needed.add((maps_name, maps_address or ""))
 
                     # ── Triage: classify before expensive work ────────────
+                    _triage_t0 = time.perf_counter()
                     triage_bucket = "RED"  # Default: full pipeline
 
                     # BLACK check: no usable name
@@ -3053,6 +3093,8 @@ async def run(batch_id: str) -> None:
                     if triage_bucket == "BLACK":
                         triage_counts["black"] += 1
                         log.info("discovery.triage_black", name=maps_name)
+                        await write_timing(pool, batch_int_id, None, "triage_check", int((time.perf_counter() - _triage_t0) * 1000), True)
+                        await write_timing(pool, batch_int_id, None, "entity_total", int((time.perf_counter() - _entity_t0) * 1000), True)
                         return
 
                     # GREEN/YELLOW check: what data do we already have?
@@ -3123,6 +3165,8 @@ async def run(batch_id: str) -> None:
                                     )
                                 except Exception:
                                     pass  # Best effort -- line ~1814 is the safety net
+                            await write_timing(pool, batch_int_id, lookup_siren, "triage_check", int((time.perf_counter() - _triage_t0) * 1000), True)
+                            await write_timing(pool, batch_int_id, lookup_siren, "entity_total", int((time.perf_counter() - _entity_t0) * 1000), True)
                             return
                         else:
                             triage_bucket = "YELLOW"
@@ -3130,6 +3174,9 @@ async def run(batch_id: str) -> None:
                     else:
                         triage_bucket = "RED"
                         triage_counts["red"] += 1
+
+                    # ── triage_check: record classification time (normal YELLOW/RED path) ──
+                    await write_timing(pool, batch_int_id, None, "triage_check", int((time.perf_counter() - _triage_t0) * 1000), True)
 
                     companies_discovered += 1
                     idx = companies_discovered
@@ -3225,9 +3272,10 @@ async def run(batch_id: str) -> None:
 
                     # Persist to DB immediately
                     async with pool.connection() as conn:
-                        await upsert_company(conn, company)
-                        await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
-                        await upsert_contact(conn, contact)
+                        async with time_step(pool, batch_int_id, siren, "db_write"):
+                            await upsert_company(conn, company)
+                            await bulk_tag_query(conn, [siren], batch_name, workspace_id=batch_workspace_id, batch_id=batch_id)
+                            await upsert_contact(conn, contact)
 
                         # ── Phase 1 — persist Maps panel coordinates if captured ───────
                         _maps_lat = maps_result.get("lat")
@@ -3456,7 +3504,8 @@ async def run(batch_id: str) -> None:
                         # _just_auto_confirmed: True when the auto-confirm path above ran AND copied SIRENE fields.
                         # Used by quarantine path to know if rollback is needed.
                         _just_auto_confirmed = bool(_pending_link and auto_confirm)
-                        if (maps_name, maps_address or "") in _shadow_judge_needed:
+                        _gemini_judge_needed = (maps_name, maps_address or "") in _shadow_judge_needed
+                        if _gemini_judge_needed:
                             try:
                                 _cost = _gemini_judge._COST_PER_CALL_USD
                                 if await _gemini_budget.would_exceed(_cost):
@@ -3528,15 +3577,16 @@ async def run(batch_id: str) -> None:
                                     else:
                                         _candidates_for_prompt = []
 
-                                    _verdict = await _gemini_judge.judge_match(
-                                        api_key=settings.gemini_api_key,
-                                        maps_name=maps_name,
-                                        maps_address=maps_address,
-                                        maps_phone=_maps_phone_for_prompt,
-                                        candidates=_candidates_for_prompt,
-                                        rejected_siren=_rejected_for_this,
-                                        fallback_model=(settings.gemini_model_fallback or None),
-                                    )
+                                    async with time_step(pool, batch_int_id, siren, "gemini_judge"):
+                                        _verdict = await _gemini_judge.judge_match(
+                                            api_key=settings.gemini_api_key,
+                                            maps_name=maps_name,
+                                            maps_address=maps_address,
+                                            maps_phone=_maps_phone_for_prompt,
+                                            candidates=_candidates_for_prompt,
+                                            rejected_siren=_rejected_for_this,
+                                            fallback_model=(settings.gemini_model_fallback or None),
+                                        )
                                     if _verdict is not None:
                                         await _gemini_budget.spend(_cost)
                                         _v = _verdict.get("verdict")
@@ -3889,6 +3939,10 @@ async def run(batch_id: str) -> None:
                                     maps_name=maps_name,
                                     error=str(_gem_exc),
                                 )
+                        else:
+                            # Entity did not trigger Gemini — record skip row
+                            async with time_step(pool, batch_int_id, siren, "gemini_judge", fired=False):
+                                pass
 
                         await log_audit(
                             conn,
@@ -4036,17 +4090,16 @@ async def run(batch_id: str) -> None:
 
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
                     # Fuzzy name matches wait for user confirmation before INPI call.
-                    if (
-                        _pending_link
-                        and _pending_link["method"] in _STRONG_METHODS
-                    ):
+                    _inpi_officers_fires = bool(_pending_link and _pending_link["method"] in _STRONG_METHODS)
+                    if _inpi_officers_fires:
                         try:
                             from fortress.matching.inpi import fetch_dirigeants
                             from fortress.models import Officer, ContactSource as CS
                             from fortress.processing.dedup import upsert_officer
 
                             target_siren = _pending_link["siren"]
-                            dirigeants, re_company_data = await fetch_dirigeants(target_siren)
+                            async with time_step(pool, batch_int_id, siren, "inpi_officers"):
+                                dirigeants, re_company_data = await fetch_dirigeants(target_siren)
                             async with pool.connection() as conn:
                                 for d in dirigeants:
                                     officer = Officer(
@@ -4101,6 +4154,10 @@ async def run(batch_id: str) -> None:
                                         )
                         except Exception as exc:
                             log.warning("discovery.inpi_failed", siren=siren, error=str(exc))
+                    else:
+                        # Not a strong-method confirm — record skip row
+                        async with time_step(pool, batch_int_id, siren, "inpi_officers", fired=False):
+                            pass
 
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
@@ -4116,6 +4173,9 @@ async def run(batch_id: str) -> None:
                             processed=idx,
                             qualified=qualified,
                         )
+
+                    # ── entity_total: record full per-entity duration (normal path) ──
+                    await write_timing(pool, batch_int_id, siren, "entity_total", int((time.perf_counter() - _entity_t0) * 1000), True)
 
                 # ── Acquire advisory lock (one Maps scrape at a time) ─
                 try:

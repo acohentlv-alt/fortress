@@ -33,12 +33,14 @@ import json
 import math
 import random
 import re
+import time
 from typing import Any
 
 import structlog
 
 from fortress.config.sector_relevance import is_irrelevant_name
 from fortress.config.settings import settings
+from fortress.utils.timing import time_step, write_timing, batch_id_var, pool_var
 
 log = structlog.get_logger(__name__)
 
@@ -741,7 +743,13 @@ class PlaywrightMapsScraper:
                 await feed.evaluate(
                     "el => el.scrollTo(0, el.scrollHeight)"
                 )
-                await page.wait_for_timeout(random.randint(2000, 3000))
+                _scroll_bid = batch_id_var.get()
+                _scroll_pool = pool_var.get()
+                if _scroll_bid is not None and _scroll_pool is not None:
+                    async with time_step(_scroll_pool, _scroll_bid, None, "maps_scroll"):
+                        await page.wait_for_timeout(random.randint(2000, 3000))
+                else:
+                    await page.wait_for_timeout(random.randint(2000, 3000))
 
         # ── Step 5: Collect all card hrefs FIRST ────────────────────────
         # Each card is an <a> with an href to the business page.
@@ -831,78 +839,114 @@ class PlaywrightMapsScraper:
                     )
                     break
 
-                # Navigate directly to the business page (full fresh load)
-                await page.goto(card_href, wait_until="domcontentloaded", timeout=15000)
+                # ── maps_card timer: page nav → extract → nav back ──────────────────
+                # on_result is called AFTER this block (covered by entity_total).
+                # batch_id_var and pool_var are set by discovery.run() before scraping starts.
+                _card_bid = batch_id_var.get()
+                _card_pool = pool_var.get()
+                _card_data_holder: list = []  # carries data out of the timer block
+                _card_dedup_key: list = []    # carries dedup_key out of the timer block
 
-                # Wait for the business panel h1 to appear
-                try:
-                    await page.wait_for_selector('h1.DUwDvf', timeout=5000)
-                except Exception:
-                    await page.wait_for_timeout(1000)
+                if _card_bid is not None and _card_pool is not None:
+                    async with time_step(_card_pool, _card_bid, None, "maps_card"):
+                        # Navigate directly to the business page (full fresh load)
+                        await page.goto(card_href, wait_until="domcontentloaded", timeout=15000)
 
-                # Small settle for all data elements to load
-                # NOTE: 1500ms needed because Maps JS renders website/phone
-                # buttons AFTER domcontentloaded, especially for hospitality
-                # businesses that show availability widgets first.
-                await page.wait_for_timeout(1500)
-
-                # Extract all data from the fully loaded business page
-                data = await self._extract_from_page(card_label, "", "discovery")
-                data["search_query"] = query
-
-                # Card category from list view is more reliable than detail page
-                if card_category:
-                    data["category"] = card_category
-
-                extracted_name = data.get("maps_name") or card_label
-
-                # Dedup check: name + address
-                dedup_key = (
-                    extracted_name.lower()
-                    + "|"
-                    + (data.get("address") or "").lower()
-                )
-                if dedup_key not in seen_keys:
-                    seen_keys.add(dedup_key)
-                    results.append(data)
-
-                    log.info(
-                        "maps_discovery.extracted",
-                        idx=idx + 1,
-                        total=total_cards,
-                        name=extracted_name,
-                        has_phone=bool(data.get("phone")),
-                        has_website=bool(data.get("website")),
-                        query=query,
-                    )
-
-                    # Real-time callback for per-entity persistence
-                    if on_result:
+                        # Wait for the business panel h1 to appear
                         try:
-                            cb_result = await on_result(data)
-                            if cb_result is False:
-                                log.info(
-                                    "maps_discovery.early_stop",
-                                    reason="callback_signal",
-                                    extracted=len(results),
-                                    total_cards=len(card_data),
-                                    query=query,
-                                )
-                                break
-                        except Exception as cb_exc:
-                            log.warning(
-                                "maps_discovery.on_result_error",
-                                error=str(cb_exc),
-                            )
+                            await page.wait_for_selector('h1.DUwDvf', timeout=5000)
+                        except Exception:
+                            await page.wait_for_timeout(1000)
+
+                        # Small settle for all data elements to load
+                        # NOTE: 1500ms needed because Maps JS renders website/phone
+                        # buttons AFTER domcontentloaded, especially for hospitality
+                        # businesses that show availability widgets first.
+                        await page.wait_for_timeout(1500)
+
+                        # Extract all data from the fully loaded business page
+                        data = await self._extract_from_page(card_label, "", "discovery")
+                        data["search_query"] = query
+
+                        # Card category from list view is more reliable than detail page
+                        if card_category:
+                            data["category"] = card_category
+
+                        _card_data_holder.append(data)
+                        extracted_name = data.get("maps_name") or card_label
+                        _card_dedup_key.append(
+                            extracted_name.lower() + "|" + (data.get("address") or "").lower()
+                        )
+
+                        # Navigate back to the search results
+                        await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(500)
                 else:
-                    log.debug(
-                        "maps_discovery.duplicate_skipped",
-                        name=extracted_name,
+                    # No timing context — execute normally without instrumentation
+                    await page.goto(card_href, wait_until="domcontentloaded", timeout=15000)
+                    try:
+                        await page.wait_for_selector('h1.DUwDvf', timeout=5000)
+                    except Exception:
+                        await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(1500)
+                    data = await self._extract_from_page(card_label, "", "discovery")
+                    data["search_query"] = query
+                    if card_category:
+                        data["category"] = card_category
+                    _card_data_holder.append(data)
+                    extracted_name = data.get("maps_name") or card_label
+                    _card_dedup_key.append(
+                        extracted_name.lower() + "|" + (data.get("address") or "").lower()
+                    )
+                    await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(500)
+
+                # Process extraction results (dedup + on_result — after maps_card timer)
+                if _card_data_holder:
+                    data = _card_data_holder[0]
+                    extracted_name = data.get("maps_name") or card_label
+                    dedup_key = _card_dedup_key[0] if _card_dedup_key else (
+                        extracted_name.lower() + "|" + (data.get("address") or "").lower()
                     )
 
-                # Navigate back to the search results
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
-                await page.wait_for_timeout(500)
+                    if dedup_key not in seen_keys:
+                        seen_keys.add(dedup_key)
+                        results.append(data)
+
+                        log.info(
+                            "maps_discovery.extracted",
+                            idx=idx + 1,
+                            total=total_cards,
+                            name=extracted_name,
+                            has_phone=bool(data.get("phone")),
+                            has_website=bool(data.get("website")),
+                            query=query,
+                        )
+
+                        # Real-time callback for per-entity persistence
+                        # on_result excluded from maps_card timer (covered by entity_total)
+                        if on_result:
+                            try:
+                                cb_result = await on_result(data)
+                                if cb_result is False:
+                                    log.info(
+                                        "maps_discovery.early_stop",
+                                        reason="callback_signal",
+                                        extracted=len(results),
+                                        total_cards=len(card_data),
+                                        query=query,
+                                    )
+                                    break
+                            except Exception as cb_exc:
+                                log.warning(
+                                    "maps_discovery.on_result_error",
+                                    error=str(cb_exc),
+                                )
+                    else:
+                        log.debug(
+                            "maps_discovery.duplicate_skipped",
+                            name=extracted_name,
+                        )
 
                 # Memory flush every 20 results
                 if (idx + 1) % 20 == 0:
