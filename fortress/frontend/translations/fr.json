@@ -510,7 +510,6 @@
     "metricSubstitutions": "Substitutions",
     "ringLabelQualRate": "Taux de contact",
     "ringLabelNoResult": "Batch sans résultat",
-    "poolBreakdown": "Répartition du pool",
     "dataQuality": "Qualité des données enrichies",
     "exhaustive": "Mode exhaustif",
     "autoRefresh": "Actualisation automatique toutes les 1.5 secondes",

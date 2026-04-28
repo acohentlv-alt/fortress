@@ -423,41 +423,6 @@ export function sourceLabel(src) {
     return map[src] || src;
 }
 
-// ── Triage Bar ───────────────────────────────────────────────────
-// Edge cases: all zero → empty bar, missing categories → 0, single category → full width
-export function renderTriageBar(triage) {
-    if (!triage) triage = {};
-    const green = triage.green || triage.triage_green || 0;
-    const yellow = triage.yellow || triage.triage_yellow || 0;
-    const red = triage.red || triage.triage_red || 0;
-    const black = triage.black || triage.triage_black || 0;
-    const blue = triage.blue || triage.triage_blue || 0;
-    const total = green + yellow + red + black + blue;
-
-    const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(1) : 0;
-
-    const segments = [
-        { cls: 'green', val: green, label: 'Complet' },
-        { cls: 'yellow', val: yellow, label: 'Partiel' },
-        { cls: 'red', val: red, label: 'Nouveau' },
-        { cls: 'black', val: black, label: 'Blacklisté' },
-        { cls: 'blue', val: blue, label: 'Client' },
-    ].filter(s => s.val > 0);
-
-    return `
-        <div class="triage-bar">
-            ${segments.map(s => `<div class="triage-bar-segment ${s.cls}" style="width:${pct(s.val)}%" title="${s.label}: ${s.val}"></div>`).join('')}
-        </div>
-        <div class="triage-legend">
-            ${segments.map(s => `
-                <span class="triage-legend-item">
-                    <span class="triage-legend-dot ${s.cls}"></span>
-                    ${s.label}: ${s.val}
-                </span>
-            `).join('')}
-        </div>
-    `;
-}
 
 // ── Pipeline Stage Indicator ─────────────────────────────────────
 // Edge cases: unknown/null stage → all grey (safe default)

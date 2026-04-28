@@ -15,7 +15,7 @@
 import { getJobs, getJob, getJobQuality, getJobCompanies, cancelJob, deleteJob } from '../api.js';
 import {
     breadcrumb, statusBadge, formatDateTime, escapeHtml,
-    renderGauge, companyCard, renderTriageBar, renderPipelineStages,
+    renderGauge, companyCard, renderPipelineStages,
     animateCounter, renderProgressRing, showConfirmModal, showToast,
 } from '../components.js';
 import { registerCleanup } from '../app.js';
@@ -82,7 +82,7 @@ function renderQueriesPanel(queries) {
     const primaries = queries.filter(q => !q.is_expansion);
     const lines = [];
     for (const p of primaries) {
-        lines.push(`<div style="display:flex; justify-content:space-between; padding:6px 0">
+        lines.push(`<div style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0">
             <span><strong>${escapeHtml(p.query)}</strong></span>
             <span style="color:var(--text-muted)">&#8594; ${p.new_companies || 0} ${t('monitor.queriesNewEntities')}</span>
         </div>`);
@@ -91,7 +91,7 @@ function renderQueriesPanel(queries) {
             const typeLabel = e.widening_type === 'city'
                 ? t('monitor.queriesCityLabel')
                 : t('monitor.queriesPostalLabel');
-            lines.push(`<div style="display:flex; justify-content:space-between; padding:4px 0 4px 24px; font-size:var(--font-sm); color:var(--text-secondary)">
+            lines.push(`<div style="display:flex; justify-content:space-between; gap:24px; padding:4px 12px 4px 24px; font-size:var(--font-sm); color:var(--text-secondary)">
                 <span>&#8627; ${escapeHtml(typeLabel)} — ${escapeHtml(e.value || '')}</span>
                 <span>&#8594; ${e.new_companies || 0} ${t('monitor.queriesNewEntities')}</span>
             </div>`);
@@ -341,15 +341,9 @@ async function renderJobMonitor(container, batchId) {
             <div id="mon-wave"></div>
         </div>
 
-        <!-- Pool Breakdown (admin only) -->
-        <div class="card" style="margin-bottom:var(--space-xl)">
-            <h3 class="detail-section-title">${t('monitor.poolBreakdown')}</h3>
-            <div id="mon-triage">—</div>
-        </div>
         ` : `
         <div id="mon-pipeline" style="display:none"></div>
         <div id="mon-wave" style="display:none"></div>
-        <div id="mon-triage" style="display:none"></div>
         `}
 
         <!-- Quality Gauges -->
@@ -407,7 +401,6 @@ async function renderJobMonitor(container, batchId) {
         replaced: document.getElementById('mon-replaced'),
         pipeline: document.getElementById('mon-pipeline'),
         wave: document.getElementById('mon-wave'),
-        triage: document.getElementById('mon-triage'),
         gauges: document.getElementById('mon-gauges'),
         footer: document.getElementById('mon-footer'),
         cardsTitle: document.getElementById('mon-cards-title'),
@@ -548,7 +541,7 @@ async function renderJobMonitor(container, batchId) {
         ]);
         $.title.textContent = job.batch_name || t('monitor.batchInProgress');
         $.statusRow.innerHTML = `
-            ${statusBadge(job.status || 'queued')}
+            ${isRunning ? '' : statusBadge(job.status || 'queued')}
             ${isRunning ? `<span class="live-badge"><span class="live-badge-dot"></span> ${t('monitor.liveLabel')}</span>` : ''}
         `;
 
@@ -694,19 +687,6 @@ async function renderJobMonitor(container, batchId) {
                </div>`
             : '';
 
-        // ── Triage Bar (hide for uploads) ────────────────────────
-        if (isUpload) {
-            $.triage.style.display = 'none';
-            if ($.triage.parentElement) $.triage.parentElement.style.display = 'none';
-        } else {
-            $.triage.innerHTML = renderTriageBar({
-                green: job.triage_green,
-                yellow: job.triage_yellow,
-                red: job.triage_red,
-                black: job.triage_black,
-                blue: job.triage_blue,
-            });
-        }
 
         // ── Quality Gauges ──────────────────────────────────────
         try {

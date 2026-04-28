@@ -505,7 +505,6 @@
     "metricSubstitutions": "Substitutions",
     "ringLabelQualRate": "Contact rate",
     "ringLabelNoResult": "Batch with no results",
-    "poolBreakdown": "Pool breakdown",
     "dataQuality": "Enriched data quality",
     "autoRefresh": "Auto-refresh every 1.5 seconds",
     "collectingTitle": "📋 Companies collected ({{count}})",
