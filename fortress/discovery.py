@@ -3243,7 +3243,7 @@ async def run(batch_id: str) -> None:
                     triage_bucket: str,
                     idx: int,
                 ) -> None:
-                    nonlocal qualified, _gemini_cap_logged
+                    nonlocal qualified, _gemini_cap_logged, _query_geo_capture_count
                     # Local timer for entity_total — works in both serial (inline call from
                     # _persist_result) and worker-pool (called from queue.get loop) modes.
                     # Without this, line ~4214's read of _entity_t0 hits NameError under workers
