@@ -3227,6 +3227,11 @@ async def run(batch_id: str) -> None:
                     idx: int,
                 ) -> None:
                     nonlocal qualified, _gemini_cap_logged
+                    # Local timer for entity_total — works in both serial (inline call from
+                    # _persist_result) and worker-pool (called from queue.get loop) modes.
+                    # Without this, line ~4214's read of _entity_t0 hits NameError under workers
+                    # because the producer's _entity_t0 (line 2657) isn't in the worker's scope.
+                    _entity_t0 = time.perf_counter()
 
                     # ALWAYS create a MAPS entity — never use matched SIREN as entity ID
                     async with pool.connection() as id_conn:
