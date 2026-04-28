@@ -2530,8 +2530,12 @@ async def run(batch_id: str) -> None:
                 # all queries finish). If Chrome crashes mid-batch,
                 # already-saved businesses are retained.
 
+                # Per-query effective dept. Reassigned at top of per-query loop;
+                # read by _persist_result via nonlocal.
+                _effective_dept: str | None = dept_filter
+
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
-                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged, _query_geo_capture_count
+                    nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged, _query_geo_capture_count, _effective_dept
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
@@ -2612,7 +2616,7 @@ async def run(batch_id: str) -> None:
                                     url=maps_website,
                                     client=curl_client,
                                     company_name=maps_name,
-                                    department=dept_filter or "",
+                                    department=_effective_dept or "",
                                     siren="",
                                 )
                             extracted_siren = crawl_result.siren_from_website if crawl_result else None
@@ -2657,7 +2661,7 @@ async def run(batch_id: str) -> None:
                     async with pool.connection() as conn:
                         async with time_step(pool, batch_int_id, None, "match_cascade"):
                             candidate = await _match_to_sirene(
-                                conn, maps_name, maps_address, dept_filter, maps_phone, extracted_siren,
+                                conn, maps_name, maps_address, _effective_dept, maps_phone, extracted_siren,
                                 rejected_siren_sink=_inpi_step0_rejected,
                                 picked_nafs=picked_nafs,
                                 naf_division_whitelist=naf_division_whitelist,
@@ -2785,7 +2789,7 @@ async def run(batch_id: str) -> None:
                                             # Step 0 and Step 5 keep fail-fast behavior by default.
                                             _a2_hit = await _a2_search(
                                                 query=_a2_query,
-                                                dept=dept_filter,
+                                                dept=_effective_dept,
                                                 cp=_a2_cp,
                                                 retry_on_rate_limit=True,
                                             )
@@ -2834,7 +2838,7 @@ async def run(batch_id: str) -> None:
 
                                                 if _validate_inpi_step0_hit(
                                                     maps_cp=maps_cp,
-                                                    departement=dept_filter,
+                                                    departement=_effective_dept,
                                                     meaningful_terms=_legal_meaningful,
                                                     local_denom=_a2_local_denom,
                                                     local_enseigne=_a2_local_enseigne,
@@ -3202,7 +3206,7 @@ async def run(batch_id: str) -> None:
                     # enabling _copy_sirene_reference_data's COALESCE to preserve the Maps location
                     # instead of being overwritten by the SIRENE siège (Frankenstein fix, Apr 22).
                     _company_cp, _company_ville = _parse_maps_address(maps_address)
-                    _company_dept = dept_filter or (_company_cp[:2] if _company_cp else None)
+                    _company_dept = _effective_dept or (_company_cp[:2] if _company_cp else None)
 
                     company = Company(
                         siren=siren,
@@ -3546,7 +3550,7 @@ async def run(batch_id: str) -> None:
                                         ):
                                             _alternatives = await _gather_alternatives(
                                                 conn, maps_name, _maps_lat, _maps_lng,
-                                                dept_filter, exclude_siren=candidate["siren"], k=3,
+                                                _effective_dept, exclude_siren=candidate["siren"], k=3,
                                             )
                                             _candidates_for_prompt = [candidate] + _alternatives
                                         else:
@@ -3556,7 +3560,7 @@ async def run(batch_id: str) -> None:
                                             _candidates_for_prompt = await _fetch_trigram_candidates(
                                                 conn,
                                                 maps_name,
-                                                dept_filter,  # USE dept_filter, NOT maps_dept
+                                                _effective_dept,  # per-query dept, not batch-level
                                                 limit=10,
                                             )
                                         except Exception as _trg_exc:
@@ -4195,27 +4199,27 @@ async def run(batch_id: str) -> None:
                     raise RuntimeError(f"Cannot acquire Maps scraping lock: {lock_exc}")
 
                 # ── Cross-batch dedup (after lock — sees batch A's results) ──
-                if dept_filter:
+                if _dedup_dept_list:
                     async with pool.connection() as conn:
                         if batch_workspace_id is not None:
                             cur = await conn.execute(
                                 """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
                                    FROM companies c
                                    WHERE c.siren LIKE 'MAPS%%'
-                                   AND c.departement = %s
+                                   AND c.departement = ANY(%s)
                                    AND c.workspace_id = %s
                                    AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (dept_filter, batch_workspace_id),
+                                (_dedup_dept_list, batch_workspace_id),
                             )
                         else:
                             cur = await conn.execute(
                                 """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
                                    FROM companies c
                                    WHERE c.siren LIKE 'MAPS%%'
-                                   AND c.departement = %s
+                                   AND c.departement = ANY(%s)
                                    AND c.workspace_id IS NULL
                                    AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (dept_filter,),
+                                (_dedup_dept_list,),
                             )
                         prev_rows = await cur.fetchall()
                         for r in prev_rows:
@@ -4223,7 +4227,7 @@ async def run(batch_id: str) -> None:
                     log.info(
                         "discovery.cross_batch_dedup",
                         existing_maps_entities=len(prev_rows),
-                        dept=dept_filter,
+                        dept_codes=_dedup_dept_list,
                         workspace_id=batch_workspace_id,
                     )
 
@@ -4248,27 +4252,27 @@ async def run(batch_id: str) -> None:
                 )
 
                 # ── Cross-batch SIREN dedup (workspace-scoped via linked_siren) ──
-                if dept_filter:
+                if _dedup_dept_list:
                     async with pool.connection() as conn:
                         if batch_workspace_id is not None:
                             cur = await conn.execute(
                                 """SELECT c.linked_siren FROM companies c
-                                   WHERE c.departement = %s
+                                   WHERE c.departement = ANY(%s)
                                    AND c.siren LIKE 'MAPS%%'
                                    AND c.linked_siren IS NOT NULL
                                    AND c.workspace_id = %s
                                    AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (dept_filter, batch_workspace_id),
+                                (_dedup_dept_list, batch_workspace_id),
                             )
                         else:
                             cur = await conn.execute(
                                 """SELECT c.linked_siren FROM companies c
-                                   WHERE c.departement = %s
+                                   WHERE c.departement = ANY(%s)
                                    AND c.siren LIKE 'MAPS%%'
                                    AND c.linked_siren IS NOT NULL
                                    AND c.workspace_id IS NULL
                                    AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (dept_filter,),
+                                (_dedup_dept_list,),
                             )
                         existing_sirens = await cur.fetchall()
                         for r in existing_sirens:
@@ -4276,7 +4280,7 @@ async def run(batch_id: str) -> None:
                     log.info(
                         "discovery.siren_dedup_loaded",
                         existing=len(seen_sirens),
-                        dept=dept_filter,
+                        dept_codes=_dedup_dept_list,
                         workspace_id=batch_workspace_id,
                     )
 
@@ -4315,8 +4319,18 @@ async def run(batch_id: str) -> None:
                 except Exception as _rgpd_exc:
                     log.warning("discovery.rgpd_load_failed", error=str(_rgpd_exc))
 
+                # ── Build effective-dept set across all queries (for cross-batch dedup) ──
+                _batch_effective_depts: set[str] = set()
+                for _q in search_queries:
+                    _d = _parse_dept_hint_from_query(_q) or dept_filter
+                    if _d:
+                        _batch_effective_depts.add(_d)
+                _dedup_dept_list: list[str] | None = (
+                    list(_batch_effective_depts) if _batch_effective_depts else None
+                )
+
                 # ── Preload postal-code density cache for widening (no-op if disabled) ──
-                if settings.cp_widening_enabled and dept_filter:
+                if settings.cp_widening_enabled and _dedup_dept_list:
                     try:
                         await _load_dept_postal_codes(pool)
                     except Exception as _cp_exc:
@@ -4327,6 +4341,8 @@ async def run(batch_id: str) -> None:
                     # Resume: skip queries that completed in a prior run
                     if q_idx <= _completed_queries_count:
                         continue
+                    # Resolve per-query effective dept (overrides batch-level dept_filter)
+                    _effective_dept = _parse_dept_hint_from_query(search_query) or dept_filter
                     # Check for graceful shutdown
                     if _shutdown:
                         log.warning(
@@ -4396,8 +4412,8 @@ async def run(batch_id: str) -> None:
 
                     # Strip department code from query text — viewport already handles geography
                     clean_query = search_query
-                    if dept_filter and re.match(r"^\d{2,3}$", dept_filter):
-                        clean_query = re.sub(r'\b' + re.escape(dept_filter) + r'\b', '', search_query).strip()
+                    if _effective_dept and re.match(r"^\d{2,3}$", _effective_dept):
+                        clean_query = re.sub(r'\b' + re.escape(_effective_dept) + r'\b', '', search_query).strip()
                         clean_query = re.sub(r'\s{2,}', ' ', clean_query).strip().rstrip(',').strip()
                         if clean_query:
                             log.info("discovery.query_cleaned", original=search_query, cleaned=clean_query)
@@ -4414,7 +4430,7 @@ async def run(batch_id: str) -> None:
                     _query_start = time.monotonic()
                     results = await maps_scraper.search_all(
                         clean_query, on_result=_persist_result,
-                        dept_code=dept_filter,
+                        dept_code=_effective_dept,
                         max_results=_max_cards,
                         sector_word=_sector_word,
                         should_skip=_should_skip_card,
@@ -4437,34 +4453,11 @@ async def run(batch_id: str) -> None:
                         "duration_sec": round(time.monotonic() - _query_start, 1),
                     })
 
-                    # ── TOP 3 Twin Discovery Widening ─────────────────────────
-                    # Skip widening if the primary's dept hint mismatches the batch's
-                    # dept_filter — otherwise we'd widen with the wrong dept's cities/codes
-                    # (e.g., batch locked to dept 51 + primary "arboriculture 47" would
-                    # widen to Reims/Épernay/51XXX instead of Agen/Marmande/47XXX).
-                    _query_dept_hint = _parse_dept_hint_from_query(search_query)
-                    _widen_dept_mismatch = bool(
-                        _query_dept_hint and dept_filter and _query_dept_hint != dept_filter
-                    )
-                    if _widen_dept_mismatch:
-                        log.info(
-                            "discovery.widening_skipped_dept_mismatch",
-                            primary=search_query,
-                            query_dept=_query_dept_hint,
-                            batch_dept=dept_filter,
-                        )
-                        _widening_summary[search_query] = {
-                            "cities_tried": 0,
-                            "codes_tried": 0,
-                            "stop_reason": "dept_mismatch",
-                            "total_widened": 0,
-                        }
                     if (
                         settings.cp_widening_enabled
-                        and dept_filter
+                        and _effective_dept
                         and not _shutdown
                         and companies_discovered < 2000
-                        and not _widen_dept_mismatch
                     ):
                         # Check cancel flag before starting widening
                         _widen_cancelled = False
@@ -4479,11 +4472,11 @@ async def run(batch_id: str) -> None:
 
                         if not _widen_cancelled:
                             # Load density-ranked postal codes (one-shot cache)
-                            _dept_cps = (await _load_dept_postal_codes(pool)).get(dept_filter, [])
+                            _dept_cps = (await _load_dept_postal_codes(pool)).get(_effective_dept, [])
                             _postal_codes_candidates = _dept_cps[:settings.cp_widening_postal_codes_max]
 
                             # Skip index 0 (prefecture, already covered by primary query)
-                            _cities_candidates = DEPT_CITIES.get(dept_filter, [])[1:]
+                            _cities_candidates = DEPT_CITIES.get(_effective_dept, [])[1:]
 
                             # Per-primary yield at start of widening
                             _primary_yield_at_start = companies_discovered - _pre_query_discovered
@@ -4549,7 +4542,7 @@ async def run(batch_id: str) -> None:
                                     _w_results = await maps_scraper.search_all(
                                         _widened_query,
                                         on_result=_persist_result,
-                                        dept_code=dept_filter,
+                                        dept_code=_effective_dept,
                                         max_results=_w_max_cards,
                                         sector_word=_sector_word,
                                         should_skip=_should_skip_card,
@@ -4592,7 +4585,7 @@ async def run(batch_id: str) -> None:
                                 })
 
                                 # Audit row in batch_log
-                                _wid_siren_slug = f"WIDEN_{dept_filter}_{_wid_slug(_widen_value)}"[:50]
+                                _wid_siren_slug = f"WIDEN_{_effective_dept}_{_wid_slug(_widen_value)}"[:50]
                                 try:
                                     async with pool.connection() as _wid_conn:
                                         await log_audit(
@@ -4607,7 +4600,7 @@ async def run(batch_id: str) -> None:
                                                 "widened_query": _widened_query,
                                                 "widening_type": _widen_type,
                                                 "value": _widen_value,
-                                                "dept": dept_filter,
+                                                "dept": _effective_dept,
                                                 "new_companies": _w_new_companies,
                                                 "cards_found": _w_cards_found,
                                                 "consecutive_dry_streak_after": _consecutive_dry,
@@ -4651,7 +4644,7 @@ async def run(batch_id: str) -> None:
                                 (
                                     batch_workspace_id,
                                     _sector_word or "",
-                                    dept_filter or "",
+                                    _effective_dept or "",
                                     search_query,
                                     False,
                                     len(results),
@@ -4694,6 +4687,14 @@ async def run(batch_id: str) -> None:
                 )
 
                 # ── Shortfall detection ────────────────────────────────
+                # Build human-readable dept label for shortfall messages
+                if _dedup_dept_list and len(_dedup_dept_list) == 1:
+                    _dept_msg = f"du département {_dedup_dept_list[0]}"
+                elif _dedup_dept_list:
+                    _dept_msg = f"des départements {', '.join(sorted(_dedup_dept_list))}"
+                else:
+                    _dept_msg = ""
+
                 shortfall_msg = None
                 if companies_discovered >= 2000:
                     shortfall_msg = (
@@ -4702,7 +4703,7 @@ async def run(batch_id: str) -> None:
                         "Lancez une nouvelle recherche avec la même requête pour découvrir d'autres entités."
                     )
                     # Append widening summary for ceiling-hit branch
-                    if settings.cp_widening_enabled and dept_filter and _widening_summary:
+                    if settings.cp_widening_enabled and _dedup_dept_list and _widening_summary:
                         _last_summary = _widening_summary.get(search_queries[-1] if search_queries else "")
                         if _last_summary and (_last_summary.get("cities_tried", 0) + _last_summary.get("codes_tried", 0)) > 0:
                             _wc = _last_summary["cities_tried"]
@@ -4710,10 +4711,10 @@ async def run(batch_id: str) -> None:
                             shortfall_msg += (
                                 f" Élargissement automatique : exploré "
                                 f"{_wc} ville{'s' if _wc > 1 else ''} et "
-                                f"{_wp} code{'s' if _wp > 1 else ''} postaux du département {dept_filter}."
+                                f"{_wp} code{'s' if _wp > 1 else ''} postaux {_dept_msg}."
                             )
                 elif batch_size > 0 and companies_discovered < batch_size:
-                    already_known = len(prev_rows) if dept_filter and prev_rows else 0
+                    already_known = len(prev_rows) if _dedup_dept_list and prev_rows else 0
                     if already_known > 0:
                         shortfall_msg = (
                             f"{qualified} nouvelles entités. "
@@ -4726,7 +4727,7 @@ async def run(batch_id: str) -> None:
                             f"{qualified} entités trouvées."
                         )
                     # Append widening summary for Maps-exhausted branch
-                    if shortfall_msg and settings.cp_widening_enabled and dept_filter and _widening_summary:
+                    if shortfall_msg and settings.cp_widening_enabled and _dedup_dept_list and _widening_summary:
                         _last_summary = _widening_summary.get(search_queries[-1] if search_queries else "")
                         if _last_summary and (_last_summary.get("cities_tried", 0) + _last_summary.get("codes_tried", 0)) > 0:
                             _wc = _last_summary["cities_tried"]
@@ -4734,7 +4735,7 @@ async def run(batch_id: str) -> None:
                             shortfall_msg += (
                                 f" Élargissement automatique : exploré "
                                 f"{_wc} ville{'s' if _wc > 1 else ''} et "
-                                f"{_wp} code{'s' if _wp > 1 else ''} postaux du département {dept_filter}."
+                                f"{_wp} code{'s' if _wp > 1 else ''} postaux {_dept_msg}."
                             )
                     log.info(
                         "discovery.shortfall",
