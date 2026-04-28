@@ -1547,8 +1547,10 @@ async def _match_to_sirene(
     # Evidence (2026-04-21, camping 83): Siblu/Capfun/Huttopia/Sandaya all HQ-leaked
     # via Step 1. This placement catches them.
     if settings.chain_detector_enabled and maps_cp:
-        from fortress.matching.chains import match_chain, find_chain_siret
+        from fortress.matching.chains import match_chain, match_ehpad_pseudo_chain, find_chain_siret
         chain_hit = match_chain(maps_name)
+        if not chain_hit:
+            chain_hit = match_ehpad_pseudo_chain(maps_name)
         if chain_hit:
             chain_candidate = await find_chain_siret(conn, chain_hit, maps_cp)
             if chain_candidate:

@@ -22,6 +22,8 @@ NAF sampling performed 2026-04-21 against Neon (14.7M companies):
   * poivre rouge: 56.10A=23 → restauration_trad NAFs validated
   Conclusion for camping/hotel: widened to include 68.20A/B (real-estate model). Picker's
   branded-enseigne guard filters out HQ/holding rows, so widening is safe.
+
+Public API: match_chain, match_ehpad_pseudo_chain, find_chain_siret, ChainHit, CHAIN_MAP.
 """
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +44,7 @@ class ChainHit:
     nafs: frozenset[str]
     sector: str
     confidence: float
+    aliases: tuple[str, ...] = ()
 
 
 # NAF code sets reused across many chains — defined once for readability.
@@ -65,6 +68,15 @@ _NAF_CAVISTE = frozenset({"47.25Z", "46.34Z", "56.30Z"})
 # Low chain-detector ceiling: most growers register under individual farm names
 # (EARL/GAEC) not the coop brand. Only 5-6 brands actually surface in SIRENE.
 _NAF_ARBO = frozenset({"01.24Z", "01.25Z", "01.13Z", "01.61Z", "10.39B", "46.31Z"})
+
+# Narrow EHPAD set for pseudo-chain (no real-estate codes — 68.20A/B/81.10Z were
+# verified to flood with SCIs and produce false positives). Healthcare only.
+_NAF_EHPAD_PUBLIC = frozenset({"87.10A", "87.10B", "87.30A", "87.30B", "86.10Z"})
+
+_EHPAD_PREFIX_PATTERNS: tuple[str, ...] = (
+    "ehpad",
+    "maison de retraite",
+)
 
 
 CHAIN_MAP: tuple[ChainEntry, ...] = (
@@ -308,14 +320,46 @@ def match_chain(maps_name: str) -> "ChainHit | None":
                 continue
             if len(pat_tokens) >= 2:
                 if _tokens_contain_phrase(tokens, pat_tokens):
-                    return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.95)
+                    return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.95, entry.aliases)
             else:
                 single = pat_tokens[0]
                 if single in token_set:
                     if not entry.sector_tokens:
-                        return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.90)
+                        return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.90, entry.aliases)
                     if token_set & entry.sector_tokens:
-                        return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.85)
+                        return ChainHit(entry.canonical, entry.nafs, entry.sector, 0.85, entry.aliases)
+    return None
+
+
+def match_ehpad_pseudo_chain(maps_name: str) -> "ChainHit | None":
+    """Detect public EHPAD prefix and return ChainHit with residual local name.
+
+    Examples:
+      'EHPAD Bel Air' -> ChainHit(chain_name='bel air', nafs=_NAF_EHPAD_PUBLIC, ...)
+      'Maison de Retraite Bel Air' -> ChainHit(chain_name='bel air', ...)
+        (both match SIRENE 'EHPAD BEL AIR' via picker's % patterns)
+      'EHPAD' -> None (no residual)
+      'Camping Bel Air' -> None (no EHPAD prefix)
+    """
+    from fortress.discovery import _normalize_name  # late import to avoid cycle
+    normalized = _normalize_name(maps_name)
+    if not normalized:
+        return None
+    norm_tokens = normalized.split()
+    for prefix in _EHPAD_PREFIX_PATTERNS:
+        prefix_tokens = prefix.split()
+        if len(norm_tokens) <= len(prefix_tokens):
+            continue
+        if norm_tokens[:len(prefix_tokens)] == prefix_tokens:
+            residual = " ".join(norm_tokens[len(prefix_tokens):])
+            if len(residual) >= 3:
+                return ChainHit(
+                    chain_name=residual,
+                    nafs=_NAF_EHPAD_PUBLIC,
+                    sector="ehpad_public",
+                    confidence=0.85,
+                    aliases=(),
+                )
     return None
 
 
@@ -344,6 +388,12 @@ async def find_chain_siret(
       - N rows -> exactly one whose normalized enseigne/denomination contains
         the chain canonical token set; else None (ambiguous)
     """
+    # Build LIKE patterns from canonical + aliases. Replace spaces with '%' so
+    # multi-word brands match across punctuation: "yelloh village" -> '%YELLOH%VILLAGE%'
+    # matches enseigne 'CAMPING YELLOH ! VILLAGE - SAINT EMILION'.
+    patterns = [chain_hit.chain_name] + list(chain_hit.aliases or ())
+    like_patterns = [f"%{p.upper().replace(' ', '%')}%" for p in patterns]
+
     cur = await conn.execute(
         """SELECT siren, denomination, enseigne, adresse, ville, code_postal, naf_code
              FROM companies
@@ -351,12 +401,17 @@ async def find_chain_siret(
               AND code_postal = %s
               AND statut = 'A'
               AND siren NOT LIKE 'MAPS%%'
+              AND (
+                UPPER(COALESCE(enseigne, '')) ILIKE ANY(%s)
+                OR UPPER(COALESCE(denomination, '')) ILIKE ANY(%s)
+              )
             ORDER BY GREATEST(
               similarity(COALESCE(enseigne, ''), %s),
               similarity(COALESCE(denomination, ''), %s)
             ) DESC
             LIMIT 50""",
-        (list(chain_hit.nafs), maps_cp, chain_hit.chain_name, chain_hit.chain_name),
+        (list(chain_hit.nafs), maps_cp, like_patterns, like_patterns,
+         chain_hit.chain_name, chain_hit.chain_name),
     )
     rows = await cur.fetchall()
     if not rows:

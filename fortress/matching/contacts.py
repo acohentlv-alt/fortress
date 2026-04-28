@@ -427,6 +427,8 @@ _HOSTING_SIRENS: frozenset[str] = frozenset({
     "483834164",  # J.T.L. EDITIONS — IT/editions company appearing in mentions-légales footers
     # Phase 1b additions (2026-04-26)
     "533670709",  # Sandaya — camping chain (Apr 26)
+    # Phase 1c additions (2026-04-28)
+    "384598421",  # MS VACANCES — Camping Club holding (NAF 64.20Z, CP 85560)
 })
 
 

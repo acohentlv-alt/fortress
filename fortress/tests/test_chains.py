@@ -23,7 +23,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from fortress.matching.chains import ChainHit, match_chain, find_chain_siret, CHAIN_MAP
+from fortress.matching.chains import (
+    ChainHit, match_chain, match_ehpad_pseudo_chain, find_chain_siret, CHAIN_MAP,
+    _NAF_EHPAD_PUBLIC,
+)
 from fortress.discovery import _naf_section_matches
 
 
@@ -337,3 +340,60 @@ def test_v21_arboriculture_generic_name_gated():
     assert match_chain("Terrena Coop Pommes") is not None
     # Negative: no sector token
     assert match_chain("Terrena Dupont Garage") is None
+
+
+# ---------------------------------------------------------------------------
+# EHPAD pseudo-chain tests (1B — five cases per brief §7)
+# ---------------------------------------------------------------------------
+
+def test_ehpad_prefix_yields_residual():
+    """'EHPAD Bel Air' -> residual 'bel air', nafs == _NAF_EHPAD_PUBLIC."""
+    hit = match_ehpad_pseudo_chain("EHPAD Bel Air")
+    assert hit is not None, "Expected ChainHit for EHPAD Bel Air"
+    assert hit.chain_name == "bel air"
+    assert hit.nafs == _NAF_EHPAD_PUBLIC
+    assert hit.sector == "ehpad_public"
+
+
+def test_ehpad_cross_prefix_maison_de_retraite():
+    """'Maison de Retraite Bel Air' -> same residual 'bel air' as 'EHPAD Bel Air'."""
+    hit = match_ehpad_pseudo_chain("Maison de Retraite Bel Air")
+    assert hit is not None, "Expected ChainHit for Maison de Retraite Bel Air"
+    assert hit.chain_name == "bel air"
+
+
+def test_ehpad_non_ehpad_prefix_returns_none():
+    """'Camping Bel Air' has no EHPAD prefix -> None."""
+    assert match_ehpad_pseudo_chain("Camping Bel Air") is None
+
+
+def test_ehpad_bare_prefix_returns_none():
+    """'EHPAD' alone (no residual) -> None."""
+    assert match_ehpad_pseudo_chain("EHPAD") is None
+
+
+def test_ehpad_short_residual_returns_none():
+    """'EHPAD 75' -> residual '75' (2 chars) is too short -> None."""
+    assert match_ehpad_pseudo_chain("EHPAD 75") is None
+
+
+# ---------------------------------------------------------------------------
+# ChainHit aliases propagation (1A)
+# ---------------------------------------------------------------------------
+
+def test_chainhit_aliases_propagated():
+    """match_chain propagates entry.aliases into ChainHit.aliases field."""
+    # yelloh village has aliases ("yelloh! village", "yelloh")
+    hit = match_chain("Yelloh Village Les Landes")
+    assert hit is not None
+    assert isinstance(hit.aliases, tuple)
+    # The entry has aliases — ensure they are present in the returned hit
+    assert len(hit.aliases) > 0, "ChainHit aliases should be propagated from ChainEntry"
+
+
+def test_chainhit_no_aliases_empty_tuple():
+    """Entries with no aliases produce ChainHit.aliases == ()."""
+    # capfun has no aliases
+    hit = match_chain("Capfun Mouans-Sartoux")
+    assert hit is not None
+    assert hit.aliases == ()
