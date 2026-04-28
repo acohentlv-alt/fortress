@@ -648,6 +648,9 @@ async function renderJobMonitor(container, batchId) {
         }
 
         // ── Pipeline Stage (hide for uploads) ──────────────────
+        // 6 stages: maps → triage → web → match → inpi → save
+        // Detection uses coarse heuristics (scraped/qualified counts);
+        // per-step real-time activity is a follow-up brief (Option B/C).
         if (isUpload) {
             $.pipeline.style.display = 'none';
             if ($.pipeline.parentElement) $.pipeline.parentElement.style.display = 'none';
@@ -655,8 +658,9 @@ async function renderJobMonitor(container, batchId) {
             let stage = null;
             if (isRunning) {
                 if (job.status === 'triage') stage = null;
-                else if (qualified > 0) stage = 'inpi';
-                else stage = 'maps';
+                else if (qualified > 0) stage = 'inpi';            // mid-pipeline (INPI is the slow representative)
+                else if (scraped > 0) stage = 'triage';            // past Maps, classifying/processing
+                else stage = 'maps';                                // still searching Maps
             } else if (job.status === 'completed' || job.status === 'interrupted') {
                 stage = 'save';
             }

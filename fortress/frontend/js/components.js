@@ -426,11 +426,19 @@ export function sourceLabel(src) {
 
 // ── Pipeline Stage Indicator ─────────────────────────────────────
 // Edge cases: unknown/null stage → all grey (safe default)
+// Apr 28: expanded from 3 → 6 stages to reflect actual pipeline shape
+// (Maps → Triage → Web → SIRENE → INPI → Save). Active-stage detection
+// in monitor.js still uses coarse heuristics (scraped/qualified counts);
+// fine-grained per-step activity is a follow-up brief (TASKS.md "Process
+// visualization Option B/C").
 export function renderPipelineStages(activeStage) {
     const stages = [
-        { id: 'maps', icon: '🗺️', label: 'Maps' },
-        { id: 'inpi', icon: '🏛️', label: 'INPI' },
-        { id: 'save', icon: '💾', label: 'Sauvegarde' },
+        { id: 'maps',   icon: '🗺️', label: 'Maps' },
+        { id: 'triage', icon: '🧪', label: 'Triage' },
+        { id: 'web',    icon: '🌐', label: 'Web' },
+        { id: 'match',  icon: '🔍', label: 'SIRENE' },
+        { id: 'inpi',   icon: '🏛️', label: 'INPI' },
+        { id: 'save',   icon: '💾', label: 'Sauvegarde' },
     ];
 
     let foundActive = false;
