@@ -21,6 +21,7 @@ import {
 import { registerCleanup } from '../app.js';
 import { getCachedUser } from '../api.js';
 import { t, getLang } from '../i18n.js';
+import { renderQueriesPanel } from '../components/queries_panel.js';
 
 let pollInterval = null;
 let _monitorListAbort = null; // AbortController for renderMonitorList event listener
@@ -52,59 +53,6 @@ function renderSummary(job) {
         return '<span style="color:var(--text-muted)">En attente des premiers résultats...</span>';
     }
 
-    return lines.join('');
-}
-
-/**
- * Translate a widening stop_reason code to a French label for the monitor panel.
- */
-function stopReasonText(reason, cumulative) {
-    switch (reason) {
-        case 'threshold_met_dry_streak':
-            return t('monitor.queriesStopThreshold').replace('{{n}}', cumulative != null ? cumulative : '?');
-        case 'candidates_exhausted':
-            return t('monitor.queriesStopExhausted');
-        case 'max_per_primary':
-            return t('monitor.queriesStopMaxPerPrimary').replace('{{n}}', '12');
-        default:
-            return t('monitor.queriesStopGeneric');
-    }
-}
-
-/**
- * Render the queries panel HTML — groups primary + expansion queries.
- * Returns an HTML string.
- */
-function renderQueriesPanel(queries) {
-    if (!queries || queries.length === 0) {
-        return `<span style="color:var(--text-muted)">${t('monitor.queriesEmpty')}</span>`;
-    }
-    const primaries = queries.filter(q => !q.is_expansion);
-    const lines = [];
-    for (const p of primaries) {
-        lines.push(`<div style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0">
-            <span><strong>${escapeHtml(p.query)}</strong></span>
-            <span style="color:var(--text-muted)">&#8594; ${p.new_companies || 0} ${t('monitor.queriesNewEntities')}</span>
-        </div>`);
-        const expansions = queries.filter(q => q.is_expansion && q.primary_query === p.query);
-        for (const e of expansions) {
-            const typeLabel = e.widening_type === 'city'
-                ? t('monitor.queriesCityLabel')
-                : t('monitor.queriesPostalLabel');
-            lines.push(`<div style="display:flex; justify-content:space-between; gap:24px; padding:4px 12px 4px 24px; font-size:var(--font-sm); color:var(--text-secondary)">
-                <span>&#8627; ${escapeHtml(typeLabel)} — ${escapeHtml(e.value || '')}</span>
-                <span>&#8594; ${e.new_companies || 0} ${t('monitor.queriesNewEntities')}</span>
-            </div>`);
-        }
-        // Stop reason banner if last expansion has stop_reason
-        const lastExp = expansions[expansions.length - 1];
-        if (lastExp && lastExp.stop_reason) {
-            const reasonText = stopReasonText(lastExp.stop_reason, lastExp.primary_cumulative_yield_after);
-            lines.push(`<div style="padding:4px 0 8px 24px; font-size:var(--font-xs); color:var(--text-muted); font-style:italic">
-                [${escapeHtml(reasonText)}]
-            </div>`);
-        }
-    }
     return lines.join('');
 }
 
@@ -768,7 +716,10 @@ async function renderJobMonitor(container, batchId) {
                 const queriesResp = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/queries`, { credentials: 'include' });
                 if (queriesResp.ok) {
                     const queriesData = await queriesResp.json();
-                    $.queriesList.innerHTML = renderQueriesPanel(queriesData.queries || []);
+                    $.queriesList.innerHTML = renderQueriesPanel(
+                        queriesData.queries || [],
+                        { collapsible: false, capMin: queriesData.time_cap_min }
+                    );
                 }
             } catch (_qe) {
                 // best-effort — don't break the rest of polling on error

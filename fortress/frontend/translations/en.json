@@ -549,12 +549,14 @@
     "queriesPanel": "Searches executed",
     "queriesEmpty": "No searches run yet",
     "queriesNewEntities": "new entities",
+    "queriesElargissements": "widenings",
     "queriesCityLabel": "City",
     "queriesPostalLabel": "Postal code",
     "queriesStopThreshold": "Widening stopped — threshold 50 reached ({{n}} entities)",
     "queriesStopExhausted": "All cities/codes tried",
     "queriesStopMaxPerPrimary": "Limit reached ({{n}} queries)",
-    "queriesStopGeneric": "Widening stopped"
+    "queriesStopGeneric": "Widening stopped",
+    "queriesStopTimeCap": "🛑 Stopped: time exceeded ({{n}} min)"
   },
   "job": {
     "title": "Batch details",
@@ -660,7 +662,11 @@
     "suppressPermanent": "Delete",
     "queriesResultCount": "{{count}} result{{plural}}",
     "noQueryGroup": "(no query)",
-    "clickForDetail": "Click to view details"
+    "clickForDetail": "Click to view details",
+    "queriesCardTitle": "Searches performed",
+    "queriesCitiesBucket": "Cities ({{count}})",
+    "queriesPostalsBucket": "Postal codes ({{count}})",
+    "queriesBranchError": "Error"
   },
   "newBatch": {
     "headline": "What are you looking for?",
@@ -695,7 +701,9 @@
     "nafSiblingsLabel": "Related sector — click to add",
     "nafSiblingsShowMore": "Show more ({{count}} others)",
     "nafSiblingsShowLess": "Collapse",
-    "nafSiblingsEmpty": "No related codes for these filters"
+    "nafSiblingsEmpty": "No related codes for these filters",
+    "timeCapLabel": "Max time per query",
+    "timeCapNone": "Unlimited"
   },
   "upload": {
     "title": "Import / Export",
@@ -977,7 +985,7 @@
     "subtitle": "Overview as of {{date}}",
     "totalCompanies": "Companies",
     "enrichedWeek": "Enriched 7d",
-    "activeBatches": "Active batches",
+    "contactsJoignables": "Reachable contacts",
     "emptyState": "Launch your first search to populate your dashboard"
   },
   "howItWorks": {

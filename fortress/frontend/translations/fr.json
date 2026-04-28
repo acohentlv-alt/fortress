@@ -555,12 +555,14 @@
     "queriesPanel": "Recherches effectuées",
     "queriesEmpty": "Aucune recherche encore exécutée",
     "queriesNewEntities": "nouvelles entités",
+    "queriesElargissements": "élargissements",
     "queriesCityLabel": "Ville",
     "queriesPostalLabel": "Code postal",
     "queriesStopThreshold": "Élargissement arrêté — seuil 50 atteint ({{n}} entités)",
     "queriesStopExhausted": "Toutes les villes/codes essayés",
     "queriesStopMaxPerPrimary": "Limite atteinte ({{n}} requêtes)",
-    "queriesStopGeneric": "Élargissement arrêté"
+    "queriesStopGeneric": "Élargissement arrêté",
+    "queriesStopTimeCap": "🛑 Arrêté: temps écoulé ({{n}} min)"
   },
   "job": {
     "title": "Détail du batch",
@@ -689,7 +691,11 @@
     "alsoBlacklistBulk": "Également ajouter à la liste noire",
     "suppressPermanent": "Supprimer",
     "clickForDetail": "Cliquer pour voir le détail",
-    "exhaustiveMode": "Mode exhaustif — cible {{target}}"
+    "exhaustiveMode": "Mode exhaustif — cible {{target}}",
+    "queriesCardTitle": "Recherches effectuées",
+    "queriesCitiesBucket": "Villes ({{count}})",
+    "queriesPostalsBucket": "Codes postaux ({{count}})",
+    "queriesBranchError": "Erreur"
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",
@@ -724,7 +730,9 @@
     "nafSiblingsLabel": "Filière proche — cliquez pour ajouter",
     "nafSiblingsShowMore": "Voir plus ({{count}} autres)",
     "nafSiblingsShowLess": "Réduire",
-    "nafSiblingsEmpty": "Aucune filière proche pour ces codes"
+    "nafSiblingsEmpty": "Aucune filière proche pour ces codes",
+    "timeCapLabel": "Temps maximum par requête",
+    "timeCapNone": "Illimité"
   },
   "upload": {
     "title": "Import / Export",
@@ -1007,7 +1015,7 @@
     "subtitle": "Aperçu au {{date}}",
     "totalCompanies": "Entreprises",
     "enrichedWeek": "Enrichies 7j",
-    "activeBatches": "Lots actifs",
+    "contactsJoignables": "Contacts joignables",
     "emptyState": "Lancez votre première recherche pour peupler votre tableau de bord"
   },
   "howItWorks": {

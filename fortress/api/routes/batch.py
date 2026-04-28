@@ -38,7 +38,7 @@ class BatchRunRequest(BaseModel):
     naf_code: str | None = Field(None, description="DEPRECATED — use naf_codes. Accepted for backward compatibility.")
     strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
     search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
-
+    time_cap_per_query_min: int | None = Field(None, ge=1, le=240, description="Per-query time budget in minutes; null = no cap. JS sends null when 'Illimité' pill is selected.")
 
 
 
@@ -203,9 +203,9 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
             await conn.execute(
                 """INSERT INTO batch_data
-                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id),
+                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id, time_cap_per_query_min)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min),
             )
             await conn.commit()
     except Exception as exc:

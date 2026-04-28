@@ -82,6 +82,18 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
+                <div class="gemini-controls">
+                    <span class="gemini-controls-label">${t('newBatch.timeCapLabel')}</span>
+                    <div class="time-cap-pills" id="time-cap-pills" role="radiogroup">
+                        <button type="button" class="cap-pill" data-cap-min="5">5 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="10">10 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="30">30 min</button>
+                        <button type="button" class="cap-pill active" data-cap-min="60">60 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="120">120 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="0">${t('newBatch.timeCapNone')}</button>
+                    </div>
+                </div>
+
                 <div id="naf-siblings-row" style="display:none; margin-top:var(--space-sm)">
                     <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafSiblingsLabel')}</span>
                     <div class="gemini-chips" id="naf-siblings-chips" style="margin-top:var(--space-xs)"></div>
@@ -113,6 +125,17 @@ export async function renderNewBatch(container) {
             </div>
         </div>
     `;
+
+    // ── Time cap state ────────────────────────────────────────────────
+    let _selectedTimeCap = 60;
+
+    document.querySelectorAll('#time-cap-pills .cap-pill').forEach(p => {
+        p.addEventListener('click', () => {
+            document.querySelectorAll('#time-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+            p.classList.add('active');
+            _selectedTimeCap = parseInt(p.dataset.capMin, 10);
+        });
+    });
 
     // ── Suggestion chips ──────────────────────────────────────────────
     const chipsContainer = document.getElementById('suggestion-chips');
@@ -569,6 +592,7 @@ export async function renderNewBatch(container) {
             strategy: 'maps',
             search_queries: queries,
             naf_codes: _pickedCodes.length > 0 ? [..._pickedCodes] : null,
+            time_cap_per_query_min: _selectedTimeCap > 0 ? _selectedTimeCap : null,
         };
 
         btn.disabled = true;

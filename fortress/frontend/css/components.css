@@ -3568,6 +3568,29 @@
 }
 .gemini-controls { display: flex; align-items: center; gap: var(--space-md); justify-content: center; flex-wrap: wrap; }
 .gemini-controls-label { font-size: var(--font-sm); color: var(--text-secondary); }
+.time-cap-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    min-width: 0;
+}
+.cap-pill {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-xs) var(--space-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--font-sm);
+    white-space: nowrap;
+}
+.cap-pill:hover { background: var(--bg-secondary); }
+.cap-pill.active {
+    background: var(--accent);
+    color: var(--bg-base);
+    border-color: var(--accent);
+    font-weight: 600;
+}
 .segmented {
     display: inline-flex;
     background: var(--bg-secondary);

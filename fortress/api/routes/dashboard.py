@@ -66,6 +66,8 @@ async def get_stats(request: Request):
             COUNT(*) FILTER (WHERE cs.phone IS NOT NULL)                AS with_phone,
             COUNT(*) FILTER (WHERE cs.email IS NOT NULL)                AS with_email,
             COUNT(*) FILTER (WHERE cs.website IS NOT NULL)              AS with_website,
+            COUNT(*) FILTER (WHERE cs.phone IS NOT NULL OR cs.email IS NOT NULL)
+                                                                        AS contacts_joignables,
             COUNT(DISTINCT co.departement)
                 FILTER (WHERE co.departement IS NOT NULL)               AS departments_covered,
             (SELECT COUNT(*) FROM batch_data WHERE status != 'deleted' {jobs_clause})   AS total_jobs,

@@ -7,6 +7,7 @@ import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, fo
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
 import { DEPT_NAMES } from '../constants.js';
+import { renderQueriesPanel } from '../components/queries_panel.js';
 
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;
@@ -398,6 +399,9 @@ export async function renderJob(container, batchId) {
         getJobSummary(batchId),
     ]);
 
+    const queriesResp = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/queries`, { credentials: 'include' });
+    const queriesData = queriesResp.ok ? await queriesResp.json() : { queries: [], time_cap_min: null };
+
     if (!job || job._ok === false || job.error) {
         const isServerError = job && job._ok === false && job._status >= 500;
         container.innerHTML = `
@@ -423,6 +427,14 @@ export async function renderJob(container, batchId) {
         ])}
 
         ${buildScoreboardCard(job, job.link_stats, summary)}
+
+        <!-- Recherches effectuées -->
+        <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
+            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                ${t('job.queriesCardTitle')}
+            </h3>
+            <div id="queries-card-list"></div>
+        </div>
 
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">
@@ -479,6 +491,17 @@ export async function renderJob(container, batchId) {
         <!-- Smart Expansion Suggestions -->
         <div id="expansion-card-container"></div>
     `;
+
+    // Populate queries card
+    const qPanel = document.getElementById('queries-card-list');
+    const qCard = document.getElementById('queries-card');
+    if (qPanel && queriesData.queries && queriesData.queries.length > 0) {
+        qPanel.innerHTML = renderQueriesPanel(
+            queriesData.queries,
+            { collapsible: true, capMin: queriesData.time_cap_min }
+        );
+        qCard.style.display = '';
+    }
 
     // Reset selection + filter state for this job
     selectionMode = false;

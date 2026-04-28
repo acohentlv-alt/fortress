@@ -2316,7 +2316,8 @@ async def run(batch_id: str) -> None:
             # ── Load job metadata ─────────────────────────────────────
             cur = await conn_holder[0].execute(
                 """SELECT batch_name, search_queries, filters_json, batch_size,
-                          workspace_id, completed_queries_count, queries_json, id
+                          workspace_id, completed_queries_count, queries_json, id,
+                          time_cap_per_query_min
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -2332,6 +2333,7 @@ async def run(batch_id: str) -> None:
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
             batch_int_id: int = int(row[7])  # INTEGER PK of batch_data row — used for pipeline_timings FK
+            _time_cap_min: int | None = row[8] if row[8] is not None else None
 
             # Set ContextVar so Maps scraper can write timing rows without threading batch_id through callbacks
             batch_id_var.set(batch_int_id)
@@ -4624,6 +4626,10 @@ async def run(batch_id: str) -> None:
                                 if _shutdown:
                                     _widen_stop_reason = "shutdown"
                                     break
+                                # Soft cap: covers primary→expansion cumulative time. Primary search_all itself is not killable mid-scrape.
+                                if _time_cap_min is not None and (time.monotonic() - _query_start) >= _time_cap_min * 60:
+                                    _widen_stop_reason = "time_cap_reached"
+                                    break
                                 # Re-check cancel
                                 try:
                                     _c2_row = await (await conn_holder[0].execute(
@@ -4656,6 +4662,8 @@ async def run(batch_id: str) -> None:
                                 _w_remaining = max(0, 2000 - companies_discovered)
                                 _w_max_cards = _w_remaining * 3 if _w_remaining > 0 else 0
 
+                                _widen_query_start = time.monotonic()
+                                _widen_error: str | None = None
                                 _pre_widen_count = companies_discovered
                                 _w_cards_found = 0
                                 try:
@@ -4671,6 +4679,7 @@ async def run(batch_id: str) -> None:
                                 except Exception as _w_exc:
                                     log.warning("discovery.widening_query_failed", query=_widened_query, error=str(_w_exc))
                                     _w_cards_found = 0
+                                    _widen_error = str(_w_exc)[:200]
 
                                 _w_new_companies = companies_discovered - _pre_widen_count
                                 _widened_count += 1
@@ -4702,6 +4711,8 @@ async def run(batch_id: str) -> None:
                                     "cards_found": _w_cards_found,
                                     "consecutive_dry_streak_after": _consecutive_dry,
                                     "primary_cumulative_yield_after": _cumulative_after,
+                                    "duration_sec": round(time.monotonic() - _widen_query_start, 1),
+                                    "error": _widen_error,
                                 })
 
                                 # Audit row in batch_log

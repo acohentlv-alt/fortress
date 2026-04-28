@@ -118,8 +118,8 @@ export async function renderDashboard(container, gen) {
                             <span class="stat-pill-label">${t('welcomeBanner.enrichedWeek')}</span>
                         </div>
                         <div class="stat-pill">
-                            <span class="stat-pill-value">${s.running_jobs || 0}</span>
-                            <span class="stat-pill-label">${t('welcomeBanner.activeBatches')}</span>
+                            <span class="stat-pill-value">${(s.contacts_joignables || 0).toLocaleString(getLang() === 'fr' ? 'fr-FR' : 'en-US')}</span>
+                            <span class="stat-pill-label">${t('welcomeBanner.contactsJoignables')}</span>
                         </div>
                     </div>
                 `}
