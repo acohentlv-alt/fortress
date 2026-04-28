@@ -4844,6 +4844,12 @@ async def run(batch_id: str) -> None:
                     if q_idx < total_queries:
                         await asyncio.sleep(3)
 
+                # Snapshot _shutdown at the moment the search-queries loop ends.
+                # Late SIGTERMs that arrive during cleanup (worker-pool drain,
+                # shortfall computation, etc.) should NOT relabel a naturally
+                # completed run as "interrupted" — the work is already done.
+                _shutdown_at_loop_end = _shutdown
+
                 # ── Worker pool shutdown (when enabled) ──────────────────────────
                 # Drain all remaining queued entities, then send sentinel to each
                 # worker and wait for them to finish cleanly.
@@ -4946,7 +4952,7 @@ async def run(batch_id: str) -> None:
 
                 if _was_cancelled:
                     final_status = "cancelled"
-                elif _shutdown:
+                elif _shutdown_at_loop_end:
                     final_status = "interrupted"
                 else:
                     final_status = "completed"
