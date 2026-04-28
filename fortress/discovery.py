@@ -3066,9 +3066,13 @@ async def run(batch_id: str) -> None:
                         try:
                             async with pool.connection() as ec_conn:
                                 ec_cur = await ec_conn.execute(
-                                    """SELECT phone, email, website
+                                    """SELECT phone, email, website,
+                                              social_linkedin, social_facebook, social_twitter,
+                                              social_instagram, social_tiktok,
+                                              collected_at
                                        FROM contacts
                                        WHERE siren = %s AND source = 'google_maps'
+                                         AND collected_at > NOW() - INTERVAL '30 days'
                                        ORDER BY collected_at DESC LIMIT 1""",
                                     (lookup_siren,)
                                 )
@@ -3080,8 +3084,15 @@ async def run(batch_id: str) -> None:
                         has_phone = bool(existing_contact[0])
                         has_email = bool(existing_contact[1])
                         has_website = bool(existing_contact[2])
+                        has_social = bool(
+                            existing_contact[3] or  # social_linkedin
+                            existing_contact[4] or  # social_facebook
+                            existing_contact[5] or  # social_twitter
+                            existing_contact[6] or  # social_instagram
+                            existing_contact[7]     # social_tiktok
+                        )
 
-                        if has_phone and has_email and has_website:
+                        if has_phone and has_email and has_website and has_social:
                             triage_bucket = "GREEN"
                             triage_counts["green"] += 1
                             log.info("discovery.triage_green", name=maps_name, siren=lookup_siren)
@@ -3093,7 +3104,7 @@ async def run(batch_id: str) -> None:
                                     tag_conn,
                                     batch_id=batch_id,
                                     siren=lookup_siren,
-                                    action="green",
+                                    action="triage_green",
                                     result="skipped",
                                     detail="Entreprise déjà enrichie — aucune nouvelle extraction nécessaire",
                                     workspace_id=batch_workspace_id,
