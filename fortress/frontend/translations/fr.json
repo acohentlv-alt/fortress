@@ -552,7 +552,16 @@
     "queueWaiting": "En attente — un autre batch est en cours",
     "queueWaitingGeneric": "En attente — démarrage imminent...",
     "queueEstimate": "Temps d'attente estimé : ~{{minutes}} min",
-    "entitiesFound": "entités trouvées"
+    "entitiesFound": "entités trouvées",
+    "queriesPanel": "Recherches effectuées",
+    "queriesEmpty": "Aucune recherche encore exécutée",
+    "queriesNewEntities": "nouvelles entités",
+    "queriesCityLabel": "Ville",
+    "queriesPostalLabel": "Code postal",
+    "queriesStopThreshold": "Élargissement arrêté — seuil 50 atteint ({{n}} entités)",
+    "queriesStopExhausted": "Toutes les villes/codes essayés",
+    "queriesStopMaxPerPrimary": "Limite atteinte ({{n}} requêtes)",
+    "queriesStopGeneric": "Élargissement arrêté"
   },
   "job": {
     "title": "Détail du batch",
@@ -712,7 +721,11 @@
     "nafErrorSameCategory": "Ces codes NAF ne sont pas de la même catégorie. Ajoutez uniquement des codes du même groupe sectoriel.",
     "nafErrorSectionAlone": "Un filtre par section (A–U) doit être utilisé seul.",
     "nafErrorCap": "Maximum 10 codes NAF. Retirez-en un avant d'en ajouter d'autres.",
-    "nafErrorDuplicate": "Ce code est déjà sélectionné."
+    "nafErrorDuplicate": "Ce code est déjà sélectionné.",
+    "nafSiblingsLabel": "Filière proche — cliquez pour ajouter",
+    "nafSiblingsShowMore": "Voir plus ({{count}} autres)",
+    "nafSiblingsShowLess": "Réduire",
+    "nafSiblingsEmpty": "Aucune filière proche pour ces codes"
   },
   "upload": {
     "title": "Import / Export",

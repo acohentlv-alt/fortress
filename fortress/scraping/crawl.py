@@ -92,7 +92,7 @@ def _normalise_url(url: str) -> str:
         return url.rstrip("/")
 
 
-async def _fetch_single(client: Any, url: str, timeout: float = 5.0) -> str | None:
+async def _fetch_single(client: Any, url: str, timeout: float = 4.0) -> str | None:
     """Fetch one URL with the given CurlClient. Returns HTML text or None."""
     try:
         resp = await client.get(url, timeout=timeout)
@@ -161,8 +161,8 @@ async def crawl_website(
     department: str = "",
     siren: str = "",
     pre_fetched: dict[str, str] | None = None,
-    max_pages: int = 18,  # homepage + 17 seeds, discovered links truncated under budget
-    wall_clock_limit: float = 13.0,
+    max_pages: int = 10,  # homepage + 9 seeds (high-value: contact, mentions-legales, à-propos)
+    wall_clock_limit: float = 10.0,
 ) -> CrawlResult:
     """Crawl a website and extract contact/legal information.
 
@@ -221,7 +221,7 @@ async def crawl_website(
     if homepage_html is None:
         # Try fetching homepage
         try:
-            resp = await client.get(root_url, timeout=5.0)
+            resp = await client.get(root_url, timeout=4.0)
             if resp and resp.status_code == 200 and resp.text and len(resp.text) > 200:
                 homepage_html = resp.text
             elif resp and resp.status_code in (0,):

@@ -546,7 +546,16 @@
     "queueWaiting": "Waiting — another batch is running",
     "queueWaitingGeneric": "Waiting — starting soon...",
     "queueEstimate": "Estimated wait: ~{{minutes}} min",
-    "entitiesFound": "entities found"
+    "entitiesFound": "entities found",
+    "queriesPanel": "Searches executed",
+    "queriesEmpty": "No searches run yet",
+    "queriesNewEntities": "new entities",
+    "queriesCityLabel": "City",
+    "queriesPostalLabel": "Postal code",
+    "queriesStopThreshold": "Widening stopped — threshold 50 reached ({{n}} entities)",
+    "queriesStopExhausted": "All cities/codes tried",
+    "queriesStopMaxPerPrimary": "Limit reached ({{n}} queries)",
+    "queriesStopGeneric": "Widening stopped"
   },
   "job": {
     "title": "Batch details",
@@ -683,7 +692,11 @@
     "nafErrorSameCategory": "Ces codes NAF ne sont pas de la même catégorie. Ajoutez uniquement des codes du même groupe sectoriel.",
     "nafErrorSectionAlone": "Un filtre par section (A–U) doit être utilisé seul.",
     "nafErrorCap": "Maximum 10 codes NAF. Retirez-en un avant d'en ajouter d'autres.",
-    "nafErrorDuplicate": "Ce code est déjà sélectionné."
+    "nafErrorDuplicate": "Ce code est déjà sélectionné.",
+    "nafSiblingsLabel": "Related sector — click to add",
+    "nafSiblingsShowMore": "Show more ({{count}} others)",
+    "nafSiblingsShowLess": "Collapse",
+    "nafSiblingsEmpty": "No related codes for these filters"
   },
   "upload": {
     "title": "Import / Export",

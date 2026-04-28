@@ -82,6 +82,11 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
+                <div id="naf-siblings-row" style="display:none; margin-top:var(--space-sm)">
+                    <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafSiblingsLabel')}</span>
+                    <div class="gemini-chips" id="naf-siblings-chips" style="margin-top:var(--space-xs)"></div>
+                </div>
+
                 <div class="duration-hint">
                     <span class="duration-hint-icon">⏱</span>
                     <span>${t('newBatch.durationHint')}</span>
@@ -197,6 +202,54 @@ export async function renderNewBatch(container) {
         }, 4000);
     }
 
+    const _siblingsRow = document.getElementById('naf-siblings-row');
+    const _siblingsChips = document.getElementById('naf-siblings-chips');
+    const _SIBLINGS_MAX_VISIBLE = 8;
+    let _siblingsExpanded = false;
+
+    function renderSiblingsRow() {
+        if (!_siblingsRow || !_siblingsChips) return;
+        if (_pickedCodes.length === 0) {
+            _siblingsRow.style.display = 'none';
+            return;
+        }
+        // Compute intersection of sibling sets for all picked codes, excluding already-picked
+        let intersection = null;
+        for (const code of _pickedCodes) {
+            const siblings = _sectorExpansions[code];
+            if (!siblings) {
+                intersection = [];
+                break;
+            }
+            const sibSet = new Set(Array.isArray(siblings) ? siblings : Object.keys(siblings));
+            if (intersection === null) {
+                intersection = [...sibSet];
+            } else {
+                intersection = intersection.filter(c => sibSet.has(c));
+            }
+        }
+        // Remove already-picked codes
+        const suggestions = (intersection || []).filter(c => !_pickedCodes.includes(c));
+        if (suggestions.length === 0) {
+            _siblingsRow.style.display = 'none';
+            return;
+        }
+        _siblingsRow.style.display = '';
+        const visible = _siblingsExpanded ? suggestions : suggestions.slice(0, _SIBLINGS_MAX_VISIBLE);
+        const overflow = suggestions.length - _SIBLINGS_MAX_VISIBLE;
+        let html = visible.map(code => `
+            <button type="button" class="chip naf-sibling-chip" data-code="${escapeHtml(code)}" title="${escapeHtml(_nafLabelByCode[code] || code)}">
+                ${escapeHtml(_nafLabelByCode[code] || code)}
+            </button>
+        `).join('');
+        if (!_siblingsExpanded && overflow > 0) {
+            html += `<button type="button" class="chip naf-siblings-more" style="opacity:0.7">${t('newBatch.nafSiblingsShowMore').replace('{{count}}', overflow)}</button>`;
+        } else if (_siblingsExpanded && suggestions.length > _SIBLINGS_MAX_VISIBLE) {
+            html += `<button type="button" class="chip naf-siblings-less" style="opacity:0.7">${t('newBatch.nafSiblingsShowLess')}</button>`;
+        }
+        _siblingsChips.innerHTML = html;
+    }
+
     function renderChips() {
         nafChips.innerHTML = _pickedCodes.map(code => `
             <span class="naf-chip" data-code="${escapeHtml(code)}">
@@ -204,6 +257,7 @@ export async function renderNewBatch(container) {
                 <button type="button" class="naf-chip-remove" aria-label="${t('newBatch.nafChipRemove')}">×</button>
             </span>
         `).join('');
+        renderSiblingsRow();
     }
 
     function tryAddCode(code, label) {
@@ -331,6 +385,29 @@ export async function renderNewBatch(container) {
         const chip = btn.closest('.naf-chip');
         if (chip && chip.dataset.code) removeCode(chip.dataset.code);
     });
+
+    // ── NAF sibling chip click handler ────────────────────────────────
+    if (_siblingsChips) {
+        _siblingsChips.addEventListener('click', (e) => {
+            const more = e.target.closest('.naf-siblings-more');
+            if (more) {
+                _siblingsExpanded = true;
+                renderSiblingsRow();
+                return;
+            }
+            const less = e.target.closest('.naf-siblings-less');
+            if (less) {
+                _siblingsExpanded = false;
+                renderSiblingsRow();
+                return;
+            }
+            const chip = e.target.closest('.naf-sibling-chip');
+            if (chip && chip.dataset.code) {
+                const res = tryAddCode(chip.dataset.code, _nafLabelByCode[chip.dataset.code]);
+                if (!res.ok && res.err) showNafError(res.err);
+            }
+        });
+    }
 
     document.addEventListener('click', (e) => {
         if (nafPicker && !nafPicker.contains(e.target)) {

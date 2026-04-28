@@ -65,6 +65,33 @@ class Settings(BaseSettings):
     gemini_d1b_rescue_threshold: float = 0.85
     gemini_d1b_quarantine_threshold: float = 0.85
 
+    # TOP 3 — Twin Discovery Widening (cities + postal codes).
+    # Default OFF — Alan flips ON in Render env (CP_WIDENING_ENABLED=true) per kill-switch policy,
+    # same pattern as gemini_multi_candidate_enabled.
+    cp_widening_enabled: bool = False
+
+    # Per-primary cumulative yield floor. Below this, dry-streak stop is SUPPRESSED —
+    # widening force-continues until candidates exhaust or hard cap hits.
+    # Rationale: <50 entities is "close to redundant" per Alan; we'd rather exhaust
+    # the surface and give Cindy negative evidence than stop early at 12.
+    cp_widening_min_useful_yield: int = 50
+
+    # Above the floor: stop after this many consecutive widened queries with <dry_threshold new.
+    cp_widening_dry_streak_max: int = 2
+
+    # A widened query is "dry" if it added fewer than this many new entities.
+    cp_widening_dry_threshold: int = 5
+
+    # Hard ceiling on widened queries per primary, regardless of yield.
+    # IS the niche-query escape hatch — empty depts cost <=12 x 3s ~= 45s before stop.
+    cp_widening_max_per_primary: int = 12
+
+    # Inter-widened-query sleep, anti-bot.
+    cp_widening_inter_query_sleep_sec: float = 3.0
+
+    # Postal-code candidate cap (Pass 2). Limit on the SIRENE-density-ranked query.
+    cp_widening_postal_codes_max: int = 10
+
     # Lever A2 — legal name from mentions-légales → INPI retry
     a2_mentions_legales_enabled: bool = True
 

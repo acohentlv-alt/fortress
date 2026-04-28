@@ -32,6 +32,7 @@ import psycopg
 import psycopg_pool
 import structlog
 
+from fortress.config.departments import DEPT_CITIES
 from fortress.config.naf_codes import get_section_for_code
 from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
 from fortress.config.sector_relevance import is_irrelevant_category, is_irrelevant_name
@@ -50,6 +51,84 @@ from fortress.matching.budget_tracker import BudgetTracker
 from fortress.matching import gemini as _gemini_judge
 
 log = structlog.get_logger()
+
+# ── TOP 3 Twin Discovery Widening ────────────────────────────────────────────
+# DEPT_CITIES imported from fortress.config.departments above (single source of truth).
+# Index 0 = prefecture, skipped in widening (already covered by the primary query).
+
+# Module-level postal-code density cache — populated once per process restart.
+_DEPT_POSTAL_CODES_BY_DENSITY: dict[str, list[str]] | None = None
+
+
+async def _load_dept_postal_codes(pool) -> dict[str, list[str]]:
+    """Load top-N postal codes per dept, ranked by company count.
+
+    Cached at module level; only refreshed on process restart.
+    Cost: one-time SCAN of companies (~14M rows GROUP BY) ~= 1-2 sec.
+    Memory: ~3000 dept-CP combinations x ~30 bytes ~= <100KB.
+    """
+    global _DEPT_POSTAL_CODES_BY_DENSITY
+    if _DEPT_POSTAL_CODES_BY_DENSITY is not None:
+        return _DEPT_POSTAL_CODES_BY_DENSITY
+    result: dict[str, list[str]] = {}
+    async with pool.connection() as conn:
+        # Column name is `code_postal` (NOT `postal_code`) per schema.sql:17.
+        # `departement` column is dept code as string per schema.sql:19.
+        cur = await conn.execute(
+            """SELECT departement, code_postal, COUNT(*) AS n
+                 FROM companies
+                WHERE departement IS NOT NULL
+                  AND code_postal IS NOT NULL
+                  AND code_postal != ''
+             GROUP BY departement, code_postal
+             ORDER BY departement, n DESC"""
+        )
+        rows = await cur.fetchall()
+        for dept, cp, _n in rows:
+            if not dept or not cp:
+                continue
+            result.setdefault(str(dept), []).append(str(cp))
+    _DEPT_POSTAL_CODES_BY_DENSITY = result
+    return result
+
+
+def _wid_slug(value: str) -> str:
+    """Slug for batch_log.siren sentinel: ASCII alnum + dashes, <=30 chars."""
+    s = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").upper()
+    return s[:30] or "X"
+
+
+def _parse_dept_hint_from_query(query: str) -> str | None:
+    """Extract a dept code hint from a primary query string.
+
+    Returns the dept code (e.g., "47", "66") if the query contains an explicit
+    2-digit dept code or a 5-digit postal code (resolved via postal_code_to_dept).
+    Returns None if no clear hint is found.
+
+    Used to detect dept-mismatch primaries in batches with mixed-dept queries
+    (e.g., a batch locked to dept 51 with a primary "arboriculture 47") so the
+    widening logic can skip rather than fire with the wrong dept's cities.
+    """
+    if not query:
+        return None
+    # Try 5-digit postal code first (more specific than dept code)
+    m = re.search(r"\b(\d{5})\b", query)
+    if m:
+        try:
+            from fortress.config.departments import postal_code_to_dept
+            resolved = postal_code_to_dept(m.group(1))
+            if resolved:
+                return resolved
+        except Exception:
+            pass
+    # Fallback: 2-3 digit dept code (handles 01-95 + 2A/2B + 971-976)
+    m = re.search(r"\b(\d{2,3})\b", query)
+    if m:
+        return m.group(1)
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Depts where postal code MUST match exactly — arrondissements are different neighborhoods.
 # V1 scope: Paris only. Dept 69 (Lyon/Villeurbanne) and 13 (Marseille/Aix) deferred
@@ -2318,6 +2397,7 @@ async def run(batch_id: str) -> None:
                 prev_rows: list = []  # Cross-batch dedup results (used in shortfall msg)
                 _sector_word: str = ""  # Sector word for relevance filtering
                 _query_stats: list[dict] = []  # Tracks per-query results for queries_json
+                _widening_summary: dict[str, dict] = {}  # Per-primary widening telemetry
 
                 # Pre-compute sector word for relevance filter (strip dept code from first query)
                 if search_queries and dept_filter and re.match(r"^\d{2,3}$", dept_filter):
@@ -4164,6 +4244,13 @@ async def run(batch_id: str) -> None:
                 except Exception as _rgpd_exc:
                     log.warning("discovery.rgpd_load_failed", error=str(_rgpd_exc))
 
+                # ── Preload postal-code density cache for widening (no-op if disabled) ──
+                if settings.cp_widening_enabled and dept_filter:
+                    try:
+                        await _load_dept_postal_codes(pool)
+                    except Exception as _cp_exc:
+                        log.warning("discovery.widening_cp_cache_failed", error=str(_cp_exc))
+
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
                     # Resume: skip queries that completed in a prior run
@@ -4278,6 +4365,210 @@ async def run(batch_id: str) -> None:
                         "is_expansion": False,
                         "duration_sec": round(time.monotonic() - _query_start, 1),
                     })
+
+                    # ── TOP 3 Twin Discovery Widening ─────────────────────────
+                    # Skip widening if the primary's dept hint mismatches the batch's
+                    # dept_filter — otherwise we'd widen with the wrong dept's cities/codes
+                    # (e.g., batch locked to dept 51 + primary "arboriculture 47" would
+                    # widen to Reims/Épernay/51XXX instead of Agen/Marmande/47XXX).
+                    _query_dept_hint = _parse_dept_hint_from_query(search_query)
+                    _widen_dept_mismatch = bool(
+                        _query_dept_hint and dept_filter and _query_dept_hint != dept_filter
+                    )
+                    if _widen_dept_mismatch:
+                        log.info(
+                            "discovery.widening_skipped_dept_mismatch",
+                            primary=search_query,
+                            query_dept=_query_dept_hint,
+                            batch_dept=dept_filter,
+                        )
+                        _widening_summary[search_query] = {
+                            "cities_tried": 0,
+                            "codes_tried": 0,
+                            "stop_reason": "dept_mismatch",
+                            "total_widened": 0,
+                        }
+                    if (
+                        settings.cp_widening_enabled
+                        and dept_filter
+                        and not _shutdown
+                        and companies_discovered < 2000
+                        and not _widen_dept_mismatch
+                    ):
+                        # Check cancel flag before starting widening
+                        _widen_cancelled = False
+                        try:
+                            _c_row = await (await conn_holder[0].execute(
+                                "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                                (batch_id,),
+                            )).fetchone()
+                            _widen_cancelled = bool(_c_row and _c_row[0])
+                        except Exception:
+                            pass
+
+                        if not _widen_cancelled:
+                            # Load density-ranked postal codes (one-shot cache)
+                            _dept_cps = (await _load_dept_postal_codes(pool)).get(dept_filter, [])
+                            _postal_codes_candidates = _dept_cps[:settings.cp_widening_postal_codes_max]
+
+                            # Skip index 0 (prefecture, already covered by primary query)
+                            _cities_candidates = DEPT_CITIES.get(dept_filter, [])[1:]
+
+                            # Per-primary yield at start of widening
+                            _primary_yield_at_start = companies_discovered - _pre_query_discovered
+                            _primary_pre_widening = _pre_query_discovered
+                            _consecutive_dry = 0
+                            _widened_count = 0
+                            _cities_tried: list[str] = []
+                            _codes_tried: list[str] = []
+                            _widen_stop_reason = None
+
+                            # Pass 1: secondary cities — Pass 2: postal codes by SIRENE density
+                            _widen_candidates = (
+                                [("city", c) for c in _cities_candidates]
+                                + [("postal_code", cp) for cp in _postal_codes_candidates]
+                            )
+
+                            for _widen_type, _widen_value in _widen_candidates:
+                                # Stop conditions
+                                if _widened_count >= settings.cp_widening_max_per_primary:
+                                    _widen_stop_reason = "max_per_primary"
+                                    break
+                                if companies_discovered >= 2000:
+                                    _widen_stop_reason = "ceiling"
+                                    break
+                                if _shutdown:
+                                    _widen_stop_reason = "shutdown"
+                                    break
+                                # Re-check cancel
+                                try:
+                                    _c2_row = await (await conn_holder[0].execute(
+                                        "SELECT cancel_requested FROM batch_data WHERE batch_id = %s",
+                                        (batch_id,),
+                                    )).fetchone()
+                                    if _c2_row and _c2_row[0]:
+                                        _widen_stop_reason = "cancel"
+                                        break
+                                except Exception:
+                                    pass
+
+                                # Cumulative yield for this primary so far
+                                _cumulative = (
+                                    (companies_discovered - _primary_pre_widening)
+                                    + _primary_yield_at_start
+                                )
+                                # Above the floor: apply dry-streak stop
+                                if (
+                                    _cumulative >= settings.cp_widening_min_useful_yield
+                                    and _consecutive_dry >= settings.cp_widening_dry_streak_max
+                                ):
+                                    _widen_stop_reason = "threshold_met_dry_streak"
+                                    break
+
+                                # Build widened query — sector word + city/postal code
+                                _widened_query = f"{_sector_word} {_widen_value}".strip() if _sector_word else _widen_value
+
+                                # Remaining capacity for this widened search
+                                _w_remaining = max(0, 2000 - companies_discovered)
+                                _w_max_cards = _w_remaining * 3 if _w_remaining > 0 else 0
+
+                                _pre_widen_count = companies_discovered
+                                _w_cards_found = 0
+                                try:
+                                    _w_results = await maps_scraper.search_all(
+                                        _widened_query,
+                                        on_result=_persist_result,
+                                        dept_code=dept_filter,
+                                        max_results=_w_max_cards,
+                                        sector_word=_sector_word,
+                                        should_skip=_should_skip_card,
+                                    )
+                                    _w_cards_found = len(_w_results)
+                                except Exception as _w_exc:
+                                    log.warning("discovery.widening_query_failed", query=_widened_query, error=str(_w_exc))
+                                    _w_cards_found = 0
+
+                                _w_new_companies = companies_discovered - _pre_widen_count
+                                _widened_count += 1
+
+                                if _widen_type == "city":
+                                    _cities_tried.append(_widen_value)
+                                else:
+                                    _codes_tried.append(_widen_value)
+
+                                # Update dry-streak
+                                if _w_new_companies < settings.cp_widening_dry_threshold:
+                                    _consecutive_dry += 1
+                                else:
+                                    _consecutive_dry = 0
+
+                                _cumulative_after = (
+                                    (companies_discovered - _primary_pre_widening)
+                                    + _primary_yield_at_start
+                                )
+
+                                _query_stats.append({
+                                    "query": _widened_query,
+                                    "is_expansion": True,
+                                    "expansion_reason": "cp_widening",
+                                    "widening_type": _widen_type,
+                                    "value": _widen_value,
+                                    "primary_query": search_query,
+                                    "new_companies": _w_new_companies,
+                                    "cards_found": _w_cards_found,
+                                    "consecutive_dry_streak_after": _consecutive_dry,
+                                    "primary_cumulative_yield_after": _cumulative_after,
+                                })
+
+                                # Audit row in batch_log
+                                _wid_siren_slug = f"WIDEN_{dept_filter}_{_wid_slug(_widen_value)}"[:50]
+                                try:
+                                    async with pool.connection() as _wid_conn:
+                                        await log_audit(
+                                            _wid_conn,
+                                            batch_id=batch_id,
+                                            siren=_wid_siren_slug,
+                                            action="auto_widened",
+                                            result="success" if _w_new_companies >= settings.cp_widening_dry_threshold else "no_new_results",
+                                            search_query=_widened_query,
+                                            detail=json.dumps({
+                                                "primary_query": search_query,
+                                                "widened_query": _widened_query,
+                                                "widening_type": _widen_type,
+                                                "value": _widen_value,
+                                                "dept": dept_filter,
+                                                "new_companies": _w_new_companies,
+                                                "cards_found": _w_cards_found,
+                                                "consecutive_dry_streak_after": _consecutive_dry,
+                                                "primary_cumulative_yield_after": _cumulative_after,
+                                            }),
+                                            workspace_id=batch_workspace_id,
+                                        )
+                                        await _wid_conn.commit()
+                                except Exception as _audit_exc:
+                                    log.debug("discovery.widening_audit_failed", error=str(_audit_exc))
+
+                                await asyncio.sleep(settings.cp_widening_inter_query_sleep_sec)
+
+                            # End of widening loop
+                            if _widen_stop_reason is None:
+                                _widen_stop_reason = "candidates_exhausted"
+
+                            # Attach stop_reason to last expansion row for frontend
+                            if _cities_tried or _codes_tried:
+                                for _ws_entry in reversed(_query_stats):
+                                    if _ws_entry.get("is_expansion") and _ws_entry.get("primary_query") == search_query:
+                                        _ws_entry["stop_reason"] = _widen_stop_reason
+                                        break
+
+                            # Store summary for shortfall message
+                            _widening_summary[search_query] = {
+                                "cities_tried": len(_cities_tried),
+                                "codes_tried": len(_codes_tried),
+                                "stop_reason": _widen_stop_reason,
+                                "total_widened": _widened_count,
+                            }
+
                     # ── Record query in memory ──
                     try:
                         async with pool.connection() as qm_conn:
@@ -4336,8 +4627,20 @@ async def run(batch_id: str) -> None:
                 if companies_discovered >= 2000:
                     shortfall_msg = (
                         "Limite de sécurité atteinte (2000 entités). "
-                        "Affinez vos requêtes pour cibler plus précisément."
+                        "Le plafond de 2000 entités a été atteint. "
+                        "Lancez une nouvelle recherche avec la même requête pour découvrir d'autres entités."
                     )
+                    # Append widening summary for ceiling-hit branch
+                    if settings.cp_widening_enabled and dept_filter and _widening_summary:
+                        _last_summary = _widening_summary.get(search_queries[-1] if search_queries else "")
+                        if _last_summary and (_last_summary.get("cities_tried", 0) + _last_summary.get("codes_tried", 0)) > 0:
+                            _wc = _last_summary["cities_tried"]
+                            _wp = _last_summary["codes_tried"]
+                            shortfall_msg += (
+                                f" Élargissement automatique : exploré "
+                                f"{_wc} ville{'s' if _wc > 1 else ''} et "
+                                f"{_wp} code{'s' if _wp > 1 else ''} postaux du département {dept_filter}."
+                            )
                 elif batch_size > 0 and companies_discovered < batch_size:
                     already_known = len(prev_rows) if dept_filter and prev_rows else 0
                     if already_known > 0:
@@ -4351,6 +4654,17 @@ async def run(batch_id: str) -> None:
                             f"Google Maps a épuisé les résultats pour cette recherche. "
                             f"{qualified} entités trouvées."
                         )
+                    # Append widening summary for Maps-exhausted branch
+                    if shortfall_msg and settings.cp_widening_enabled and dept_filter and _widening_summary:
+                        _last_summary = _widening_summary.get(search_queries[-1] if search_queries else "")
+                        if _last_summary and (_last_summary.get("cities_tried", 0) + _last_summary.get("codes_tried", 0)) > 0:
+                            _wc = _last_summary["cities_tried"]
+                            _wp = _last_summary["codes_tried"]
+                            shortfall_msg += (
+                                f" Élargissement automatique : exploré "
+                                f"{_wc} ville{'s' if _wc > 1 else ''} et "
+                                f"{_wp} code{'s' if _wp > 1 else ''} postaux du département {dept_filter}."
+                            )
                     log.info(
                         "discovery.shortfall",
                         found=companies_discovered,

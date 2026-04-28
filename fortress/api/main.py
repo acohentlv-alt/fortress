@@ -439,6 +439,12 @@ async def lifespan(app: FastAPI):
                     "ALTER TABLE batch_log DROP CONSTRAINT IF EXISTS batch_log_siren_fkey"
                 )
 
+                # ── TOP 3 widening: widen batch_log.siren to VARCHAR(50) ────────
+                # Sentinel rows like "WIDEN_66_PERPIGNAN" exceed the 9-char VARCHAR(9)
+                # default. ALTER COLUMN TYPE is idempotent when already widened.
+                # Also fixes the Apr 25 silent-fail for FILTERED_* and A2PENDING rows.
+                await conn.execute("ALTER TABLE batch_log ALTER COLUMN siren TYPE VARCHAR(50)")
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
