@@ -4229,6 +4229,16 @@ async def run(batch_id: str) -> None:
                         lock_conn = None
                     raise RuntimeError(f"Cannot acquire Maps scraping lock: {lock_exc}")
 
+                # ── Build effective-dept set across all queries (for cross-batch dedup) ──
+                _batch_effective_depts: set[str] = set()
+                for _q in search_queries:
+                    _d = _parse_dept_hint_from_query(_q) or dept_filter
+                    if _d:
+                        _batch_effective_depts.add(_d)
+                _dedup_dept_list: list[str] | None = (
+                    list(_batch_effective_depts) if _batch_effective_depts else None
+                )
+
                 # ── Cross-batch dedup (after lock — sees batch A's results) ──
                 if _dedup_dept_list:
                     async with pool.connection() as conn:
@@ -4349,16 +4359,6 @@ async def run(batch_id: str) -> None:
                     )
                 except Exception as _rgpd_exc:
                     log.warning("discovery.rgpd_load_failed", error=str(_rgpd_exc))
-
-                # ── Build effective-dept set across all queries (for cross-batch dedup) ──
-                _batch_effective_depts: set[str] = set()
-                for _q in search_queries:
-                    _d = _parse_dept_hint_from_query(_q) or dept_filter
-                    if _d:
-                        _batch_effective_depts.add(_d)
-                _dedup_dept_list: list[str] | None = (
-                    list(_batch_effective_depts) if _batch_effective_depts else None
-                )
 
                 # ── Preload postal-code density cache for widening (no-op if disabled) ──
                 if settings.cp_widening_enabled and _dedup_dept_list:
