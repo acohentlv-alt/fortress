@@ -3125,9 +3125,13 @@
 
 .entity-banner-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--space-lg);
     margin-bottom: var(--space-lg);
+}
+.entity-banner-grid > * {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .company-ref-grid {
