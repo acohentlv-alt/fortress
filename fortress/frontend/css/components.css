@@ -3541,7 +3541,7 @@
     color: var(--warning);
     font-size: var(--font-xs);
 }
-.gemini-chips-wrapper { display: flex; align-items: center; gap: var(--space-md); flex-wrap: wrap; }
+.gemini-chips-wrapper { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); flex-wrap: wrap; }
 .gemini-chips-label {
     font-size: var(--font-xs);
     color: var(--text-muted);
@@ -3674,7 +3674,6 @@
     .gemini-headline { font-size: 24px; }
     .gemini-prompt-box { padding: var(--space-md); }
     .gemini-query-input.primary { font-size: var(--font-md); padding: var(--space-md); }
-    .gemini-chips-wrapper { flex-direction: column; align-items: flex-start; }
     .segmented .segment { padding: var(--space-xs) var(--space-md); }
 }
 

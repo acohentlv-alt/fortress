@@ -44,7 +44,7 @@ async def get_stats(request: Request):
         tags_clause = "WHERE qt.workspace_id = %s"
         jobs_clause = "AND workspace_id = %s"
         enriched_week_clause = "AND bt.workspace_id = %s"
-        stats_params: tuple = (wid, wid, wid, wid, wid)
+        stats_params: tuple = (wid, wid, wid, wid, wid, wid)
     else:
         cache_key = "stats_admin"
         tags_clause = ""
@@ -76,6 +76,10 @@ async def get_stats(request: Request):
             (SELECT COUNT(*) FROM batch_data
              WHERE status IN ('in_progress', 'queued', 'triage')
                {jobs_clause})                                           AS running_jobs,
+            (SELECT COALESCE(ARRAY_AGG(batch_id ORDER BY updated_at DESC), '{{}}'::text[])
+               FROM batch_data
+               WHERE status IN ('in_progress', 'queued', 'triage')
+               {jobs_clause})                                           AS running_job_ids,
             (SELECT COUNT(DISTINCT bt.siren)
              FROM batch_tags bt
              WHERE bt.created_at > NOW() - INTERVAL '7 days'

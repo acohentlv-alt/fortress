@@ -282,15 +282,22 @@ async function navigate() {
 
 // ── Running Job Badge ────────────────────────────────────────────
 let _runningJobsInterval = null;
+let _runningJobIds = [];
+let _runningJobsCount = 0;
 
 async function checkRunningJobs() {
     const stats = await getDashboardStats();
     const badge = document.getElementById('header-running-badge');
+    if (!badge) return;
     if (stats && stats.running_jobs > 0) {
         badge.style.display = 'inline-flex';
         badge.textContent = `⏳ ${stats.running_jobs} batch en cours`;
+        _runningJobIds = Array.isArray(stats.running_job_ids) ? stats.running_job_ids : [];
+        _runningJobsCount = stats.running_jobs;
     } else {
         badge.style.display = 'none';
+        _runningJobIds = [];
+        _runningJobsCount = 0;
     }
 }
 
@@ -298,6 +305,23 @@ function _setupRunningJobs() {
     checkRunningJobs();
     if (_runningJobsInterval) clearInterval(_runningJobsInterval);
     _runningJobsInterval = setInterval(checkRunningJobs, 30000);
+
+    // Wire click handler once
+    const badge = document.getElementById('header-running-badge');
+    if (badge && !badge.dataset.clickWired) {
+        badge.addEventListener('click', () => {
+            if (_runningJobIds.length === 1) {
+                window.location.hash = `#/monitor/${encodeURIComponent(_runningJobIds[0])}`;
+            } else if (_runningJobIds.length > 1) {
+                window.location.hash = '#/';
+            } else if (_runningJobsCount > 0) {
+                // API/JS skew during deploy: count says yes but IDs missing → dashboard
+                window.location.hash = '#/';
+            }
+            // count 0 = badge hidden; do nothing
+        });
+        badge.dataset.clickWired = '1';
+    }
 }
 
 // ── Workspace completion notifications (WebSocket) ──────────────

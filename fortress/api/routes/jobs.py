@@ -7,8 +7,6 @@ from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
 from fortress.api.routes.dashboard import _invalidate_cache
 from fortress.api.sql_helpers import merged_contacts_cte
-from fortress.config.departments import DEPARTMENTS, ADJACENT_DEPTS
-
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
@@ -1047,99 +1045,4 @@ async def get_job_queries(batch_id: str, request: Request):
         "queries": queries,
         "current_query": job.get("current_query"),
         "time_cap_min": job.get("time_cap_per_query_min"),
-    }
-
-
-@router.get("/{batch_id}/expansion-suggestions")
-async def get_expansion_suggestions(batch_id: str, request: Request):
-    """Suggest adjacent departments for the same sector, based on query_memory."""
-    user = getattr(request.state, "user", None)
-
-    # Workspace scoping
-    if user and not user.is_admin:
-        ws_filter = "AND sj.workspace_id = %s"
-        ws_params = (user.workspace_id,)
-    else:
-        ws_filter = ""
-        ws_params = ()
-
-    # Verify batch exists and user can access it
-    job = await fetch_one(
-        f"SELECT batch_id, batch_name, status FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
-        (batch_id,) + ws_params,
-    )
-    if not job:
-        return JSONResponse(status_code=404, content={"error": "Job introuvable"})
-
-    # Only show suggestions for terminal statuses
-    if job["status"] not in ("completed", "interrupted", "failed"):
-        return {"suggestions": [], "reason": "batch_not_terminal"}
-
-    # Look up sector_word and dept_code from query_memory for this batch
-    qm_row = await fetch_one(
-        "SELECT sector_word, dept_code FROM query_memory WHERE batch_id = %s LIMIT 1",
-        (batch_id,),
-    )
-    if not qm_row or not qm_row["sector_word"] or not qm_row["dept_code"]:
-        return {"suggestions": [], "reason": "no_query_memory"}
-
-    sector_word = qm_row["sector_word"]
-    dept_code = qm_row["dept_code"]
-
-    adjacent = ADJACENT_DEPTS.get(dept_code, [])
-    if not adjacent:
-        return {"suggestions": [], "reason": "no_adjacent_departments"}
-
-    # Determine workspace_id for query_memory lookup
-    if user and not user.is_admin:
-        ws_id = user.workspace_id
-    else:
-        ws_id = None
-
-    suggestions = []
-    for adj_dept in adjacent:
-        dept_name = DEPARTMENTS.get(adj_dept, adj_dept)
-
-        # Compute exhaustion score: last 5 queries, ratio of new_companies=0
-        if ws_id is not None:
-            mem_rows = await fetch_all(
-                """SELECT new_companies FROM query_memory
-                   WHERE workspace_id = %s AND sector_word = %s AND dept_code = %s
-                   ORDER BY executed_at DESC LIMIT 5""",
-                (ws_id, sector_word, adj_dept),
-            )
-        else:
-            mem_rows = await fetch_all(
-                """SELECT new_companies FROM query_memory
-                   WHERE workspace_id IS NULL AND sector_word = %s AND dept_code = %s
-                   ORDER BY executed_at DESC LIMIT 5""",
-                (sector_word, adj_dept),
-            )
-
-        if not mem_rows:
-            exhaustion = 0.0
-        else:
-            dry_count = sum(1 for r in mem_rows if (r["new_companies"] or 0) == 0)
-            exhaustion = dry_count / len(mem_rows)
-
-        # Skip exhausted departments (>= 0.8)
-        if exhaustion >= 0.8:
-            continue
-
-        suggestions.append({
-            "dept_code": adj_dept,
-            "dept_name": dept_name,
-            "sector_word": sector_word,
-            "exhaustion_score": round(exhaustion, 2),
-            "queries_in_memory": len(mem_rows),
-        })
-
-    # Sort by exhaustion (freshest first), limit to 3
-    suggestions.sort(key=lambda s: s["exhaustion_score"])
-    suggestions = suggestions[:3]
-
-    return {
-        "suggestions": suggestions,
-        "sector_word": sector_word,
-        "dept_code": dept_code,
     }
