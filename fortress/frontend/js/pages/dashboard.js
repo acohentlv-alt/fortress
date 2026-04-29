@@ -5,7 +5,7 @@
  * sorted by most recent batch, with timeline of all batches.
  */
 
-import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJobGroup, checkHealth, extractApiError, getCachedUser, getPendingLinks } from '../api.js';
+import { getDashboardStats, getDepartments, getJobs, getDashboardStatsByJob, getAnalysis, getBatchAnalysis, getAllData, getClientStats, getMasterExportUrl, bulkExportCSV, deleteSectorTags, deleteDeptTags, deleteJob, cancelJob, checkHealth, extractApiError, getCachedUser, getPendingLinks } from '../api.js';
 import { isStale } from '../app.js';
 import { showAddEntityModal } from '../components/add-entity-modal.js';
 import { renderGauge, statusBadge, formatDateTime, escapeHtml, showToast, showConfirmModal } from '../components.js';
@@ -191,11 +191,9 @@ export async function renderDashboard(container, gen) {
         _currentTab = 'by-job';
         setActiveToggle('btn-by-job');
         const byJobData = await getDashboardStatsByJob();
-        if (byJobData && Array.isArray(byJobData) && byJobData.length > 0) {
-            renderByJobFromAPI(byJobData, container);
-        } else {
-            renderByJob(jobs, container);
-        }
+        // NOTE: The old client-side fallback `renderByJob(jobs, container)` was removed Apr 29.
+        // If getDashboardStatsByJob() returns [], we show empty state. Per Alan, this is acceptable.
+        renderByBatchFlat(byJobData, container);
     });
 
     document.getElementById('btn-by-dept').addEventListener('click', async () => {
@@ -860,78 +858,136 @@ function _updateBulkExportBar(selected) {
     });
 }
 
-// ── By Job View — From normalized API (no client-side grouping needed) ────
-function renderByJobFromAPI(groups, rootContainer) {
+// ── By Batch View — Flat (one card per batch_id, no grouping) ───
+// Replaces the old group-by-batch-name accordion. Per Alan's Decision 1A
+// (Apr 29): a single batch can contain a primary query + widening expansions,
+// but it's still ONE batch_id. Ungroup at batch_id, not at query name.
+function renderByBatchFlat(groups, rootContainer) {
     const view = document.getElementById('dashboard-view');
-    if (!groups || groups.length === 0) {
+
+    if (!groups || !Array.isArray(groups) || groups.length === 0) {
         _renderJobEmptyState(view);
         return;
     }
 
-    // Filter out manual addition groups from "Par Recherche" tab
-    const filteredGroups = groups.filter(g => {
-        const name = (g.display_name || g.batch_name || '').toLowerCase();
-        return name !== 'ajout manuel';
-    });
+    // The /stats/by-job endpoint still returns a group->batches structure.
+    // Flatten it: one card per batch, ignoring the group layer.
+    const allBatches = [];
+    for (const g of groups) {
+        const groupName = (g.display_name || g.batch_name || '').toLowerCase();
+        // Filter out the synthetic "ajout manuel" pseudo-group (matches old behavior at line 873-875)
+        if (groupName === 'ajout manuel') continue;
+        for (const b of (g.batches || [])) {
+            allBatches.push(b);
+        }
+    }
 
-    if (!filteredGroups || filteredGroups.length === 0) {
+    if (allBatches.length === 0) {
         _renderJobEmptyState(view);
         return;
     }
 
-    // The API returns pre-grouped, uppercase-normalized data
-    const groupCards = filteredGroups.map((g, idx) => _renderGroupCard(g, idx));
+    // Sort newest-first
+    allBatches.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const cards = allBatches.map(b => _renderBatchCardFlat(b)).join('');
 
     view.innerHTML = `
         <div class="job-groups-list">
-            ${groupCards.join('')}
+            ${cards}
         </div>
     `;
 
-    _wireJobGroupDeleteButtons(view, rootContainer);
+    _wireBatchCardDeleteButtons(view, rootContainer);
 }
 
-// ── By Job View — Fallback: client-side grouping ─────────────────
-function renderByJob(jobs, rootContainer) {
-    const view = document.getElementById('dashboard-view');
-    if (!jobs || jobs.length === 0) {
-        _renderJobEmptyState(view);
-        return;
-    }
+function _renderBatchCardFlat(b) {
+    const batchId = b.batch_id || '';
+    const batchName = b.batch_name || '';
+    const batchNumber = b.batch_number || null;
+    const uniqueCompanies = b.batch_unique_companies || 0;
+    const scraped = b.companies_scraped || 0;
+    const total = b.total_companies || 0;
+    const isExhaustive = !!b.exhaustive_default;
+    const isRunning = b.status === 'in_progress';
+    // Mirror the timeline rule from the old _renderGroupCard (lines 1019-1023):
+    // exhaustive batches don't have a meaningful target — show 100% bar.
+    const pct = isExhaustive
+        ? 100
+        : Math.min(100, Math.round((scraped / Math.max(total, 1)) * 100));
 
-    // Filter out manual addition jobs before grouping
-    const filteredJobs = jobs.filter(j => {
-        const name = (j.batch_name || '').toLowerCase().trim();
-        return name !== 'ajout manuel';
-    });
+    const subtext = `${batchNumber ? t('job.batchNumber', { number: batchNumber }) : ''}` +
+        `${batchNumber ? ' · ' : ''}` +
+        `${formatDateTime(b.created_at)} · ` +
+        `${t('dashboard.alldataCount', { total: uniqueCompanies, plural: uniqueCompanies !== 1 ? 's' : '' })}`;
 
-    // Group by batch_name (case-insensitive)
-    const groups = {};
-    for (const j of filteredJobs) {
-        const key = (j.batch_name || '').toUpperCase().trim();
-        if (!groups[key]) groups[key] = { display_name: j.batch_name, batches: [] };
-        groups[key].batches.push(j);
-    }
-
-    // Sort each group's batches by date (newest first)
-    for (const g of Object.values(groups)) {
-        g.batches.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        g.display_name = g.batches[0].batch_name;
-    }
-
-    // Sort groups by their newest batch date
-    const sortedGroups = Object.values(groups)
-        .sort((a, b) => new Date(b.batches[0].created_at) - new Date(a.batches[0].created_at));
-
-    const groupCards = sortedGroups.map((g, idx) => _renderGroupCard(g, idx));
-
-    view.innerHTML = `
-        <div class="job-groups-list">
-            ${groupCards.join('')}
+    return `
+        <div class="job-group-card" style="position:relative" data-batch-id="${escapeHtml(batchId)}">
+            <div class="job-group-header"
+                 onclick="window.location.hash='#/job/' + encodeURIComponent('${batchId}')"
+                 style="cursor:pointer">
+                <div class="job-group-info">
+                    <div class="job-group-name">${escapeHtml(batchName)}</div>
+                    <div class="job-group-meta">${subtext}</div>
+                </div>
+                <div class="job-group-right">
+                    ${statusBadge(b.status)}
+                    <div style="width:100px">
+                        <div class="progress-bar">
+                            <div class="progress-bar-fill ${isRunning ? 'animated' : ''}"
+                                 style="width:${pct}%"></div>
+                        </div>
+                    </div>
+                    <button class="batch-card-delete-btn" data-delete-type="batch"
+                            data-delete-id="${escapeHtml(batchId)}"
+                            data-delete-name="${escapeHtml(batchName)}"
+                            data-running="${isRunning ? '1' : '0'}"
+                            onclick="event.stopPropagation()"
+                            title="Supprimer ce batch"
+                            style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0"
+                            onmouseover="this.style.color='var(--danger, #ef4444)'"
+                            onmouseout="this.style.color='var(--text-muted)'">×</button>
+                </div>
+            </div>
         </div>
     `;
+}
 
-    _wireJobGroupDeleteButtons(view, rootContainer);
+function _wireBatchCardDeleteButtons(view, rootContainer) {
+    view.querySelectorAll('.batch-card-delete-btn[data-delete-type="batch"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const batchId = btn.dataset.deleteId;
+            const batchName = btn.dataset.deleteName || batchId;
+            const isRunning = btn.dataset.running === '1';
+
+            const onConfirm = async () => {
+                try {
+                    if (isRunning) {
+                        try { await cancelJob(batchId); } catch { /* proceed */ }
+                    }
+                    const result = await deleteJob(batchId);
+                    if (result && result._ok !== false) {
+                        showToast(`Batch « ${batchName} » supprimé.`, 'success');
+                        renderDashboard(rootContainer);
+                    } else {
+                        showToast(extractApiError(result), 'error');
+                    }
+                } catch (err) {
+                    showToast('Erreur lors de la suppression du batch.', 'error');
+                }
+            };
+
+            showConfirmModal({
+                title: 'Supprimer ce batch',
+                body: isRunning
+                    ? `Le batch <strong>${escapeHtml(batchName)}</strong> est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
+                    : `Supprimer définitivement le batch <strong>${escapeHtml(batchName)}</strong> ? Cette action est irréversible.`,
+                confirmLabel: t('dashboard.deleteConfirm'),
+                danger: true,
+                onConfirm,
+            });
+        });
+    });
 }
 
 function _renderJobEmptyState(view) {
@@ -940,111 +996,6 @@ function _renderJobEmptyState(view) {
             <div class="empty-state-icon">📋</div>
             <div class="empty-state-text">${t('dashboard.noJobFound')}</div>
             <p style="color: var(--text-muted)">${t('dashboard.noJobHint')}</p>
-        </div>
-    `;
-}
-
-function _wireJobGroupDeleteButtons(view, rootContainer) {
-    view.querySelectorAll('.card-delete-btn[data-delete-type="job-group"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const batchName = btn.dataset.deleteId;
-            const label = btn.dataset.deleteLabel;
-            showConfirmModal({
-                title: t('dashboard.deleteJobGroup'),
-                body: t('dashboard.deleteJobGroupBody', { label }),
-                confirmLabel: t('dashboard.deleteConfirm'),
-                danger: true,
-                onConfirm: async () => {
-                    const result = await deleteJobGroup(batchName);
-                    if (result._ok) {
-                        showToast(t('dashboard.deleteJobGroupSuccess', { name: batchName, jobs: result.jobs_deleted, tags: result.tags_removed }), 'success');
-                        renderDashboard(rootContainer);
-                    } else {
-                        showToast(extractApiError(result), 'error');
-                    }
-                },
-            });
-        });
-    });
-}
-
-function _renderGroupCard(g, idx) {
-    const batches = g.batches || [];
-    const uniqueCompanies = g.unique_companies || 0;
-    const totalScraped = batches.reduce((s, b) => s + (b.companies_scraped || 0), 0);
-    const totalTarget = (batches[0] || {}).total_companies || 0;
-    const overallPct = Math.min(100, Math.round((totalScraped / Math.max(totalTarget, 1)) * 100));
-    const latest = batches[0] || {};
-    const hasRunning = batches.some(b => b.status === 'in_progress');
-    const batchCount = batches.length;
-    const groupId = `jobgroup-${idx}`;
-
-    // Use display_name if available (preserves original casing), fall back to batch_name
-    const displayName = escapeHtml(g.display_name || g.batch_name || '');
-    const batchName = g.display_name || g.batch_name || '';
-    const latestBatchId = latest.batch_id || '';
-
-    return `
-        <div class="job-group-card" style="position:relative" data-group-name="${escapeHtml(batchName)}">
-            <button class="card-delete-btn" data-delete-type="job-group" data-delete-id="${escapeHtml(batchName)}" data-delete-label="${displayName} (${batchCount} batch${batchCount > 1 ? 'es' : ''})"
-                onclick="event.stopPropagation()" title="${t('dashboard.deleteJobGroup')}">✕</button>
-            <div class="job-group-header" onclick="window.location.hash='#/job/${encodeURIComponent(latestBatchId)}'">
-                <div class="job-group-info">
-                    <div class="job-group-name">${displayName}</div>
-                    <div class="job-group-meta">
-                        <span>${batchCount} batch${batchCount > 1 ? 'es' : ''}</span>
-                        <span>·</span>
-                        <span>${uniqueCompanies} entreprise${uniqueCompanies !== 1 ? 's' : ''}</span>
-                        <span>·</span>
-                        <span>${t('dashboard.lastBatch', { date: formatDateTime(latest.created_at) })}</span>
-                    </div>
-                </div>
-                <div class="job-group-right">
-                    ${hasRunning ? statusBadge('in_progress') : statusBadge(latest.status)}
-                    <div style="width:100px">
-                        <div class="progress-bar">
-                            <div class="progress-bar-fill ${hasRunning ? 'animated' : ''}"
-                                 style="width:${overallPct}%"></div>
-                        </div>
-                    </div>
-                    <span class="job-group-chevron">▼</span>
-                </div>
-            </div>
-
-            <div class="job-group-timeline" id="${groupId}">
-                <div class="job-timeline-inner">
-                    ${batches.map((b, bIdx) => {
-        const bScraped = b.companies_scraped || 0;
-        const bTotal = b.total_companies || 1;
-        const bIsExhaustiveDefault = !!b.exhaustive_default;
-        const bPct = bIsExhaustiveDefault ? 100 : Math.round((bScraped / bTotal) * 100);
-        const countText = bIsExhaustiveDefault
-            ? `${bScraped} ${t('dashboard.entitiesCollected')}`
-            : `${bScraped}/${bTotal} ${t('dashboard.scrapedOf')}`;
-        return `
-                        <div class="job-timeline-item" onclick="event.stopPropagation(); window.location.hash='#/job/${encodeURIComponent(b.batch_id)}'">
-                            <div class="timeline-dot ${bIdx === 0 ? 'latest' : ''}"></div>
-                            <div class="timeline-content">
-                                <div class="timeline-batch-id">${escapeHtml(b.batch_id)}</div>
-                                <div class="timeline-meta">
-                                    <span>${formatDateTime(b.created_at)}</span>
-                                    <span>${countText}</span>
-                                    ${b.wave_total ? `<span>Vague ${b.wave_current || 0}/${b.wave_total}</span>` : ''}
-                                </div>
-                            </div>
-                            <div class="timeline-status">
-                                ${statusBadge(b.status)}
-                                <div style="width:60px">
-                                    <div class="progress-bar" style="height:3px">
-                                        <div class="progress-bar-fill" style="width:${bPct}%"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-    }).join('')}
-                </div>
-            </div>
         </div>
     `;
 }

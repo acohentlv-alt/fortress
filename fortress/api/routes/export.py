@@ -33,12 +33,21 @@ _FORME_JURIDIQUE_LABELS = {
 }
 
 
+_LINK_CONFIDENCE_LABELS = {
+    'confirmed': 'Confirmé',
+    'pending': 'En attente',
+}
+
+
 def _fmt(col_key: str, value) -> str:
-    """Format a cell value for export. Converts forme_juridique codes to labels."""
+    """Format a cell value for export. Converts forme_juridique codes to labels
+    and link_confidence codes to French labels."""
     if not value:
         return ""
     if col_key == "forme_juridique":
         return _FORME_JURIDIQUE_LABELS.get(str(value), str(value))
+    if col_key == "link_confidence":
+        return _LINK_CONFIDENCE_LABELS.get(str(value), "")
     return str(value)
 
 _CSV_COLUMNS = [
@@ -52,7 +61,7 @@ _CSV_COLUMNS = [
     ("Code postal", "code_postal"),
     ("Ville", "ville"),
     ("Département", "departement"),
-    ("Statut", "statut"),
+    ("Statut SIRENE", "statut"),       # renamed from "Statut" to avoid clash with the new column
     ("Date création", "date_creation"),
     ("Effectif", "tranche_effectif"),
     ("Téléphone", "phone"),
@@ -66,33 +75,58 @@ _CSV_COLUMNS = [
     ("Note Google", "rating"),
     ("Avis Google", "review_count"),
     ("Notes", "notes"),
+    ("Statut lien", "link_confidence"),  # NEW: Confirmé / En attente / blank
 ]
 
 # SELECT columns used by every export query. Computes the REAL SIREN:
 # - Pure SIRENE entities: use co.siren directly
 # - MAPS entities with confirmed link: use linked_siren (real SIREN)
+# - MAPS entities with pending link: use linked_siren (candidate SIREN, flagged via Statut lien)
 # - MAPS entities without confirmed link: NULL (avoids exporting MAPS00001 as "SIREN")
+#
+# For pending MAPS rows (Apr 29), SIRENE-side reference fields (SIRET, NAF, forme
+# juridique, statut, date création, effectif) are blank because
+# `_copy_sirene_reference_data` only runs on auto-confirm or manual /link approve.
+# To show the entity "as if merged" — so Cindy gets the candidate's full data to
+# verify — we LEFT JOIN companies via `linked_siren` (alias `sirene_ref`) and
+# COALESCE the SIRENE-side fields. Maps-derived fields (denomination, adresse,
+# code_postal, ville) are kept as-is to preserve storefront location accuracy
+# (Frankenstein fix Apr 22).
 _EXPORT_SELECT = """
     CASE
         WHEN co.siren NOT LIKE 'MAPS%%' THEN co.siren
         WHEN co.link_confidence = 'confirmed' THEN co.linked_siren
+        WHEN co.link_confidence = 'pending' THEN co.linked_siren
         ELSE NULL
     END AS effective_siren,
-    co.siret_siege, co.denomination,
-    co.naf_code, co.naf_libelle, co.forme_juridique,
-    co.adresse, co.code_postal, co.ville,
-    co.departement, co.statut, co.date_creation,
-    co.tranche_effectif,
+    COALESCE(co.siret_siege, sirene_ref.siret_siege) AS siret_siege,
+    co.denomination,
+    COALESCE(co.naf_code, sirene_ref.naf_code) AS naf_code,
+    COALESCE(co.naf_libelle, sirene_ref.naf_libelle) AS naf_libelle,
+    COALESCE(co.forme_juridique, sirene_ref.forme_juridique) AS forme_juridique,
+    co.adresse,
+    COALESCE(co.code_postal, sirene_ref.code_postal) AS code_postal,
+    COALESCE(co.ville, sirene_ref.ville) AS ville,
+    co.departement,
+    COALESCE(co.statut, sirene_ref.statut) AS statut,
+    COALESCE(co.date_creation, sirene_ref.date_creation) AS date_creation,
+    COALESCE(co.tranche_effectif, sirene_ref.tranche_effectif) AS tranche_effectif,
     mc.phone, mc.email, mc.website,
     mc.address, mc.maps_url,
     mc.social_linkedin, mc.social_facebook, mc.social_twitter,
     mc.rating, mc.review_count,
-    cn.notes
+    cn.notes,
+    co.link_confidence
 """
 
-# JOINs used by every export query
+# JOINs used by every export query.
+# `sirene_ref` join hydrates SIRENE-side fields for MAPS entities (both confirmed
+# and pending). For pure SIRENE rows (co.siren NOT LIKE 'MAPS%'), this LEFT JOIN
+# never matches (linked_siren IS NULL on pure SIRENE) — no impact.
 _EXPORT_JOINS = """
     LEFT JOIN merged_contacts mc ON mc.siren = co.siren
+    LEFT JOIN companies sirene_ref ON sirene_ref.siren = co.linked_siren
+                                  AND co.siren LIKE 'MAPS%%'
     LEFT JOIN (
         SELECT siren, STRING_AGG(text, ' | ' ORDER BY created_at DESC) AS notes
         FROM company_notes
@@ -109,10 +143,12 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
     candidate-lookup audit rows under each candidate's real SIREN —
     that polluted exports with empty ghost rows.
 
-    Returns ALL MAPS entities for the batch regardless of link status
-    (confirmed/pending/unmatched) so Cindy gets every scraped contact.
-    The SIREN column is populated only for confirmed matches; pending
-    and unlinked rows leave it blank.
+    Returns confirmed AND pending MAPS rows. Unmatched MAPS (no linked
+    SIREN) are excluded — they have no real SIREN and would pollute the
+    export. Confirmed rows are sorted first, pending rows last, so Cindy
+    can act on confirmed contacts immediately and review pending ones
+    afterwards. Pending rows are flagged via the `Statut lien` column
+    ("En attente") and shaded in XLSX exports.
     """
     job = await fetch_one(
         "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
@@ -126,8 +162,10 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         FROM (SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
-        WHERE co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge')
-        ORDER BY co.denomination
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                 co.denomination
     """, (batch_id, batch_id))
 
 
@@ -151,9 +189,10 @@ async def export_master_csv(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
           AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
-        ORDER BY co.denomination
+        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                 co.denomination
     """)
     if not rows:
         return StreamingResponse(
@@ -191,9 +230,10 @@ async def export_master_xlsx(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
           AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
-        ORDER BY co.denomination
+        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                 co.denomination
     """)
     return _to_xlsx(rows, "fortress_master.xlsx")
 
@@ -262,8 +302,10 @@ async def export_contacts_filtered_csv(
         where_parts.append("co.naf_code LIKE %s")
         params.append(f"{naf_code.strip().upper()}%")
 
-    # Exclude pending MAPS rows — they have no confirmed SIRENE data and are not export-ready
-    where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')")
+    # Include confirmed AND pending MAPS rows — exclude only fully unmatched MAPS.
+    # Pending rows are flagged via the `Statut lien` column and sorted to the bottom
+    # so Cindy sees confirmed contacts first.
+    where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))")
     # Exclude NAF-mismatch rows — except chain and gemini_judge matches which are included (high-confidence)
     where_parts.append("(co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))")
 
@@ -291,7 +333,9 @@ async def export_contacts_filtered_csv(
             GROUP BY siren
         ) cn ON cn.siren = co.siren
         WHERE {where_clause}
-        ORDER BY COALESCE(co.linked_siren, co.siren), co.denomination
+        ORDER BY COALESCE(co.linked_siren, co.siren),
+                 (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                 co.denomination
         LIMIT 10000
     """, tuple(params) if params else None)
 
@@ -436,9 +480,10 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
-            WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+            WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
               AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
-            ORDER BY co.denomination
+            ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                     co.denomination
         """, (user.workspace_id, body.sirens))
     else:
         rows = await fetch_all(f"""
@@ -447,9 +492,10 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM companies co
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
-              AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
+              AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
               AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
-            ORDER BY co.denomination
+            ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
+                     co.denomination
         """, (body.sirens, body.sirens))
 
     buf = io.StringIO()
@@ -470,7 +516,9 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
 
 
 def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
-    """Convert rows to an XLSX file and return as StreamingResponse."""
+    """Convert rows to an XLSX file and return as StreamingResponse.
+    Pending rows (link_confidence='pending') are filled with soft peach
+    (FFE6CC) so they're visually distinct from confirmed rows."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -487,13 +535,19 @@ def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
 
+    # Pending-row fill: soft peach matching the --warning palette in the UI
+    pending_fill = PatternFill(start_color="FFE6CC", end_color="FFE6CC", fill_type="solid")
+
     # Data rows
     for row_idx, row in enumerate(rows or [], 2):
+        is_pending = (row.get("link_confidence") == "pending")
         for col_idx, (_, key) in enumerate(_CSV_COLUMNS, 1):
             val = row.get(key)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
-            ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
+            cell = ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
+            if is_pending:
+                cell.fill = pending_fill
 
     # Auto-width (approximate)
     for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):

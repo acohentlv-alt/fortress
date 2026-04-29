@@ -126,7 +126,7 @@ async function renderMonitorList(container) {
                 ${t('monitor.recentCompleted')}
             </h2>
             <div class="job-list">
-                ${jobsList.filter(j => (j.status === 'completed' || j.status === 'interrupted') && !j.batch_id.startsWith('MANUAL_')).slice(0, 5).map(j => `
+                ${jobsList.filter(j => (j.status === 'completed' || j.status === 'interrupted') && !j.batch_id.startsWith('MANUAL_')).slice(0, 20).map(j => `
                     <div class="job-card" onclick="window.location.hash='#/job/${encodeURIComponent(j.batch_id)}'">
                         <div class="job-card-info">
                             <div class="job-card-name">${escapeHtml(j.batch_name)}</div>

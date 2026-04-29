@@ -175,7 +175,12 @@ async def get_stats_by_job(request: Request):
             COALESCE(sj.batch_size, sj.total_companies) AS batch_size,
             sj.wave_current, sj.wave_total,
             sj.triage_green, sj.triage_yellow, sj.triage_red, sj.triage_black,
-            sj.created_at, sj.updated_at
+            sj.created_at, sj.updated_at,
+            COALESCE((
+                SELECT COUNT(DISTINCT bt.siren)
+                FROM batch_tags bt
+                WHERE bt.batch_id = sj.batch_id
+            ), 0) AS batch_unique_companies
         FROM batch_data sj
         WHERE sj.status != 'deleted'
         {ws_filter}
