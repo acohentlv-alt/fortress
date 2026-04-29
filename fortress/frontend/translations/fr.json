@@ -695,7 +695,10 @@
     "queriesCardTitle": "Recherches effectuées",
     "queriesCitiesBucket": "Villes ({{count}})",
     "queriesPostalsBucket": "Codes postaux ({{count}})",
-    "queriesBranchError": "Erreur"
+    "queriesBranchError": "Erreur",
+    "scoreboardPendingApproval": "À VALIDER",
+    "scoreboardSubtextPending": "{{count}} entreprises ont besoin de validation manuelle.",
+    "linkStatsNafMismatchSubline": "({{confirmed}} confirmées, {{pending}} en attente)"
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",

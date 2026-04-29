@@ -666,7 +666,10 @@
     "queriesCardTitle": "Searches performed",
     "queriesCitiesBucket": "Cities ({{count}})",
     "queriesPostalsBucket": "Postal codes ({{count}})",
-    "queriesBranchError": "Error"
+    "queriesBranchError": "Error",
+    "scoreboardPendingApproval": "AWAITING REVIEW",
+    "scoreboardSubtextPending": "{{count}} companies need manual review.",
+    "linkStatsNafMismatchSubline": "({{confirmed}} confirmed, {{pending}} pending)"
   },
   "newBatch": {
     "headline": "What are you looking for?",

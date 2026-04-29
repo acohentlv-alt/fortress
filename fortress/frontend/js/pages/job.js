@@ -17,7 +17,6 @@ let _currentBatchName = null;
 let _currentPage = 1;
 let _currentSort = 'completude';
 let _currentFilter = '';  // '' | 'naf_confirmed' | 'naf_sibling' | 'pending' | 'unlinked'
-let _currentPendingCount = 0;
 
 // ── Scoreboard card — hero card at top of job page ───────────────
 // Replaces buildSummaryCard + buildLinkStatsCard + the Progress card.
@@ -289,9 +288,32 @@ function buildScoreboardCard(job, linkStats, summary) {
         `;
     };
 
+    // Pending hero card — promotes the previously-buried badge to first-class.
+    // Hidden when pending=0. Click toggles the existing 'pending' filter (same
+    // semantics as the legend row + the deleted badge).
+    const pendingHeroCardHtml = pending > 0 ? `
+        <div class="pending-hero-card" data-filter="pending"
+             style="cursor:pointer; background:var(--bg-elevated); border-radius:var(--radius);
+                    padding:var(--space-lg); border:1px solid rgba(245,158,11,0.4)">
+            <div style="font-size:var(--font-xs); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; font-weight:700; margin-bottom:var(--space-sm)">⏳ ${t('job.scoreboardPendingApproval')}</div>
+            <div style="display:flex; align-items:baseline; gap:var(--space-sm); margin-bottom:var(--space-sm)">
+                <span style="font-size:var(--font-2xl); font-weight:800; color:#f59e0b">${pending}</span>
+                <span style="color:var(--text-muted); font-size:var(--font-sm)">/ ${total}</span>
+            </div>
+            <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.4">${t('job.scoreboardSubtextPending', { count: pending })}</div>
+        </div>
+    ` : '';
+
+    // Grid columns: count visible cards (Identifiées always, Pending if pending>0, Sector if showSectorCard).
+    const _showPendingHero = pending > 0;
+    const _heroCardCount = 1 + (_showPendingHero ? 1 : 0) + (showSectorCard ? 1 : 0);
+    const _gridCols = _heroCardCount === 1 ? '1fr' : (_heroCardCount === 2 ? '1fr 1fr' : '1fr 1fr 1fr');
+    const _identifiedFullWidth = _heroCardCount === 1;
+
     const heroGridHtml = `
-        <div style="display:grid; grid-template-columns:${showSectorCard ? '1fr 1fr' : '1fr'}; gap:var(--space-xl); margin-bottom:var(--space-lg)" class="scoreboard-hero-grid">
-            ${heroCard('🎯', t('job.scoreboardIdentified'), confirmed, total, confirmPct, identifiedSubtext, !showSectorCard)}
+        <div style="display:grid; grid-template-columns:${_gridCols}; gap:var(--space-xl); margin-bottom:var(--space-lg)" class="scoreboard-hero-grid">
+            ${heroCard('🎯', t('job.scoreboardIdentified'), confirmed, total, confirmPct, identifiedSubtext, _identifiedFullWidth)}
+            ${pendingHeroCardHtml}
             ${showSectorCard ? heroCard('🏷️', sectorCardLabel, sectorNum, sectorDenom, sectorPct, sectorSubtext, false) : ''}
         </div>
     `;
@@ -328,8 +350,10 @@ function buildScoreboardCard(job, linkStats, summary) {
         .sort((a, b) => b[1] - a[1]);
     const nafExact = linkStats.naf_exact || 0;
     const nafRelated = linkStats.naf_related || 0;
+    const nafMismatchConfirmed = linkStats.naf_mismatch_confirmed || 0;
+    const nafMismatchPending = linkStats.naf_mismatch_pending || 0;
     const showNaf = nafEvaluated > 0;
-    const nafPending = showNaf ? Math.max(0, total - nafVerified - nafMismatch) : 0;
+    const nafNotEvaluated = showNaf ? Math.max(0, total - nafVerified - nafMismatch) : 0;
     const hasDetail = methodEntries.length > 0 || showNaf;
 
     const methodRows = methodEntries.map(([method, n]) => `
@@ -354,8 +378,11 @@ function buildScoreboardCard(job, linkStats, summary) {
                 <div style="display:flex; gap:var(--space-xl); flex-wrap:wrap; font-size:var(--font-sm); margin-bottom:var(--space-md)">
                     ${nafExact > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafExactTooltip'))}"><span style="color:var(--success)">✓✓</span> <strong>${nafExact}</strong> ${t('job.linkStatsNafExact')}</span>` : ''}
                     ${nafRelated > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafRelatedTooltip'))}"><span style="color:var(--success)">~</span> <strong>${nafRelated}</strong> ${t('job.linkStatsNafRelated')}</span>` : ''}
-                    <span title="${escapeHtml(t('job.linkStatsNafMismatchTooltip'))}"><span style="color:#ef4444">✗</span> <strong>${nafMismatch}</strong> ${t('job.linkStatsNafMismatch')}</span>
-                    <span><span style="color:var(--text-muted)">—</span> <strong>${nafPending}</strong> ${t('job.linkStatsNafNotEvaluated')}</span>
+                    <span title="${escapeHtml(t('job.linkStatsNafMismatchTooltip'))}">
+                        <span style="color:#ef4444">✗</span> <strong>${nafMismatch}</strong> ${t('job.linkStatsNafMismatch')}
+                        ${nafMismatch > 0 ? `<span style="color:var(--text-muted); font-weight:400; margin-left:4px">${t('job.linkStatsNafMismatchSubline', { confirmed: nafMismatchConfirmed, pending: nafMismatchPending })}</span>` : ''}
+                    </span>
+                    <span><span style="color:var(--text-muted)">—</span> <strong>${nafNotEvaluated}</strong> ${t('job.linkStatsNafNotEvaluated')}</span>
                 </div>
             ` : ''}
             ${methodEntries.length > 0 ? `
@@ -375,7 +402,8 @@ function buildScoreboardCard(job, linkStats, summary) {
         <style>
             .legend-row:hover { background: var(--bg-secondary); }
             .legend-row.active { background: var(--bg-secondary); outline: 1px solid var(--accent); }
-            @media (max-width: 700px) {
+            .pending-hero-card:hover { background: var(--bg-secondary); }
+            @media (max-width: 768px) {
                 .scoreboard-hero-grid { grid-template-columns: 1fr !important; }
             }
         </style>
@@ -509,7 +537,6 @@ export async function renderJob(container, batchId) {
     _currentPage = 1;
     _currentSort = 'completude';
     _currentFilter = '';  // Reset filter when opening a new job
-    _currentPendingCount = (job.link_stats && job.link_stats.pending) || 0;
 
     // Load companies
     await loadCompanies(batchId, 1, 'completude', '');
@@ -544,6 +571,21 @@ export async function renderJob(container, batchId) {
             document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     });
+
+    // Pending hero card click — same toggle semantics as the legend row 'pending' filter.
+    const pendingHeroCard = document.querySelector('.pending-hero-card');
+    if (pendingHeroCard) {
+        pendingHeroCard.addEventListener('click', async () => {
+            _currentFilter = (_currentFilter === 'pending') ? '' : 'pending';
+            // Sync legend rows: only the pending row is active (or none if toggled off)
+            document.querySelectorAll('.legend-row').forEach(r => {
+                r.classList.toggle('active', _currentFilter === 'pending' && r.dataset.filter === 'pending');
+            });
+            _currentPage = 1;
+            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter);
+            document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }
 
     // Selection mode toggle
     _setupSelectionMode(batchId);
@@ -691,25 +733,13 @@ async function loadCompanies(batchId, page, sort, filter = '') {
     const totalPages = Math.ceil((data.total || 0) / (data.page_size || 20));
     const totalCompanies = data.total || 0;
 
-    // Pending badge: toggles the same 'pending' filter the legend row uses,
-    // so users can drill from the count straight into the entities-to-review list.
-    const pendingActive = _currentFilter === 'pending';
+    // Companies list header — count only. The pending count is now shown
+    // as a hero card in the scoreboard above (see buildScoreboardCard).
     const listHeaderHtml = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-md); padding:var(--space-sm) 0; border-bottom:1px solid var(--border-subtle)">
             <span style="font-size:var(--font-sm); color:var(--text-secondary); font-weight:600">
                 ${totalCompanies} ${totalCompanies > 1 ? 'entreprises' : 'entreprise'}
             </span>
-            ${(_currentPendingCount > 0) ? `
-                <button id="job-pending-badge"
-                        title="${pendingActive ? 'Retirer le filtre' : 'Voir les entités en attente'}"
-                        style="background:${pendingActive ? 'rgba(245,158,11,0.18)' : 'transparent'};
-                               border:1px solid rgba(245,158,11,${pendingActive ? '0.6' : '0.35'});
-                               color:rgb(245,158,11); font-size:var(--font-sm); font-weight:600;
-                               padding:4px 10px; border-radius:var(--radius-sm); cursor:pointer;
-                               transition:background 0.15s, border-color 0.15s">
-                    ⏳ ${_currentPendingCount} en attente
-                </button>
-            ` : ''}
         </div>
     `;
 
@@ -730,24 +760,6 @@ async function loadCompanies(batchId, page, sort, filter = '') {
         </div>
         ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort, filter))}
     `;
-
-    // ⏳ N en attente badge — toggle the 'pending' filter (same as the legend
-    // row). Sync the legend row's active class so both stay visually aligned.
-    const pendingBadge = document.getElementById('job-pending-badge');
-    if (pendingBadge) {
-        pendingBadge.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const wasActive = _currentFilter === 'pending';
-            _currentFilter = wasActive ? '' : 'pending';
-            // Sync legend row visual state
-            document.querySelectorAll('.legend-row').forEach(r => {
-                r.classList.toggle('active', !wasActive && r.dataset.filter === 'pending');
-            });
-            _currentPage = 1;
-            await loadCompanies(batchId, 1, sort, _currentFilter);
-            document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-    }
 
     // Restore checkbox state after re-render
     if (selectionMode) {

@@ -626,6 +626,12 @@ async def get_job(batch_id: str, request: Request):
         SELECT
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'verified') AS verified,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'mismatch') AS mismatch,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.naf_status = 'mismatch' AND co.link_confidence = 'confirmed'
+            ) AS mismatch_confirmed,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.naf_status = 'mismatch' AND co.link_confidence = 'pending'
+            ) AS mismatch_pending,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
@@ -634,29 +640,60 @@ async def get_job(batch_id: str, request: Request):
     if naf_row:
         link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
         link_stats["naf_mismatch"] = int(naf_row.get("mismatch") or 0)
+        link_stats["naf_mismatch_confirmed"] = int(naf_row.get("mismatch_confirmed") or 0)
+        link_stats["naf_mismatch_pending"] = int(naf_row.get("mismatch_pending") or 0)
         link_stats["naf_evaluated"] = int(naf_row.get("evaluated") or 0)
 
-    # Split naf_verified into "exact/section" vs "expanded sibling" using batch_log.action.
-    # A company may have multiple log rows; take the most informative action.
-    naf_split_rows = await fetch_all("""
-        SELECT bl.action, COUNT(DISTINCT bl.siren) AS n
-        FROM batch_log bl
-        JOIN companies co ON co.siren = bl.siren
-        WHERE bl.batch_id = %s
-          AND co.naf_status = 'verified'
-          AND bl.action IN ('auto_linked_verified', 'auto_linked_expanded',
-                            'auto_linked_geo_proximity')
-        GROUP BY bl.action
-    """, (batch_id,))
-    naf_exact = 0
-    naf_related = 0
-    for row in naf_split_rows:
-        if row["action"] in ("auto_linked_verified", "auto_linked_geo_proximity"):
-            naf_exact += int(row["n"] or 0)
-        elif row["action"] == "auto_linked_expanded":
-            naf_related = int(row["n"] or 0)
-    link_stats["naf_exact"] = naf_exact
-    link_stats["naf_related"] = naf_related
+    # Split naf_verified into EXACT (strict prefix / section / method-keyed) vs RELATED (curated sibling).
+    #
+    # Bucket simplification (accepted Apr 29):
+    # Method-keyed actions (chain, inpi_agree, mentions_legales, cp_name_disamb,
+    # individual_match, geo_proximity, gemini_swap, gemini_rescue) are bucketed
+    # as EXACT regardless of whether the SIRENE NAF aligns via strict prefix or
+    # curated sibling. This simplification preserves today's behavior on
+    # auto_linked_geo_proximity (which had the same property pre-v3) and accepts
+    # a small over-count of EXACT on sibling-aligned method-keyed matches.
+    # Refinement deferred — re-query _compute_naf_status semantics if ever needed.
+    # Only auto_linked_expanded is explicitly in RELATED.
+    #
+    # Single-row dedupe by SIREN: handles the case where one SIREN has overlapping
+    # audit rows (e.g., initial auto_linked_geo_proximity → later auto_linked_gemini_swap).
+    # EXACT takes precedence: if a SIREN appears in any EXACT action, it counts
+    # as EXACT only — never also as RELATED. Prevents the disclosure summing > naf_verified.
+    naf_split = await fetch_one("""
+        WITH exact_sirens AS (
+            SELECT DISTINCT bl.siren
+            FROM batch_log bl
+            JOIN companies co ON co.siren = bl.siren
+            WHERE bl.batch_id = %s
+              AND co.naf_status = 'verified'
+              AND bl.action IN (
+                  'auto_linked_verified',
+                  'auto_linked_geo_proximity',
+                  'auto_linked_inpi_agree',
+                  'auto_linked_mentions_legales',
+                  'auto_linked_chain',
+                  'auto_linked_cp_name_disamb',
+                  'auto_linked_individual_match',
+                  'auto_linked_gemini_swap',
+                  'auto_linked_gemini_rescue'
+              )
+        ),
+        related_sirens AS (
+            SELECT DISTINCT bl.siren
+            FROM batch_log bl
+            JOIN companies co ON co.siren = bl.siren
+            WHERE bl.batch_id = %s
+              AND co.naf_status = 'verified'
+              AND bl.action = 'auto_linked_expanded'
+              AND bl.siren NOT IN (SELECT siren FROM exact_sirens)
+        )
+        SELECT
+            (SELECT COUNT(*) FROM exact_sirens)   AS exact_count,
+            (SELECT COUNT(*) FROM related_sirens) AS related_count
+    """, (batch_id, batch_id))
+    link_stats["naf_exact"] = int((naf_split or {}).get("exact_count") or 0)
+    link_stats["naf_related"] = int((naf_split or {}).get("related_count") or 0)
 
     # Per-NAF-code breakdown for the scoreboard legend — counts confirmed matches
     # grouped by the ACTUAL NAF code stored on the matched entity.
