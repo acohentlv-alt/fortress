@@ -2704,6 +2704,10 @@ async def run(batch_id: str) -> None:
                 # read by _persist_result via nonlocal.
                 _effective_dept: str | None = dept_filter
 
+                # W — anti-bot watchdog state. List wrapper so _persist_result can mutate
+                # without nonlocal. Reset to [None] at the top of each per-query iteration.
+                _first_card_seen_at: list[float | None] = [None]
+
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
                     nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged, _query_geo_capture_count, _effective_dept
 
@@ -2712,6 +2716,9 @@ async def run(batch_id: str) -> None:
                         return False  # Signal scraper to stop extracting cards
 
                     maps_name = maps_result.get("maps_name", "")
+                    # W — record first card timestamp for anti-bot watchdog
+                    if _first_card_seen_at[0] is None:
+                        _first_card_seen_at[0] = time.monotonic()
                     maps_address = maps_result.get("address")
                     maps_phone = maps_result.get("phone")
                     maps_website = maps_result.get("website")
@@ -3574,7 +3581,25 @@ async def run(batch_id: str) -> None:
                                     }:
                                         auto_confirm = agree_count >= 1
                                     else:
-                                        auto_confirm = True
+                                        # Y2 (Apr 30 — Inno'vin fix): for methods that have a
+                                        # directly-verifiable signal in _verify_signals(), require
+                                        # that signal to be True before auto-confirming. Without a
+                                        # NAF gate to force verification, this is the only check
+                                        # stopping address/enseigne/phone/siren_website matches
+                                        # from confirming when their own evidence disagrees.
+                                        _METHOD_OWN_SIGNAL = {
+                                            "address": "address_match",
+                                            "enseigne": "enseigne_match",
+                                            "phone": "phone_match",
+                                            "siren_website": "siren_website_match",
+                                        }
+                                        _own_sig = _METHOD_OWN_SIGNAL.get(method)
+                                        if _own_sig is not None:
+                                            auto_confirm = link_signals.get(_own_sig) is True
+                                        else:
+                                            # Other strong methods (gemini_judge, etc.) have their
+                                            # own confidence mechanisms upstream — keep prior behaviour.
+                                            auto_confirm = True
                                 else:
                                     auto_confirm = False
                                 # Giclette/LES TONTONS recovery: enseigne + exact CP in dense-urban dept
@@ -3750,6 +3775,26 @@ async def run(batch_id: str) -> None:
                                         f"(sim={_pending_link.get('cp_name_disamb_meta', {}).get('top_sim')}, "
                                         f"pool={_pending_link.get('cp_name_disamb_meta', {}).get('pool_size')})"
                                     ),
+                                    workspace_id=batch_workspace_id,
+                                )
+                            # Y2 audit: track downgrades caused by the no-filter signal-verification gate.
+                            # Fires when picked_nafs == [] AND method ∈ {address, enseigne, phone, siren_website}
+                            # AND link_signals[method's own signal] is not True.
+                            if (
+                                not auto_confirm
+                                and picked_nafs == []
+                                and method in {"address", "enseigne", "phone", "siren_website"}
+                                and link_signals is not None
+                            ):
+                                _own_sig_key = {
+                                    "address": "address_match", "enseigne": "enseigne_match",
+                                    "phone": "phone_match", "siren_website": "siren_website_match",
+                                }[method]
+                                await log_audit(
+                                    conn, batch_id=batch_id, siren=siren,
+                                    action="pending_no_filter_signal_disagree",
+                                    result="success",
+                                    detail=f"Y2 gate: method={method}, signal={_own_sig_key}={link_signals.get(_own_sig_key)}, downgraded to pending",
                                     workspace_id=batch_workspace_id,
                                 )
 
@@ -4748,13 +4793,82 @@ async def run(batch_id: str) -> None:
                     _query_geo_capture_count = 0
                     _pre_query_discovered = companies_discovered
                     _query_start = time.monotonic()
-                    results = await maps_scraper.search_all(
+                    _first_card_seen_at[0] = None   # W — reset for new query (var defined near _persist_result)
+
+                    # Z — compute hard deadline before any await
+                    _query_deadline_sec: float | None = (_time_cap_min * 60) if _time_cap_min else None
+
+                    # W — anti-bot watchdog: cancel scrape if no first card within 90 sec
+                    _ANTIBOT_FIRST_CARD_TIMEOUT_SEC = 90
+
+                    _scraper_task = asyncio.create_task(maps_scraper.search_all(
                         clean_query, on_result=_persist_result,
                         dept_code=_effective_dept,
                         max_results=_max_cards,
                         sector_word=_sector_word,
                         should_skip=_should_skip_card,
-                    )
+                    ))
+
+                    async def _antibot_watchdog():
+                        await asyncio.sleep(_ANTIBOT_FIRST_CARD_TIMEOUT_SEC)
+                        if _first_card_seen_at[0] is None:
+                            log.warning(
+                                "discovery.antibot_block_detected",
+                                query=search_query,
+                                threshold_sec=_ANTIBOT_FIRST_CARD_TIMEOUT_SEC,
+                            )
+                            _scraper_task.cancel()
+
+                    _watchdog_task = asyncio.create_task(_antibot_watchdog())
+
+                    results: list = []
+                    _query_abort_reason: str | None = None
+                    try:
+                        if _query_deadline_sec is not None:
+                            results = await asyncio.wait_for(_scraper_task, timeout=_query_deadline_sec)
+                        else:
+                            results = await _scraper_task
+                    except asyncio.TimeoutError:
+                        log.warning(
+                            "discovery.query_time_cap_hit",
+                            query=search_query, cap_min=_time_cap_min,
+                        )
+                        _query_abort_reason = "time_cap_reached_primary"
+                        _scraper_task.cancel()
+                        if settings.worker_pool_enabled:
+                            try:
+                                await asyncio.wait_for(_entity_queue.join(), timeout=30)
+                            except asyncio.TimeoutError:
+                                pass
+                    except asyncio.CancelledError:
+                        # Anti-bot watchdog cancelled the scrape (W)
+                        _query_abort_reason = "antibot_block"
+                        log.warning("discovery.antibot_query_aborted", query=search_query)
+                    finally:
+                        _watchdog_task.cancel()
+                        try:
+                            await _watchdog_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                    if _query_abort_reason:
+                        log.info(
+                            "discovery.query_aborted",
+                            query=search_query,
+                            reason=_query_abort_reason,
+                            results_so_far=len(results),
+                        )
+                        _query_stats.append({
+                            "query": search_query,
+                            "cards_found": len(results),
+                            "new_companies": companies_discovered - _pre_query_discovered,
+                            "filtered_count": _query_filtered_count,
+                            "dedup_count": _query_dedup_count,
+                            "is_expansion": False,
+                            "duration_sec": round(time.monotonic() - _query_start, 1),
+                            "abort_reason": _query_abort_reason,
+                        })
+                        continue   # bypass expansion loop for this query
 
                     log.info(
                         "discovery.search_done",
@@ -5051,9 +5165,17 @@ async def run(batch_id: str) -> None:
                 else:
                     _dept_msg = ""
 
+                # Z/W — surface query-level abort reasons (time-cap-hit-on-primary, anti-bot)
+                _abort_reasons = [qs.get("abort_reason") for qs in _query_stats if qs.get("abort_reason")]
+                if _abort_reasons:
+                    _first_abort = _abort_reasons[0]
+                    _abort_prefix = f"Abandon: {_first_abort} ({len(_abort_reasons)} requête(s)). "
+                else:
+                    _abort_prefix = ""
+
                 shortfall_msg = None
                 if companies_discovered >= 2000:
-                    shortfall_msg = (
+                    shortfall_msg = _abort_prefix + (
                         "Limite de sécurité atteinte (2000 entités). "
                         "Le plafond de 2000 entités a été atteint. "
                         "Lancez une nouvelle recherche avec la même requête pour découvrir d'autres entités."
@@ -5072,13 +5194,13 @@ async def run(batch_id: str) -> None:
                 elif batch_size > 0 and companies_discovered < batch_size:
                     already_known = len(prev_rows) if _dedup_dept_list and prev_rows else 0
                     if already_known > 0:
-                        shortfall_msg = (
+                        shortfall_msg = _abort_prefix + (
                             f"{qualified} nouvelles entités. "
                             f"{already_known} entreprises de cette zone avaient déjà été découvertes "
                             f"et ont été exclues."
                         )
                     else:
-                        shortfall_msg = (
+                        shortfall_msg = _abort_prefix + (
                             f"Google Maps a épuisé les résultats pour cette recherche. "
                             f"{qualified} entités trouvées."
                         )
@@ -5099,6 +5221,10 @@ async def run(batch_id: str) -> None:
                         target=batch_size,
                         shortfall=batch_size - companies_discovered,
                     )
+                elif _abort_prefix:
+                    # Abort happened but no other shortfall condition applies —
+                    # e.g. time cap hit on primary with 0 results collected.
+                    shortfall_msg = _abort_prefix.strip()
 
                 # ── Mark completed or interrupted ─────────────────────
                 # Check if a cancel was requested while we were finishing up —
