@@ -163,7 +163,7 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
     """, (batch_id, batch_id))
@@ -190,7 +190,7 @@ async def export_master_csv(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
     """)
@@ -231,7 +231,7 @@ async def export_master_xlsx(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
     """)
@@ -306,8 +306,8 @@ async def export_contacts_filtered_csv(
     # Pending rows are flagged via the `Statut lien` column and sorted to the bottom
     # so Cindy sees confirmed contacts first.
     where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))")
-    # Exclude NAF-mismatch rows — except chain and gemini_judge matches which are included (high-confidence)
-    where_parts.append("(co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))")
+    # Exclude NAF-mismatch rows — except chain, gemini_judge, and siret_address_naf matches which are included (high-confidence)
+    where_parts.append("(co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))")
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
@@ -481,7 +481,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
             WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
             ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                      co.denomination
         """, (user.workspace_id, body.sirens))
@@ -493,7 +493,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
               AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge'))
+              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
             ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                      co.denomination
         """, (body.sirens, body.sirens))

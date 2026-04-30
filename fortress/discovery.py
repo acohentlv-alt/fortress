@@ -3577,6 +3577,31 @@ async def run(batch_id: str) -> None:
                                     log.info("discovery.chain_section_match_auto_confirm",
                                              maps_name=maps_name, siren=target_siren,
                                              matched_naf=matched_naf, picked_nafs=picked_nafs)
+                                # Track 2 SIRET-address-NAF override: Step 2.7's SQL
+                                # already enforces exact CP + establishment-level NAF
+                                # in picker (`naf_etablissement = ANY(picked_nafs)`,
+                                # see lines 2102-2114) + active SIREN/SIRET +
+                                # 1-row-or-token-dominant disambiguation. Signal
+                                # agreement is structurally inapplicable: head SIREN
+                                # signals (phone, enseigne, denomination) belong to a
+                                # different entity by design (commune mairie ≠
+                                # operated campground), so agree_count is routinely
+                                # 0. Section-letter alignment is also inapplicable:
+                                # head NAF 84.11Z (section O) will never match
+                                # establishment NAF 55.30Z (section I) — but the
+                                # establishment NAF DOES strict-prefix-match the
+                                # picker. Trust the SQL constraints.
+                                if (
+                                    not auto_confirm
+                                    and method == "siret_address_naf"
+                                    and naf_status == "mismatch"
+                                ):
+                                    auto_confirm = True
+                                    log.info("discovery.siret_address_naf_auto_confirm",
+                                             maps_name=maps_name, siren=target_siren,
+                                             matched_naf=matched_naf, picked_nafs=picked_nafs,
+                                             agree_count=agree_count,
+                                             signals=link_signals)
                             else:
                                 auto_confirm = False
 
