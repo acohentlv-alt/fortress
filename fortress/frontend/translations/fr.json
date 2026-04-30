@@ -562,7 +562,11 @@
     "queriesStopExhausted": "Toutes les villes/codes essayés",
     "queriesStopMaxPerPrimary": "Limite atteinte ({{n}} requêtes)",
     "queriesStopGeneric": "Élargissement arrêté",
-    "queriesStopTimeCap": "🛑 Arrêté: temps écoulé ({{n}} min)"
+    "queriesStopTimeCap": "🛑 Arrêté: temps écoulé ({{n}} min)",
+    "queriesStateDone": "Recherche terminée",
+    "queriesStateRunning": "Recherche en cours",
+    "queriesStateQueued": "En file d'attente",
+    "queriesRunningLive": "{{count}} entités trouvées (en direct)"
   },
   "job": {
     "title": "Détail du batch",
@@ -741,7 +745,15 @@
     "timeCapLabel": "Temps maximum par requête",
     "timeCapNone": "Illimité",
     "timeCapTotalLabel": "Temps maximum total (batch)",
-    "durationEstimator": "{{n}} requêtes · max ~{{min}} min"
+    "durationEstimator": "{{n}} requêtes · max ~{{min}} min",
+    "queueModalTitle": "Un batch est déjà en cours",
+    "queueModalBody": "Un autre batch tourne actuellement dans votre espace de travail. Voulez-vous mettre celui-ci en file d'attente ? Il démarrera automatiquement à la fin du batch en cours.",
+    "queueModalConfirm": "Mettre en file d'attente",
+    "queueCancelled": "Lancement annulé.",
+    "queuedSuccess": "✅ Batch mis en file d'attente (position {{position}})",
+    "queuedSuccessDetail": "ID : {{id}} — démarrage automatique à la fin du batch précédent.",
+    "draftRestored": "📝 Brouillon restauré",
+    "draftClear": "Tout effacer"
   },
   "upload": {
     "title": "Import / Export",

@@ -30,50 +30,46 @@ export function stopReasonText(reason, cumulative, capMin) {
 }
 
 /**
- * Render the queries panel HTML — 3-level fold/unfold tree.
- * @param {Array} queries - array of query stat objects from /api/jobs/:id/queries
- * @param {{ collapsible?: boolean, capMin?: number|null }} opts
- * @returns {string} HTML string
+ * Render the queries panel HTML — 3-level fold/unfold tree with optional
+ * running + queued rows for live monitor.
+ * @param {Array} queries - completed query stats from /api/jobs/:id/queries.queries
+ * @param {{ collapsible?: boolean, capMin?: number|null,
+ *           running?: {query: string, live_count: number}|null,
+ *           queued?: string[] }} opts
  */
-export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: null }) {
-    if (!queries || queries.length === 0) {
+export function renderQueriesPanel(queries, opts = {}) {
+    const collapsible = opts.collapsible !== false;
+    const capMin = opts.capMin != null ? opts.capMin : null;
+    const running = opts.running || null;
+    const queued = Array.isArray(opts.queued) ? opts.queued : [];
+
+    if ((!queries || queries.length === 0) && !running && queued.length === 0) {
         return `<span style="color:var(--text-muted)">${t('monitor.queriesEmpty')}</span>`;
     }
 
-    const collapsible = opts.collapsible !== false;
-    const capMin = opts.capMin != null ? opts.capMin : null;
-
-    const primaries = queries.filter(q => !q.is_expansion);
+    const primaries = (queries || []).filter(q => !q.is_expansion);
     const lines = [];
 
+    // Done rows
     for (const p of primaries) {
-        const expansions = queries.filter(q => q.is_expansion && q.primary_query === p.query);
-
-        // Separate expansions into city and postal sub-buckets
+        const expansions = (queries || []).filter(q => q.is_expansion && q.primary_query === p.query);
         const cityExp = expansions.filter(e => e.widening_type === 'city');
         const postalExp = expansions.filter(e => e.widening_type === 'postal_code');
-
         const primaryEntityCount = p.new_companies || 0;
         const expansionCount = expansions.length;
         const durationStr = p.duration_sec != null ? `${p.duration_sec}s` : '';
-
         const primaryId = `qp-primary-${Math.random().toString(36).slice(2, 8)}`;
 
-        if (collapsible) {
-            // Level 1: primary row. If no expansions ran, render flat (no chevron, no click).
-            const summaryParts = [
-                `${primaryEntityCount} ${t('monitor.queriesNewEntities')}`,
-            ];
-            if (expansionCount > 0) {
-                summaryParts.push(`${expansionCount} ${t('monitor.queriesElargissements') || 'élargissements'}`);
-            }
-            if (durationStr) summaryParts.push(`${durationStr}`);
+        const summaryParts = [`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`];
+        if (expansionCount > 0) summaryParts.push(`${expansionCount} ${t('monitor.queriesElargissements') || 'élargissements'}`);
+        if (durationStr) summaryParts.push(durationStr);
 
+        if (collapsible) {
             if (expansionCount === 0) {
-                // Flat row — nothing to expand
                 lines.push(`
-                    <div style="margin-bottom:var(--space-sm)">
+                    <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
                         <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)">
+                            <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
                             <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
                             <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
                         </div>
@@ -81,7 +77,7 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
                 `);
             } else {
                 lines.push(`
-                    <div style="margin-bottom:var(--space-sm)">
+                    <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
                         <div
                             style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
                             onclick="(function(el){
@@ -94,6 +90,7 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
                             })(this)"
                         >
                             <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
+                            <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
                             <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
                             <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
                         </div>
@@ -104,19 +101,10 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
                 `);
             }
         } else {
-            // Live monitor: fully expanded, no chevrons
-            const summaryParts = [
-                `${primaryEntityCount} ${t('monitor.queriesNewEntities')}`,
-            ];
-            if (expansionCount > 0) {
-                summaryParts.push(`${expansionCount} élargissements`);
-            }
-            if (durationStr) summaryParts.push(`${durationStr}`);
-
             lines.push(`
-                <div style="margin-bottom:var(--space-sm)">
+                <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
                     <div style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0">
-                        <span><strong>${escapeHtml(p.query)}</strong></span>
+                        <span><span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span> <strong>${escapeHtml(p.query)}</strong></span>
                         <span style="color:var(--text-muted); font-size:var(--font-sm)">→ ${summaryParts.join(' · ')}</span>
                     </div>
                     <div style="padding-left:var(--space-lg)">
@@ -125,6 +113,33 @@ export function renderQueriesPanel(queries, opts = { collapsible: true, capMin: 
                 </div>
             `);
         }
+    }
+
+    // Running row (single, if present and not already rendered as done)
+    if (running && running.query) {
+        lines.push(`
+            <div class="qp-row qp-row--running" style="margin-bottom:var(--space-sm)">
+                <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-secondary); border:1px solid var(--warning, #f0ad4e)">
+                    <span class="qp-state-icon qp-state-icon--running" aria-label="${t('monitor.queriesStateRunning')}">🔴</span>
+                    <strong style="font-size:var(--font-sm)">${escapeHtml(running.query)}</strong>
+                    <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">${t('monitor.queriesRunningLive', { count: running.live_count != null ? running.live_count : 0 })}</span>
+                </div>
+            </div>
+        `);
+    }
+
+    // Queued rows
+    for (const q of queued) {
+        if (!q) continue;
+        lines.push(`
+            <div class="qp-row qp-row--queued" style="margin-bottom:var(--space-xs)">
+                <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:transparent; border:1px dashed var(--border-subtle); opacity:0.7">
+                    <span class="qp-state-icon" aria-label="${t('monitor.queriesStateQueued')}">⏸</span>
+                    <span style="font-size:var(--font-sm); color:var(--text-secondary)">${escapeHtml(q)}</span>
+                    <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">${t('monitor.queriesStateQueued')}</span>
+                </div>
+            </div>
+        `);
     }
 
     return `<div style="font-size:var(--font-sm)">${lines.join('')}</div>`;

@@ -34,12 +34,12 @@ class BatchRunRequest(BaseModel):
         None,
         description="Optional list of NAF filters (1-10). Each can be a section letter (A-U), 2-digit division (e.g. 55), or 5-char code (e.g. 55.30Z). All codes must belong to the same sector group (see SECTOR_EXPANSIONS). Section letters must be picked alone.",
     )
-    # Legacy alias — single code posted by older clients. Normalized into naf_codes at handler entry.
     naf_code: str | None = Field(None, description="DEPRECATED — use naf_codes. Accepted for backward compatibility.")
     strategy: str = Field("sirene", description="Discovery strategy: 'sirene' (DB-first) or 'maps' (Maps-first)")
     search_queries: list[str] | None = Field(None, description="Maps-first: list of search terms")
     time_cap_per_query_min: int | None = Field(None, ge=1, le=240, description="Per-query time budget in minutes; null = no cap. JS sends null when 'Illimité' pill is selected.")
     time_cap_total_min: int | None = Field(None, ge=1, le=600, description="Total batch time budget in minutes (measured from batch_data.created_at, so resumed batches don't get a fresh budget); null = no cap. Hard block when fired — drains in-flight entities (~30s) then ends batch with abort_reason=total_time_cap_reached. Max 600min defensible because 10 queries × 60min hits 600 naturally.")
+    queue: bool = Field(False, description="If true and another batch is already running in this workspace, enqueue instead of returning 409. Worker will spawn this batch when the running one finishes.")
 
 
 
@@ -196,11 +196,34 @@ async def run_batch(body: BatchRunRequest, request: Request):
                        LIMIT 1""",
                 )
             blocking = await guard_cur.fetchone()
-            if blocking:
+            if blocking and not body.queue:
                 return JSONResponse(
                     status_code=409,
-                    content={"error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine."}
+                    content={
+                        "error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine.",
+                        "can_queue": True,
+                    }
                 )
+
+            # Queue depth cap (if user opted in to queue)
+            if blocking and body.queue:
+                if workspace_id is not None:
+                    qd_cur = await conn.execute(
+                        "SELECT COUNT(*) FROM batch_data WHERE workspace_id = %s AND status = 'queued'",
+                        (workspace_id,),
+                    )
+                else:
+                    qd_cur = await conn.execute(
+                        "SELECT COUNT(*) FROM batch_data WHERE workspace_id IS NULL AND status = 'queued'",
+                    )
+                qd_row = await qd_cur.fetchone()
+                queued_depth = (qd_row[0] if qd_row else 0)
+                MAX_QUEUE_DEPTH = 5
+                if queued_depth >= MAX_QUEUE_DEPTH:
+                    return JSONResponse(
+                        status_code=409,
+                        content={"error": f"File d'attente pleine (maximum {MAX_QUEUE_DEPTH}). Annulez un batch en attente avant d'en ajouter un autre."}
+                    )
 
             await conn.execute(
                 """INSERT INTO batch_data
@@ -209,6 +232,22 @@ async def run_batch(body: BatchRunRequest, request: Request):
                 (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min, body.time_cap_total_min),
             )
             await conn.commit()
+
+            # Compute queue position (only relevant if blocking exists)
+            queue_position = None
+            if blocking and body.queue:
+                if workspace_id is not None:
+                    pos_cur = await conn.execute(
+                        "SELECT COUNT(*) FROM batch_data WHERE workspace_id = %s AND status = 'queued' AND created_at < (SELECT created_at FROM batch_data WHERE batch_id = %s)",
+                        (workspace_id, batch_id),
+                    )
+                else:
+                    pos_cur = await conn.execute(
+                        "SELECT COUNT(*) FROM batch_data WHERE workspace_id IS NULL AND status = 'queued' AND created_at < (SELECT created_at FROM batch_data WHERE batch_id = %s)",
+                        (batch_id,),
+                    )
+                pos_row = await pos_cur.fetchone()
+                queue_position = (pos_row[0] if pos_row else 0) + 1
     except Exception as exc:
         return JSONResponse(
             status_code=500,
@@ -218,38 +257,53 @@ async def run_batch(body: BatchRunRequest, request: Request):
             },
         )
 
-    # Spawn the runner as a detached subprocess with stderr logging
+    # ── If queued (blocked at insert time): do NOT spawn runner. ──
+    # The currently-running batch's discovery.py finally-block will pick this up
+    # (or the periodic sweeper in api/main.py if the running batch's process died).
+    if blocking and body.queue:
+        await log_activity(
+            user_id=getattr(request.state.user, 'id', None) if getattr(request.state, 'user', None) else None,
+            username=getattr(request.state.user, 'username', 'system') if getattr(request.state, 'user', None) else 'system',
+            action='batch_queued',
+            target_type='batch',
+            target_id=batch_id,
+            details=f"En file d'attente (position {queue_position}) — {sector} {dept}",
+        )
+        return {
+            "batch_id": batch_id,
+            "batch_name": batch_name,
+            "batch_number": batch_number,
+            "batch_offset": batch_offset,
+            "max_entities": 2000,
+            "mode": body.mode,
+            "queued": True,
+            "queue_position": queue_position,
+            "status": "queued",
+            "message": f"Batch {batch_id} mis en file d'attente (position {queue_position}).",
+        }
+
+    # ── Otherwise: spawn the runner subprocess (existing path) ────
     fortress_root = Path(__file__).resolve().parent.parent.parent  # fortress/
     log_dir = fortress_root / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{batch_id}.log"
 
     runner_module = "fortress.discovery"
-
-    runner_cmd = [
-        sys.executable, "-m", runner_module, batch_id,
-    ]
-
-    # Sandbox workaround: if launcher exists, use it to bypass .env stat()
+    runner_cmd = [sys.executable, "-m", runner_module, batch_id]
     launcher = Path("/tmp/fortress_launcher.py")
     if launcher.exists():
-        runner_cmd = [
-            sys.executable, str(launcher), "runner", batch_id,
-        ]
-
+        runner_cmd = [sys.executable, str(launcher), "runner", batch_id]
 
     try:
-        # Create log file (for future use), but let output flow to Render console
         log_fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-        os.close(log_fd)  # Just create the file for now
-
+        os.close(log_fd)
         process = subprocess.Popen(
             runner_cmd,
-            cwd=str(fortress_root.parent),  # Must be PARENT of fortress/ so `-m fortress.runner` resolves
-            stdout=None,      # Inherit parent stdout → visible in Render Logs (structlog)
-            stderr=None,      # Inherit parent stderr → visible in Render Logs (warnings/errors)
-            close_fds=False,  # Let child inherit the fd
-            start_new_session=True,  # Detach from parent process
+            cwd=str(fortress_root.parent),
+            stdout=None,
+            stderr=None,
+            close_fds=False,
+            start_new_session=True,
         )
     except Exception as exc:
         return JSONResponse(

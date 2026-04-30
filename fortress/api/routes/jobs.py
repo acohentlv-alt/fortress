@@ -1057,7 +1057,8 @@ async def get_job_quality(batch_id: str, request: Request):
 
 @router.get("/{batch_id}/queries")
 async def get_job_queries(batch_id: str, request: Request):
-    """Return the query execution history for a batch."""
+    """Return query execution history split into three categories:
+    done (queries_json), running (current_query + live count), queued (planned but not started)."""
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
         ws_filter = "AND sj.workspace_id = %s"
@@ -1067,7 +1068,9 @@ async def get_job_queries(batch_id: str, request: Request):
         ws_params = ()
 
     job = await fetch_one(
-        f"SELECT queries_json, current_query, time_cap_per_query_min, time_cap_total_min FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        f"""SELECT queries_json, current_query, time_cap_per_query_min, time_cap_total_min,
+                   search_queries, status
+            FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}""",
         (batch_id,) + ws_params,
     )
     if not job:
@@ -1078,9 +1081,59 @@ async def get_job_queries(batch_id: str, request: Request):
     if isinstance(queries, str):
         queries = _json.loads(queries)
 
+    # Planned list (jsonb array of strings written by batch.py:204-209 during INSERT)
+    planned = job.get("search_queries") or []
+    if isinstance(planned, str):
+        try:
+            planned = _json.loads(planned)
+        except Exception:
+            planned = []
+
+    # Done queries: distinct primary names from queries_json (is_expansion=False rows)
+    done_set = {
+        q.get("query") for q in queries
+        if isinstance(q, dict) and not q.get("is_expansion") and q.get("query")
+    }
+
+    current_query = job.get("current_query")
+    status = job.get("status")
+    is_running = status in ("in_progress", "queued", "triage")
+
+    # Live count for running query — only when batch is active and has a current_query
+    running_payload = None
+    if is_running and current_query and current_query not in done_set:
+        # Count distinct qualified entities tagged with this query in batch_log.
+        # Mirrors the post-query "new_companies" definition (qualified entities
+        # whose audit row carries this search_query value).
+        cnt_row = await fetch_one(
+            """SELECT COUNT(DISTINCT siren) AS n
+               FROM batch_log
+               WHERE batch_id = %s AND search_query = %s
+                 AND siren NOT LIKE 'FILTERED_%%'
+                 AND siren NOT LIKE 'DEDUP_%%'""",
+            (batch_id, current_query),
+        )
+        running_payload = {
+            "query": current_query,
+            "live_count": int((cnt_row or {}).get("n") or 0),
+        }
+
+    # Queued: planned minus done minus running (preserve original order)
+    queued: list[str] = []
+    for q in planned:
+        if not isinstance(q, str) or not q.strip():
+            continue
+        if q in done_set:
+            continue
+        if running_payload and q == running_payload["query"]:
+            continue
+        queued.append(q)
+
     return {
         "queries": queries,
-        "current_query": job.get("current_query"),
+        "current_query": current_query,
         "time_cap_min": job.get("time_cap_per_query_min"),
         "time_cap_total_min": job.get("time_cap_total_min"),
+        "running": running_payload,
+        "queued": queued,
     }

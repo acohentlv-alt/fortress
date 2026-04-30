@@ -556,7 +556,11 @@
     "queriesStopExhausted": "All cities/codes tried",
     "queriesStopMaxPerPrimary": "Limit reached ({{n}} queries)",
     "queriesStopGeneric": "Widening stopped",
-    "queriesStopTimeCap": "🛑 Stopped: time exceeded ({{n}} min)"
+    "queriesStopTimeCap": "🛑 Stopped: time exceeded ({{n}} min)",
+    "queriesStateDone": "Search complete",
+    "queriesStateRunning": "Search running",
+    "queriesStateQueued": "Queued",
+    "queriesRunningLive": "{{count}} entities found (live)"
   },
   "job": {
     "title": "Batch details",
@@ -712,7 +716,15 @@
     "timeCapLabel": "Max time per query",
     "timeCapNone": "Unlimited",
     "timeCapTotalLabel": "Max total time (batch)",
-    "durationEstimator": "{{n}} queries · max ~{{min}} min"
+    "durationEstimator": "{{n}} queries · max ~{{min}} min",
+    "queueModalTitle": "A batch is already running",
+    "queueModalBody": "Another batch is running in your workspace. Queue this one? It will start automatically when the current batch finishes.",
+    "queueModalConfirm": "Queue this batch",
+    "queueCancelled": "Launch cancelled.",
+    "queuedSuccess": "✅ Batch queued (position {{position}})",
+    "queuedSuccessDetail": "ID: {{id}} — will start automatically when the previous batch finishes.",
+    "draftRestored": "📝 Draft restored",
+    "draftClear": "Clear everything"
   },
   "upload": {
     "title": "Import / Export",

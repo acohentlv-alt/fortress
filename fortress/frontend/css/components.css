@@ -3911,3 +3911,18 @@
     opacity: 0.6;
     font-weight: 600;
 }
+
+/* ── Queries panel — three-state row styling (E1 — E1+E2+E3 bundle) ─────
+   .qp-row--done    : completed query (default elevated background)
+   .qp-row--running : active query (warning border, pulsing icon)
+   .qp-row--queued  : waiting (dashed border, reduced opacity)        */
+.qp-row--running .qp-state-icon--running {
+    animation: qp-pulse 1.4s ease-in-out infinite;
+}
+@keyframes qp-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+.qp-row--queued {
+    opacity: 0.72;
+}

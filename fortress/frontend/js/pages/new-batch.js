@@ -11,7 +11,7 @@
  * inline warnings, live summary, and "Comment ça marche" expandable card.
  */
 
-import { escapeHtml, showToast } from '../components.js';
+import { escapeHtml, showToast, showConfirmModal } from '../components.js';
 import { runBatch, extractApiError, fetchTopQueries } from '../api.js';
 import { t, getLang } from '../i18n.js';
 
@@ -157,9 +157,41 @@ export async function renderNewBatch(container) {
         </div>
     `;
 
+    // ── E3: form draft helpers (sessionStorage) ─────────────────────
+    const DRAFT_KEY = 'fortress_new_batch_draft';
+    let _draftSaveTimer = null;
+    // Refs that get filled after _pickedCodes / _selectedTimeCap are created below
+    const _pickedCodesRef = { value: [] };
+    const _timeCapRef = { value: 60 };
+
+    function saveDraft() {
+        try {
+            const queries = [
+                document.querySelector('.gemini-query-input.primary'),
+                ...document.querySelectorAll('#additional-queries .gemini-query-input'),
+            ].filter(Boolean).map(i => i.value).filter(v => v && v.trim().length > 0);
+            const draft = {
+                v: 1,
+                ts: Date.now(),
+                queries,
+                naf_codes: [..._pickedCodesRef.value],
+                time_cap_min: _timeCapRef.value,
+            };
+            sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        } catch (_e) { /* private mode or quota */ }
+    }
+    function scheduleSaveDraft() {
+        if (_draftSaveTimer) clearTimeout(_draftSaveTimer);
+        _draftSaveTimer = setTimeout(saveDraft, 500);
+    }
+    function clearDraft() {
+        try { sessionStorage.removeItem(DRAFT_KEY); } catch (_e) {}
+    }
+
     // ── Time cap state ────────────────────────────────────────────────
     let _selectedTimeCap = 60;
     let _selectedTotalCap = 0;
+    _timeCapRef.value = _selectedTimeCap;  // E3 init
 
     document.querySelectorAll('#time-cap-pills .cap-pill').forEach(p => {
         p.addEventListener('click', () => {
@@ -167,6 +199,8 @@ export async function renderNewBatch(container) {
             p.classList.add('active');
             _selectedTimeCap = parseInt(p.dataset.capMin, 10);
             _updateDurationEstimator();
+            _timeCapRef.value = _selectedTimeCap;
+            scheduleSaveDraft();
         });
     });
 
@@ -176,6 +210,7 @@ export async function renderNewBatch(container) {
             p.classList.add('active');
             _selectedTotalCap = parseInt(p.dataset.capMin, 10);
             _updateDurationEstimator();
+            scheduleSaveDraft();
         });
     });
 
@@ -405,6 +440,8 @@ export async function renderNewBatch(container) {
         }
 
         _pickedCodes.push(rawCode);
+        _pickedCodesRef.value = [..._pickedCodes];
+        scheduleSaveDraft();
         _pickedLabels[rawCode] = label || _nafLabelByCode[rawCode] || rawCode;
         renderChips();
         _updatePickerVisualHint();
@@ -415,6 +452,8 @@ export async function renderNewBatch(container) {
         const idx = _pickedCodes.indexOf(code);
         if (idx >= 0) {
             _pickedCodes.splice(idx, 1);
+            _pickedCodesRef.value = [..._pickedCodes];
+            scheduleSaveDraft();
             delete _pickedLabels[code];
             renderChips();
         }
@@ -584,10 +623,12 @@ export async function renderNewBatch(container) {
             if (warning && warning.classList.contains('gemini-inline-warning')) warning.remove();
             row.remove();
             updateSummary();
+            scheduleSaveDraft();
         });
         row.querySelector('.gemini-query-input').addEventListener('input', () => {
             validateSingleRow(row);
             updateSummary();
+            scheduleSaveDraft();
         });
         return row;
     }
@@ -597,6 +638,7 @@ export async function renderNewBatch(container) {
         document.getElementById('additional-queries').appendChild(newRow);
         newRow.querySelector('.gemini-query-input').focus();
         updateSummary();
+        scheduleSaveDraft();
     });
 
     // ── Inline warnings (per row) ─────────────────────────────────────
@@ -675,6 +717,7 @@ export async function renderNewBatch(container) {
     document.querySelector('.gemini-query-input.primary').addEventListener('input', () => {
         validateSingleRow(document.querySelector('.gemini-query-row.primary'));
         updateSummary();
+        scheduleSaveDraft();
     });
 
     // ── "Comment ça marche" localStorage (private-mode safe) ─────────
@@ -795,10 +838,51 @@ export async function renderNewBatch(container) {
                     </div>
                 `;
 
+                clearDraft();
                 setTimeout(() => {
                     window.location.hash = `#/monitor/${encodeURIComponent(result.batch_id)}`;
                 }, 3000);
             } else {
+                // Queue offer: server told us a batch is already running and we can queue
+                if (result && result._status === 409 && result.can_queue === true) {
+                    const ok = await showConfirmModal({
+                        title: t('newBatch.queueModalTitle'),
+                        body: t('newBatch.queueModalBody'),
+                        confirmLabel: t('newBatch.queueModalConfirm'),
+                        danger: false,
+                    });
+                    if (ok) {
+                        const queuedResult = await runBatch({ ...payload, queue: true });
+                        if (queuedResult && queuedResult._ok && queuedResult.queued) {
+                            document.getElementById('gemini-summary-line').innerHTML = `
+                                <div style="color:var(--success); font-weight:700; margin-bottom:var(--space-sm)">
+                                    ${t('newBatch.queuedSuccess', { position: queuedResult.queue_position || '?' })}
+                                </div>
+                                <div style="font-size:var(--font-sm); color:var(--text-secondary)">
+                                    ${t('newBatch.queuedSuccessDetail', { id: escapeHtml(queuedResult.batch_id || '—') })}
+                                </div>
+                            `;
+                            try { sessionStorage.removeItem('fortress_new_batch_draft'); } catch {}
+                            setTimeout(() => { window.location.hash = `#/monitor/${encodeURIComponent(queuedResult.batch_id)}`; }, 3000);
+                            return;
+                        } else {
+                            const qErr = extractApiError(queuedResult);
+                            document.getElementById('gemini-summary-line').innerHTML = `
+                                <div style="color:var(--danger); font-weight:700">${t('newBatch.errorLaunch', { message: escapeHtml(qErr) })}</div>
+                            `;
+                            btn.disabled = false;
+                            btn.innerHTML = t('newBatch.launchHero');
+                            return;
+                        }
+                    } else {
+                        document.getElementById('gemini-summary-line').innerHTML = `
+                            <div style="color:var(--text-muted); font-size:var(--font-sm)">${t('newBatch.queueCancelled')}</div>
+                        `;
+                        btn.disabled = false;
+                        btn.innerHTML = t('newBatch.launchHero');
+                        return;
+                    }
+                }
                 const errorMsg = extractApiError(result);
                 document.getElementById('gemini-summary-line').innerHTML = `
                     <div style="color:var(--danger); font-weight:700">${t('newBatch.errorLaunch', { message: escapeHtml(errorMsg) })}</div>
@@ -815,17 +899,17 @@ export async function renderNewBatch(container) {
         }
     });
 
-    // ── Pre-fill from expansion suggestion (sessionStorage) ──────────
+    // ── Pre-fill priority: rerun (sessionStorage) > draft (sessionStorage) ──
     const prefillRaw = sessionStorage.getItem('fortress_expansion_prefill');
     if (prefillRaw) {
         sessionStorage.removeItem('fortress_expansion_prefill');
+        // Rerun is an explicit user action — clear any stale draft
+        clearDraft();
         try {
             const prefill = JSON.parse(prefillRaw);
             if (prefill.queries && Array.isArray(prefill.queries) && prefill.queries.length > 0) {
                 const primaryInput = document.querySelector('.gemini-query-input.primary');
-                if (primaryInput && prefill.queries[0]) {
-                    primaryInput.value = prefill.queries[0];
-                }
+                if (primaryInput && prefill.queries[0]) primaryInput.value = prefill.queries[0];
                 for (let i = 1; i < prefill.queries.length; i++) {
                     const newRow = createSubordinateQueryRow(prefill.queries[i]);
                     document.getElementById('additional-queries').appendChild(newRow);
@@ -833,5 +917,69 @@ export async function renderNewBatch(container) {
             }
             updateSummary();
         } catch {}
+    } else {
+        // E3: try to restore draft
+        try {
+            const draftRaw = sessionStorage.getItem(DRAFT_KEY);
+            if (draftRaw) {
+                const draft = JSON.parse(draftRaw);
+                if (draft && draft.v === 1) {
+                    if (Array.isArray(draft.queries) && draft.queries.length > 0) {
+                        const primaryInput = document.querySelector('.gemini-query-input.primary');
+                        if (primaryInput && draft.queries[0]) primaryInput.value = draft.queries[0];
+                        for (let i = 1; i < draft.queries.length; i++) {
+                            const newRow = createSubordinateQueryRow(draft.queries[i]);
+                            document.getElementById('additional-queries').appendChild(newRow);
+                        }
+                    }
+                    if (Array.isArray(draft.naf_codes)) {
+                        for (const code of draft.naf_codes) {
+                            const lbl = _nafLabelByCode[code];
+                            if (lbl) tryAddCode(code, lbl);
+                        }
+                    }
+                    if (typeof draft.time_cap_min === 'number') {
+                        const pill = document.querySelector(`#time-cap-pills .cap-pill[data-cap-min="${draft.time_cap_min}"]`);
+                        if (pill) {
+                            document.querySelectorAll('#time-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                            pill.classList.add('active');
+                            _selectedTimeCap = draft.time_cap_min;
+                            _timeCapRef.value = _selectedTimeCap;
+                        }
+                    }
+                    // Soft banner
+                    const sumLine = document.getElementById('gemini-summary-line');
+                    if (sumLine) {
+                        sumLine.innerHTML = `
+                            <div style="color:var(--text-muted); font-size:var(--font-sm)">
+                                ${t('newBatch.draftRestored')}
+                                <button type="button" id="btn-clear-draft" style="margin-left:8px; background:none; border:none; color:var(--accent); cursor:pointer; text-decoration:underline; font-size:inherit">${t('newBatch.draftClear')}</button>
+                            </div>
+                        `;
+                        const clearBtn = document.getElementById('btn-clear-draft');
+                        if (clearBtn) clearBtn.addEventListener('click', () => {
+                            clearDraft();
+                            // Reset all inputs
+                            const primaryInput = document.querySelector('.gemini-query-input.primary');
+                            if (primaryInput) primaryInput.value = '';
+                            document.getElementById('additional-queries').innerHTML = '';
+                            // Clear NAF chips
+                            while (_pickedCodes.length > 0) _pickedCodes.pop();
+                            _pickedCodesRef.value = [];
+                            renderChips();
+                            // Reset time cap to default 60
+                            document.querySelectorAll('#time-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                            const def = document.querySelector('#time-cap-pills .cap-pill[data-cap-min="60"]');
+                            if (def) def.classList.add('active');
+                            _selectedTimeCap = 60;
+                            _timeCapRef.value = 60;
+                            sumLine.innerHTML = t('newBatch.summaryEmptyState');
+                            updateSummary();
+                        });
+                    }
+                    updateSummary();
+                }
+            }
+        } catch (_e) { /* private mode or malformed */ }
     }
 }

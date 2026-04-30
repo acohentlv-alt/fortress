@@ -558,7 +558,11 @@ export function renderProgressRing(pct, size = 120, strokeWidth = 6, label = 'Pr
  * @param {string} opts.body      - HTML body content
  * @param {string} opts.confirmLabel - Confirm button text (default: 'Confirmer')
  * @param {boolean} opts.danger   - If true, confirm button is red
- * @param {Function} opts.onConfirm - Async callback when confirmed
+ * @param {Function} [opts.onConfirm] - Optional async callback when confirmed.
+ *   - If PROVIDED: legacy callback path. Returns undefined.
+ *   - If OMITTED: function returns a Promise<boolean> that resolves
+ *                 `true` on confirm, `false` on cancel/Escape/backdrop.
+ *                 Cancel button always renders as "Annuler" (French; OK for v1).
  */
 export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, checkboxLabel = null, onConfirm }) {
     // Remove any existing modal
@@ -586,27 +590,37 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
         </div>
     `;
     document.body.appendChild(overlay);
-    // Fade in
     requestAnimationFrame(() => overlay.classList.add('visible'));
 
-    const close = () => {
+    // Promise-mode: capture resolver, return Promise instead of undefined.
+    let _promiseResolve = null;
+    const _isPromiseMode = (typeof onConfirm !== 'function');
+    const _promise = _isPromiseMode
+        ? new Promise(resolve => { _promiseResolve = resolve; })
+        : null;
+
+    const close = (result) => {
         overlay.classList.remove('visible');
         setTimeout(() => overlay.remove(), 200);
+        if (_isPromiseMode && _promiseResolve) {
+            _promiseResolve(result === true);
+            _promiseResolve = null;
+        }
     };
 
-    // Backdrop click
+    // Backdrop click → cancel (false in promise mode)
     overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) close();
+        if (e.target === overlay) close(false);
     });
 
-    // Escape key
-    const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    // Escape key → cancel (false in promise mode)
+    const onKey = (e) => { if (e.key === 'Escape') { close(false); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
 
-    // Cancel button
-    document.getElementById('modal-cancel').addEventListener('click', close);
+    // Cancel button → false
+    document.getElementById('modal-cancel').addEventListener('click', () => close(false));
 
-    // Confirm button
+    // Confirm button: callback path (legacy) OR resolve(true) (promise path)
     document.getElementById('modal-confirm').addEventListener('click', async () => {
         const btn = document.getElementById('modal-confirm');
         btn.disabled = true;
@@ -615,11 +629,15 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
             ? (document.getElementById('modal-checkbox')?.checked ?? false)
             : false;
         try {
-            await onConfirm(checkboxChecked);
+            if (typeof onConfirm === 'function') {
+                await onConfirm(checkboxChecked);
+            }
         } catch (err) {
             console.error('Modal confirm error:', err);
         }
-        close();
+        close(true);
     });
+
+    return _promise;  // undefined in callback mode (legacy), Promise<boolean> in promise mode
 }
 

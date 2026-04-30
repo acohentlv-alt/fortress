@@ -302,8 +302,15 @@ async function renderJobMonitor(container, batchId) {
             <div style="display:flex; gap:var(--space-2xl); justify-content:center" id="mon-gauges">—</div>
         </div>
 
-        <!-- Batch Summary + Queries Panel removed (Apr 28) — no useful data
-             during a running batch; available on the job detail page (#/job/:id). -->
+        <!-- Queries Panel (Lever E1 — Apr 30): live done/running/queued breakdown -->
+        <div class="card" style="margin-bottom:var(--space-xl)">
+            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                ${t('monitor.queriesTitle') || 'Recherches effectuées'}
+            </h3>
+            <div id="mon-queries-list">
+                <span style="color:var(--text-muted); font-style:italic">${t('monitor.queriesLoading') || 'Chargement…'}</span>
+            </div>
+        </div>
 
         <!-- Completion CTA (hidden by default) -->
         <div id="mon-completion" style="display:none; margin-bottom:var(--space-xl)"></div>
@@ -710,7 +717,7 @@ async function renderJobMonitor(container, batchId) {
             $.summary.innerHTML = renderSummary(job);
         }
 
-        // ── Queries Panel (TOP 3 widening) ──────────────────────
+        // ── Queries Panel (live: done + running + queued) ──────────
         if ($.queriesList) {
             try {
                 const queriesResp = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/queries`, { credentials: 'include' });
@@ -718,7 +725,12 @@ async function renderJobMonitor(container, batchId) {
                     const queriesData = await queriesResp.json();
                     $.queriesList.innerHTML = renderQueriesPanel(
                         queriesData.queries || [],
-                        { collapsible: false, capMin: queriesData.time_cap_min }
+                        {
+                            collapsible: false,
+                            capMin: queriesData.time_cap_min,
+                            running: queriesData.running || null,
+                            queued: queriesData.queued || [],
+                        }
                     );
                 }
             } catch (_qe) {

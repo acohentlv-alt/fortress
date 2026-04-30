@@ -5406,6 +5406,94 @@ async def run(batch_id: str) -> None:
             except Exception:
                 pass
 
+        # ── Spawn next queued batch in same workspace, if any ──
+        # E2: end-of-run handoff. Runs whether THIS batch finished cleanly OR errored
+        # (we still want to drain the queue even if one batch died).
+        # `_lock_ws_id` is set at L2410 BEFORE the outer try, so always defined here.
+        # Convention: 0 means admin/workspace_id IS NULL.
+        try:
+            await _spawn_next_queued(_lock_ws_id if _lock_ws_id != 0 else None)
+        except Exception as _exc:
+            log.warning("discovery.spawn_next_queued_failed", error=str(_exc))
+
+
+# ---------------------------------------------------------------------------
+# E2: Spawn next queued batch helper
+# ---------------------------------------------------------------------------
+
+async def _spawn_next_queued(workspace_id: int | None) -> None:
+    """Pick the oldest 'queued' batch in this workspace and spawn its runner.
+    Called at end-of-run from the discovery process's outer finally block.
+    Idempotent under race: the spawned process's own pg_advisory_lock(42424242)
+    serializes Maps work; if another spawner picked the same batch, the second
+    process waits on the lock or exits cleanly when discovery.py's startup
+    re-checks status.
+
+    Uses raw psycopg (not the API pool) — same pattern as discovery.py:2406,2457.
+    The per-batch status_conn was closed by the inner finally block; we open
+    a one-shot connection here to read the queue head.
+    """
+    # Open a one-shot psycopg connection — mirrors discovery.py:2406 / 2457.
+    next_batch_id: str | None = None
+    _conn = await psycopg.AsyncConnection.connect(
+        settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
+    )
+    try:
+        if workspace_id is not None:
+            cur = await _conn.execute(
+                """SELECT batch_id FROM batch_data
+                   WHERE workspace_id = %s AND status = 'queued'
+                   ORDER BY created_at ASC LIMIT 1""",
+                (workspace_id,),
+            )
+        else:
+            cur = await _conn.execute(
+                """SELECT batch_id FROM batch_data
+                   WHERE workspace_id IS NULL AND status = 'queued'
+                   ORDER BY created_at ASC LIMIT 1""",
+            )
+        row = await cur.fetchone()
+        if row:
+            next_batch_id = row[0]
+    finally:
+        try:
+            await _conn.close()
+        except Exception:
+            pass
+
+    if not next_batch_id:
+        return
+
+    # Spawn a fresh discovery subprocess (same pattern as batch.py:228-252)
+    import os as _os
+    import subprocess as _subprocess
+    from pathlib import Path as _Path
+
+    fortress_root = _Path(__file__).resolve().parent.parent  # parent of fortress/
+    log_dir = _Path(__file__).resolve().parent / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    runner_cmd = [sys.executable, "-m", "fortress.discovery", next_batch_id]
+    launcher = _Path("/tmp/fortress_launcher.py")
+    if launcher.exists():
+        runner_cmd = [sys.executable, str(launcher), "runner", next_batch_id]
+
+    log_path = log_dir / f"{next_batch_id}.log"
+    try:
+        log_fd = _os.open(str(log_path), _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC)
+        _os.close(log_fd)
+        _subprocess.Popen(
+            runner_cmd,
+            cwd=str(fortress_root),
+            stdout=None,
+            stderr=None,
+            close_fds=False,
+            start_new_session=True,
+        )
+        log.info("discovery.next_queued_spawned", batch_id=next_batch_id, workspace_id=workspace_id)
+    except Exception as exc:
+        log.warning("discovery.spawn_next_queued_subprocess_failed", batch_id=next_batch_id, error=str(exc))
+
 
 # ---------------------------------------------------------------------------
 # Entry point

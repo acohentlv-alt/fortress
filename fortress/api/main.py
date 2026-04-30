@@ -499,10 +499,145 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
             logger.warning("Could not create dynamic tables: %s", e)
+
+        # ── E2: startup catch-up — spawn any orphaned 'queued' batches per workspace ──
+        # On boot (or restart), if the previous discovery process died without
+        # picking up the next queued batch, kick off the oldest queued batch
+        # for each workspace. Only one per workspace at a time.
+        try:
+            from fortress.api.db import get_conn
+            import subprocess, sys as _sys, os as _os
+            from pathlib import Path as _Path
+            async with get_conn() as _conn:
+                _cur = await _conn.execute(
+                    """SELECT DISTINCT ON (workspace_id) batch_id, workspace_id
+                       FROM batch_data
+                       WHERE status = 'queued'
+                       ORDER BY workspace_id, created_at ASC"""
+                )
+                _orphaned = await _cur.fetchall()
+            if _orphaned:
+                _fortress_root = _Path(__file__).resolve().parent.parent  # parent of fortress/
+                for _row in _orphaned:
+                    _bid = _row[0] if isinstance(_row, tuple) else _row["batch_id"]
+                    _ws = _row[1] if isinstance(_row, tuple) else _row["workspace_id"]
+                    # Skip if another in_progress batch already exists for this workspace
+                    async with get_conn() as _conn2:
+                        if _ws is not None:
+                            _check = await _conn2.execute(
+                                "SELECT 1 FROM batch_data WHERE workspace_id=%s AND status='in_progress' LIMIT 1",
+                                (_ws,),
+                            )
+                        else:
+                            _check = await _conn2.execute(
+                                "SELECT 1 FROM batch_data WHERE workspace_id IS NULL AND status='in_progress' LIMIT 1",
+                            )
+                        _running = await _check.fetchone()
+                    if _running:
+                        continue  # active batch's finally block (or sweeper) will pick it up
+                    _runner_cmd = [_sys.executable, "-m", "fortress.discovery", _bid]
+                    _launcher = _Path("/tmp/fortress_launcher.py")
+                    if _launcher.exists():
+                        _runner_cmd = [_sys.executable, str(_launcher), "runner", _bid]
+                    try:
+                        subprocess.Popen(
+                            _runner_cmd,
+                            cwd=str(_fortress_root),
+                            stdout=None, stderr=None,
+                            close_fds=False, start_new_session=True,
+                        )
+                        logger.info("✅ Catch-up: spawned orphaned queued batch %s (ws=%s)", _bid, _ws)
+                    except Exception as _e:
+                        logger.warning("Catch-up spawn failed for %s: %s", _bid, _e)
+        except Exception as _e:
+            logger.warning("Catch-up scan failed: %s", _e)
     else:
         logger.warning("🏰 Fortress API started — database OFFLINE: %s", db["error"])
-    yield
-    await close_pool()
+
+    # ── E2: periodic orphan sweeper (5-min cadence) ──────────────────
+    # Recovers from discovery.py SIGKILL/OOM-kill where the finally block
+    # didn't fire (per memory reference_render_api.md — Render OOM-kill is
+    # the literal "==> Detected service running on port 10000" log line).
+    # Every 5 min: find workspaces with queued batches but no in_progress
+    # sibling, where the oldest queued row is >10 min old, and spawn the
+    # head of that workspace's queue.
+    async def _periodic_orphan_sweeper():
+        import asyncio as _asyncio
+        import subprocess as _subprocess
+        import sys as _sys
+        import os as _os
+        from pathlib import Path as _Path
+        while True:
+            try:
+                await _asyncio.sleep(300)  # 5 min
+                from fortress.api.db import get_conn as _get_conn
+                async with _get_conn() as _swp_conn:
+                    _swp_cur = await _swp_conn.execute(
+                        """SELECT DISTINCT bd1.workspace_id
+                           FROM batch_data bd1
+                           WHERE bd1.status = 'queued'
+                             AND bd1.created_at < NOW() - INTERVAL '10 minutes'
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM batch_data bd2
+                                 WHERE (bd2.workspace_id = bd1.workspace_id
+                                        OR (bd2.workspace_id IS NULL AND bd1.workspace_id IS NULL))
+                                   AND bd2.status = 'in_progress'
+                             )"""
+                    )
+                    _orphan_ws = await _swp_cur.fetchall()
+                if not _orphan_ws:
+                    continue
+                _fr = _Path(__file__).resolve().parent.parent
+                for _ws_row in _orphan_ws:
+                    _ws_id = _ws_row[0] if isinstance(_ws_row, tuple) else _ws_row.get("workspace_id")
+                    # Pick oldest queued in this workspace
+                    async with _get_conn() as _pick_conn:
+                        if _ws_id is not None:
+                            _pick = await _pick_conn.execute(
+                                """SELECT batch_id FROM batch_data
+                                   WHERE workspace_id = %s AND status = 'queued'
+                                   ORDER BY created_at ASC LIMIT 1""",
+                                (_ws_id,),
+                            )
+                        else:
+                            _pick = await _pick_conn.execute(
+                                """SELECT batch_id FROM batch_data
+                                   WHERE workspace_id IS NULL AND status = 'queued'
+                                   ORDER BY created_at ASC LIMIT 1"""
+                            )
+                        _pr = await _pick.fetchone()
+                    if not _pr:
+                        continue
+                    _next_bid = _pr[0] if isinstance(_pr, tuple) else _pr.get("batch_id")
+                    _cmd = [_sys.executable, "-m", "fortress.discovery", _next_bid]
+                    _lc = _Path("/tmp/fortress_launcher.py")
+                    if _lc.exists():
+                        _cmd = [_sys.executable, str(_lc), "runner", _next_bid]
+                    try:
+                        _subprocess.Popen(
+                            _cmd, cwd=str(_fr),
+                            stdout=None, stderr=None,
+                            close_fds=False, start_new_session=True,
+                        )
+                        logger.info("🔄 Sweeper: spawned orphan queued batch %s (ws=%s)", _next_bid, _ws_id)
+                    except Exception as _e:
+                        logger.warning("Sweeper spawn failed for %s: %s", _next_bid, _e)
+            except Exception as _e:
+                # Never let the sweeper crash — just log and loop
+                logger.warning("orphan_sweeper_error: %s", _e)
+
+    import asyncio as _asyncio_top
+    _sweeper_task = _asyncio_top.create_task(_periodic_orphan_sweeper())
+
+    try:
+        yield
+    finally:
+        _sweeper_task.cancel()
+        try:
+            await _sweeper_task
+        except (Exception, BaseException):
+            pass
+        await close_pool()
 
 
 app = FastAPI(
