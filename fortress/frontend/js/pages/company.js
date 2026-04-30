@@ -36,7 +36,7 @@ function effectifLabel(code) {
 
 function nafStatusBadge(status, ctx) {
     // ctx = { link_confidence, link_method, link_signals } — optional, from company detail API
-    const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address', 'inpi_fuzzy_agree', 'inpi_mentions_legales', 'chain', 'gemini_judge', 'geo_proximity']);
+    const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address', 'inpi_fuzzy_agree', 'inpi_mentions_legales', 'chain', 'gemini_judge', 'geo_proximity', 'siret_address_naf']);
 
     const map = {
         verified:  { cls: 'glass-badge--green',  icon: '✓', labelKey: 'company.nafVerified' },

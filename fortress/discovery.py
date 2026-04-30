@@ -670,6 +670,7 @@ _STRONG_METHODS = frozenset({
     "cp_name_disamb_indiv",  # TOP 2 — code 1000 agriculture pass 2 (Apr 26)
     "geo_proximity",  # Phase 2 (TOP 1) — 400m bounding-box proximity matcher
     "commune_municipal",  # Apr 29 — municipal-service pseudo-chain (public FJ + maps_cp + service NAF)
+    "siret_address_naf",  # Track 2 — SIRET-level CP+NAF lookup (communes, multi-site SCIs, etc.)
 })
 
 # Weak match methods — A2 mentions-légales rescue is allowed to replace these.
@@ -2124,6 +2125,80 @@ async def _match_to_sirene(
                 "ville": best_surname_match[9] or "",
             }
 
+    # ── Step 2.7: SIRET-level establishment lookup ───────────────────────
+    # Backfills the gap where the SIREN-level row's NAF differs from the
+    # operating SIRET's NAF (commune municipal services, multi-site SCIs,
+    # franchise storefronts under a regional HQ, etc.). Required: maps_cp,
+    # at least one picked NAF. Queries the establishments side table which
+    # is populated by scripts/import_etablissements.py from the INSEE
+    # StockEtablissement file (~30M active SIRETs).
+    if maps_cp and picked_nafs:
+        etab_cur = await conn.execute(
+            """SELECT e.siret, e.siren, e.naf_etablissement, e.code_postal_etab,
+                      c.denomination, c.enseigne, c.adresse, c.ville, c.statut
+                 FROM establishments e
+                 JOIN companies c ON c.siren = e.siren
+                WHERE e.code_postal_etab = %s
+                  AND e.naf_etablissement = ANY(%s)
+                  AND e.etat_administratif = 'A'
+                  AND c.statut = 'A'
+                  AND c.siren NOT LIKE 'MAPS%%'
+                LIMIT 50""",
+            (maps_cp, list(picked_nafs)),
+        )
+        etab_rows = await etab_cur.fetchall()
+        if len(etab_rows) == 1:
+            row = etab_rows[0]
+            log.info(
+                "discovery.siret_address_naf_match",
+                maps_name=maps_name,
+                maps_cp=maps_cp,
+                siret=row[0],
+                siren=row[1],
+                naf=row[2],
+            )
+            return {
+                "siren": row[1],
+                "denomination": row[4] or "",
+                "enseigne": row[5] or "",
+                "score": 0.92,
+                "method": "siret_address_naf",
+                "adresse": row[6] or "",
+                "ville": row[7] or "",
+            }
+        elif len(etab_rows) > 1:
+            # Disambiguate by maps_name token overlap
+            maps_tokens = set(_normalize_name(maps_name).split())
+            scored = []
+            for r in etab_rows:
+                name_tokens = set(_normalize_name(f"{r[4] or ''} {r[5] or ''}").split())
+                overlap = len(maps_tokens & name_tokens)
+                scored.append((overlap, r))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            if scored and scored[0][0] >= 1 and (
+                len(scored) == 1 or scored[0][0] > scored[1][0]
+            ):
+                r = scored[0][1]
+                log.info(
+                    "discovery.siret_address_naf_disamb",
+                    maps_name=maps_name,
+                    maps_cp=maps_cp,
+                    siret=r[0],
+                    siren=r[1],
+                    naf=r[2],
+                    token_overlap=scored[0][0],
+                )
+                return {
+                    "siren": r[1],
+                    "denomination": r[4] or "",
+                    "enseigne": r[5] or "",
+                    "score": 0.88,
+                    "method": "siret_address_naf",
+                    "adresse": r[6] or "",
+                    "ville": r[7] or "",
+                }
+            # else fall through to Step 5
+
     # ── Step 5: Name search + scoring (last resort — always pending) ──────
     # Step 5 fallback INPI prefetch — fires only when Step 0 was skipped
     # (e.g., extracted_siren was set but Step 1 rejected it and fell through).
@@ -3561,6 +3636,31 @@ async def run(batch_id: str) -> None:
                                     log.info("discovery.chain_section_match_auto_confirm",
                                              maps_name=maps_name, siren=target_siren,
                                              matched_naf=matched_naf, picked_nafs=picked_nafs)
+                                # Track 2 SIRET-address-NAF override: Step 2.7's SQL
+                                # already enforces exact CP + establishment-level NAF
+                                # in picker (`naf_etablissement = ANY(picked_nafs)`,
+                                # see lines 2102-2114) + active SIREN/SIRET +
+                                # 1-row-or-token-dominant disambiguation. Signal
+                                # agreement is structurally inapplicable: head SIREN
+                                # signals (phone, enseigne, denomination) belong to a
+                                # different entity by design (commune mairie ≠
+                                # operated campground), so agree_count is routinely
+                                # 0. Section-letter alignment is also inapplicable:
+                                # head NAF 84.11Z (section O) will never match
+                                # establishment NAF 55.30Z (section I) — but the
+                                # establishment NAF DOES strict-prefix-match the
+                                # picker. Trust the SQL constraints.
+                                if (
+                                    not auto_confirm
+                                    and method == "siret_address_naf"
+                                    and naf_status == "mismatch"
+                                ):
+                                    auto_confirm = True
+                                    log.info("discovery.siret_address_naf_auto_confirm",
+                                             maps_name=maps_name, siren=target_siren,
+                                             matched_naf=matched_naf, picked_nafs=picked_nafs,
+                                             agree_count=agree_count,
+                                             signals=link_signals)
                             else:
                                 auto_confirm = False
 
@@ -3611,6 +3711,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_individual_match"
                                 elif method == "geo_proximity":
                                     audit_action = "auto_linked_geo_proximity"
+                                elif method == "siret_address_naf":
+                                    audit_action = "auto_linked_siret_address_naf"
                                 elif picked_nafs == []:
                                     audit_action = "auto_linked_strong_no_filter"
                                 elif naf_status == "verified":
