@@ -7,7 +7,7 @@ import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, fo
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
 import { DEPT_NAMES } from '../constants.js';
-import { renderQueriesPanel } from '../components/queries_panel.js';
+import { renderQueriesPanel, bindQueriesPanelClicks } from '../components/queries_panel.js';
 
 // ── Selection state ──────────────────────────────────────────────
 let selectionMode = false;
@@ -17,6 +17,19 @@ let _currentBatchName = null;
 let _currentPage = 1;
 let _currentSort = 'completude';
 let _currentFilter = '';  // '' | 'naf_confirmed' | 'naf_sibling' | 'pending' | 'unlinked'
+let _currentSearchQuery = '';  // E4.A — active query drill-down filter
+
+/**
+ * E4.A — read ?q= param from hash (#/job/BATCH_ID?q=camping+perpignan).
+ * Used by monitor.js to navigate to job page with a pre-applied query filter.
+ */
+function _readQueryParamFromHash() {
+    const hash = window.location.hash || '';
+    const idx = hash.indexOf('?');
+    if (idx < 0) return '';
+    const params = new URLSearchParams(hash.slice(idx + 1));
+    return params.get('q') || '';
+}
 
 // ── Scoreboard card — hero card at top of job page ───────────────
 // Replaces buildSummaryCard + buildLinkStatsCard + the Progress card.
@@ -527,6 +540,16 @@ export async function renderJob(container, batchId) {
             { collapsible: true, capMin: queriesData.time_cap_min }
         );
         qCard.style.display = '';
+        // E4.A — wire clickable rows
+        bindQueriesPanelClicks(qPanel);
+        qPanel.addEventListener('qp:filter', async (ev) => {
+            const sq = ev.detail.searchQuery;
+            // Toggle off if same query clicked again
+            _currentSearchQuery = (_currentSearchQuery === sq) ? '' : sq;
+            _currentPage = 1;
+            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter, _currentSearchQuery);
+            document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
     }
 
     // Reset selection + filter state for this job
@@ -538,8 +561,11 @@ export async function renderJob(container, batchId) {
     _currentSort = 'completude';
     _currentFilter = '';  // Reset filter when opening a new job
 
-    // Load companies
-    await loadCompanies(batchId, 1, 'completude', '');
+    // E4.A — read ?q= param from hash (set by monitor.js when clicking a query row)
+    _currentSearchQuery = _readQueryParamFromHash();
+
+    // Load companies (with optional pre-set search query from ?q= param)
+    await loadCompanies(batchId, 1, 'completude', '', _currentSearchQuery);
 
     // Link stats disclosure toggle (Request A)
     const linkStatsBtn = document.getElementById('link-stats-toggle');
@@ -556,7 +582,7 @@ export async function renderJob(container, batchId) {
 
     // Sort change handler
     document.getElementById('job-sort').addEventListener('change', (e) => {
-        loadCompanies(batchId, 1, e.target.value, _currentFilter);
+        loadCompanies(batchId, 1, e.target.value, _currentFilter, _currentSearchQuery);
     });
 
     // Legend row click handlers — filter company list by state
@@ -567,7 +593,7 @@ export async function renderJob(container, batchId) {
             document.querySelectorAll('.legend-row').forEach(r => r.classList.remove('active'));
             if (_currentFilter) row.classList.add('active');
             _currentPage = 1;
-            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter);
+            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter, _currentSearchQuery);
             document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     });
@@ -582,7 +608,7 @@ export async function renderJob(container, batchId) {
                 r.classList.toggle('active', _currentFilter === 'pending' && r.dataset.filter === 'pending');
             });
             _currentPage = 1;
-            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter);
+            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter, _currentSearchQuery);
             document.getElementById('job-companies-container')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     }
@@ -629,10 +655,16 @@ export async function renderJob(container, batchId) {
             dd.id = 'download-dropdown';
             dd.style.cssText = 'position:absolute; top:100%; left:0; margin-top:var(--space-xs); background:var(--bg-elevated); border:1px solid var(--border-default); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.3); z-index:50; min-width:160px; overflow:hidden;';
             dd.innerHTML = `
-                <a href="${getExportUrl(batchId, 'csv')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📥 CSV</a>
+                <a href="#" id="btn-download-csv" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📥 CSV</a>
                 <a href="${getExportUrl(batchId, 'xlsx')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📗 XLSX</a>
                 <a href="${getExportUrl(batchId, 'jsonl')}" download style="display:block; padding:var(--space-sm) var(--space-lg); color:var(--text-primary); text-decoration:none; transition:background 0.15s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">📄 JSONL</a>
             `;
+            // E4.A — CSV link resolves URL at click time to pick up active _currentSearchQuery
+            document.getElementById('btn-download-csv')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                const url = getExportUrl(batchId, 'csv', _currentSearchQuery || null);
+                window.location.href = url;
+            });
             downloadBtn.parentElement.appendChild(dd);
             const close = (e2) => { if (!dd.contains(e2.target) && e2.target !== downloadBtn) { dd.remove(); document.removeEventListener('click', close); } };
             setTimeout(() => document.addEventListener('click', close), 0);
@@ -688,14 +720,15 @@ export async function renderJob(container, batchId) {
 
 }
 
-async function loadCompanies(batchId, page, sort, filter = '') {
+async function loadCompanies(batchId, page, sort, filter = '', searchQuery = '') {
     _currentPage = page;
     _currentSort = sort;
     _currentFilter = filter;
+    _currentSearchQuery = searchQuery;
     const companiesContainer = document.getElementById('job-companies-container');
     companiesContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-    const data = await getJobCompanies(batchId, { page, pageSize: 20, sort, filter });
+    const data = await getJobCompanies(batchId, { page, pageSize: 20, sort, filter, searchQuery });
     if (!data || !data.companies || data.companies.length === 0) {
         // Context-aware empty state
         const job = await getJob(batchId).catch(() => null);
@@ -753,13 +786,31 @@ async function loadCompanies(batchId, page, sort, filter = '') {
         </div>
     `;
 
+    // E4.A — chip displayed above the list when a query filter is active
+    const chipHtml = _currentSearchQuery ? `
+        <div id="qp-filter-chip" style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; margin-bottom:var(--space-sm); border-radius:var(--radius-md); background:var(--bg-elevated); border:1px solid var(--border-subtle); font-size:var(--font-sm); color:var(--text-secondary)">
+            <span>${t('job.queriesFilterChip', { query: escapeHtml(_currentSearchQuery) })}</span>
+            <button id="qp-filter-clear" style="background:none; border:none; color:var(--text-muted); cursor:pointer; padding:0 4px; font-size:var(--font-md)" aria-label="${t('job.queriesFilterClear')}">×</button>
+        </div>
+    ` : '';
+
     companiesContainer.innerHTML = `
         <div id="job-company-grid">
+            ${chipHtml}
             ${listHeaderHtml}
             ${gridContent}
         </div>
-        ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort, filter))}
+        ${renderPagination(data.page, totalPages, (p) => loadCompanies(batchId, p, sort, filter, searchQuery))}
     `;
+
+    // Attach clear handler for the filter chip
+    const clearBtn = document.getElementById('qp-filter-clear');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async () => {
+            _currentSearchQuery = '';
+            await loadCompanies(_currentBatchId, 1, _currentSort, _currentFilter, '');
+        });
+    }
 
     // Restore checkbox state after re-render
     if (selectionMode) {
@@ -808,10 +859,10 @@ async function loadCompanies(batchId, page, sort, filter = '') {
                                 card.classList.add('card-fade-out');
                                 card.addEventListener('animationend', async () => {
                                     card.remove();
-                                    await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter);
+                                    await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter, _currentSearchQuery);
                                 });
                             } else {
-                                await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter);
+                                await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter, _currentSearchQuery);
                             }
                         } else {
                             showToast(t('job.removeError'), 'error');
@@ -853,7 +904,7 @@ function _setupSelectionMode(batchId) {
             _removeBulkBar();
         }
         // Re-render cards with/without checkboxes
-        loadCompanies(batchId, _currentPage, _currentSort, _currentFilter);
+        loadCompanies(batchId, _currentPage, _currentSort, _currentFilter, _currentSearchQuery);
     });
 }
 
@@ -914,7 +965,7 @@ function _updateBulkBar() {
             selectionMode = false;
             selectedSirens.clear();
             _removeBulkBar();
-            await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter);
+            await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter, _currentSearchQuery);
         } else {
             showToast(t('job.enrichError'), 'error');
         }
@@ -957,7 +1008,7 @@ async function _bulkDelete() {
             selectionMode = false;
             selectedSirens.clear();
             _removeBulkBar();
-            await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter);
+            await loadCompanies(_currentBatchId, _currentPage, _currentSort, _currentFilter, _currentSearchQuery);
         }
     });
 }

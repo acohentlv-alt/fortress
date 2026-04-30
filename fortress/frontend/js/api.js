@@ -182,7 +182,7 @@ export async function untagCompany(siren, batchName) {
     return await request(`/companies/${siren}/tags/${encodeURIComponent(batchName)}`, { method: 'DELETE' });
 }
 
-export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search = '', sort = 'completude', filter = '' } = {}) {
+export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search = '', sort = 'completude', filter = '', searchQuery = '' } = {}) {
     const params = new URLSearchParams({
         page: page.toString(),
         page_size: pageSize.toString(),
@@ -190,6 +190,7 @@ export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search
         sort,
     });
     if (filter) params.set('state_filter', filter);  // URL key matches Python param name
+    if (searchQuery) params.set('search_query', searchQuery);  // E4.A drill-down
     return await request(`/jobs/${encodeURIComponent(batchId)}/companies?${params}`);
 }
 
@@ -297,8 +298,11 @@ export async function runBatch({ sector, department, size, mode, city, naf_codes
 }
 
 // ── Export ────────────────────────────────────────────────────────
-export function getExportUrl(batchId, format = 'csv') {
-    return `${API_BASE}/export/${encodeURIComponent(batchId)}/${format}`;
+export function getExportUrl(batchId, format = 'csv', searchQuery = '') {
+    const base = `${API_BASE}/export/${encodeURIComponent(batchId)}/${format}`;
+    if (!searchQuery) return base;
+    const params = new URLSearchParams({ search_query: searchQuery });
+    return `${base}?${params}`;
 }
 
 export function getMasterExportUrl(format = 'csv') {

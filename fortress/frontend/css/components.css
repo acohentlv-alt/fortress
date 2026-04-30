@@ -3911,3 +3911,19 @@
     opacity: 0.6;
     font-weight: 600;
 }
+
+/* E4.A — clickable queries-panel rows */
+.qp-row-clickable {
+    transition: background 0.15s ease;
+}
+.qp-row-clickable:hover {
+    background: var(--bg-hover) !important;
+}
+.qp-row-clickable:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+.qp-row-clickable--branch:hover {
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+}

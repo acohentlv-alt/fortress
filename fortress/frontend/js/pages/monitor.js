@@ -21,7 +21,7 @@ import {
 import { registerCleanup } from '../app.js';
 import { getCachedUser } from '../api.js';
 import { t, getLang } from '../i18n.js';
-import { renderQueriesPanel } from '../components/queries_panel.js';
+import { renderQueriesPanel, bindQueriesPanelClicks } from '../components/queries_panel.js';
 
 let pollInterval = null;
 let _monitorListAbort = null; // AbortController for renderMonitorList event listener
@@ -720,6 +720,13 @@ async function renderJobMonitor(container, batchId) {
                         queriesData.queries || [],
                         { collapsible: false, capMin: queriesData.time_cap_min }
                     );
+                    // E4.A — clicking a query row on the live monitor navigates to
+                    // the post-batch job page with the ?q= drill-down filter pre-applied.
+                    bindQueriesPanelClicks($.queriesList);
+                    $.queriesList.addEventListener('qp:filter', (ev) => {
+                        const sq = ev.detail.searchQuery;
+                        window.location.hash = `#/job/${encodeURIComponent(batchId)}?q=${encodeURIComponent(sq)}`;
+                    });
                 }
             } catch (_qe) {
                 // best-effort — don't break the rest of polling on error

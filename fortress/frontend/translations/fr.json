@@ -562,7 +562,8 @@
     "queriesStopExhausted": "Toutes les villes/codes essayés",
     "queriesStopMaxPerPrimary": "Limite atteinte ({{n}} requêtes)",
     "queriesStopGeneric": "Élargissement arrêté",
-    "queriesStopTimeCap": "🛑 Arrêté: temps écoulé ({{n}} min)"
+    "queriesStopTimeCap": "🛑 Arrêté: temps écoulé ({{n}} min)",
+    "queriesPrimaryWithExpansions": "{{total}} total (dont {{expansion}} par élargissement)"
   },
   "job": {
     "title": "Détail du batch",
@@ -696,6 +697,9 @@
     "queriesCitiesBucket": "Villes ({{count}})",
     "queriesPostalsBucket": "Codes postaux ({{count}})",
     "queriesBranchError": "Erreur",
+    "queriesClickToFilter": "Cliquer pour filtrer la liste",
+    "queriesFilterChip": "Filtré par : {{query}}",
+    "queriesFilterClear": "Effacer le filtre",
     "scoreboardPendingApproval": "À VALIDER",
     "scoreboardSubtextPending": "{{count}} entreprises ont besoin de validation manuelle.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmées, {{pending}} en attente)"

@@ -556,7 +556,8 @@
     "queriesStopExhausted": "All cities/codes tried",
     "queriesStopMaxPerPrimary": "Limit reached ({{n}} queries)",
     "queriesStopGeneric": "Widening stopped",
-    "queriesStopTimeCap": "🛑 Stopped: time exceeded ({{n}} min)"
+    "queriesStopTimeCap": "🛑 Stopped: time exceeded ({{n}} min)",
+    "queriesPrimaryWithExpansions": "{{total}} total (incl. {{expansion}} via expansion)"
   },
   "job": {
     "title": "Batch details",
@@ -667,6 +668,9 @@
     "queriesCitiesBucket": "Cities ({{count}})",
     "queriesPostalsBucket": "Postal codes ({{count}})",
     "queriesBranchError": "Error",
+    "queriesClickToFilter": "Click to filter the list",
+    "queriesFilterChip": "Filtered by: {{query}}",
+    "queriesFilterClear": "Clear filter",
     "scoreboardPendingApproval": "AWAITING REVIEW",
     "scoreboardSubtextPending": "{{count}} companies need manual review.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmed, {{pending}} pending)"

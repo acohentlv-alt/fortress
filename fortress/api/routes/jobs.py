@@ -859,6 +859,7 @@ async def get_job_companies(
     search: str = Query("", description="Filter by name, city, or SIREN"),
     sort: str = Query("completude", description="Sort by: completude | name | date"),
     state_filter: str = Query("", description="Filter: naf_confirmed | naf_sibling | pending | unlinked"),
+    search_query: str = Query("", description="Filter to entities found by exactly this Maps query"),
 ):
     """Paginated companies for a job with merged contact data."""
     user = getattr(request.state, "user", None)
@@ -907,7 +908,20 @@ async def get_job_companies(
         filter_clause = " AND co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL"
     # Empty/unknown → no extra clause (preserves existing behavior)
 
-    where_extra = where_extra + filter_clause
+    # E4.A drill-down — filter to SIRENs whose batch_log row recorded this exact search_query.
+    # batch_log.search_query is populated by log_audit() from _current_search_query in discovery.py.
+    sq_clause = ""
+    sq_params: list = []
+    if search_query:
+        sq_clause = """
+            AND co.siren IN (
+                SELECT DISTINCT siren FROM batch_log
+                WHERE batch_id = %s AND search_query = %s
+            )
+        """
+        sq_params = [qid, search_query]
+
+    where_extra = where_extra + filter_clause + sq_clause
 
     # Determine sort clause
     sort_clause = {
@@ -923,13 +937,12 @@ async def get_job_companies(
         FROM batch_tags sa
         JOIN companies co ON co.siren = sa.siren
         WHERE sa.batch_id = %s {where_extra}
-    """, tuple([qid] + search_params))
+    """, tuple([qid] + search_params + sq_params))
     total = (count_row or {}).get("total", 0)
 
     # Fetch companies with merged contact per SIREN — scoped to this batch.
     # Uses merged_contacts CTE (ARRAY_AGG with source priority) to pick the
     # best value per field across all contact rows for a given SIREN.
-    params_fetch = search_params + [page_size, offset]
     rows = await fetch_all(f"""
         WITH batch_sirens AS (
             SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s
@@ -954,7 +967,7 @@ async def get_job_companies(
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}
         LIMIT %s OFFSET %s
-    """, tuple([qid] + params_fetch))
+    """, tuple([qid] + search_params + sq_params + [page_size, offset]))
 
     return {"companies": rows, "total": total, "page": page, "page_size": page_size}
 
