@@ -669,6 +669,7 @@ _STRONG_METHODS = frozenset({
     "cp_name_disamb",  # P3 Step 2.5 — CP-restricted NAF-filtered name disambiguation
     "cp_name_disamb_indiv",  # TOP 2 — code 1000 agriculture pass 2 (Apr 26)
     "geo_proximity",  # Phase 2 (TOP 1) — 400m bounding-box proximity matcher
+    "commune_municipal",  # Apr 29 — municipal-service pseudo-chain (public FJ + maps_cp + service NAF)
 })
 
 # Weak match methods — A2 mentions-légales rescue is allowed to replace these.
@@ -1589,17 +1590,50 @@ async def _match_to_sirene(
     # Evidence (2026-04-21, camping 83): Siblu/Capfun/Huttopia/Sandaya all HQ-leaked
     # via Step 1. This placement catches them.
     if settings.chain_detector_enabled and maps_cp:
-        from fortress.matching.chains import match_chain, match_ehpad_pseudo_chain, find_chain_siret
+        from fortress.matching.chains import (
+            match_chain,
+            match_ehpad_pseudo_chain,
+            match_municipal_pseudo_chain,
+            find_chain_siret,
+        )
+        # Public-collectivité forme_juridique whitelist — only commune/EPCI/syndicat
+        # legal forms can answer to municipal-service pseudo-chain hits.
+        _PUBLIC_FORME_JURIDIQUE = (
+            "7210", "7220", "7225", "7229", "7230",
+            "7311", "7312", "7313", "7314", "7321", "7322", "7323",
+            "7331", "7332", "7333", "7340", "7341", "7342", "7343",
+            "7344", "7345", "7346", "7347", "7348",
+            "7351", "7352", "7353", "7354", "7355",
+            "7361", "7362", "7363", "7364", "7365",
+            "7366", "7367", "7368", "7369",
+            "7371", "7372", "7373", "7378", "7379",
+            "7381", "7382", "7383", "7384", "7385", "7389",
+            "7410",
+        )
         chain_hit = match_chain(maps_name)
+        pj_filter: tuple[str, ...] | None = None
         if not chain_hit:
             chain_hit = match_ehpad_pseudo_chain(maps_name)
+        if not chain_hit:
+            muni_hit = match_municipal_pseudo_chain(maps_name)
+            if muni_hit:
+                chain_hit = muni_hit
+                pj_filter = _PUBLIC_FORME_JURIDIQUE
         if chain_hit:
-            chain_candidate = await find_chain_siret(conn, chain_hit, maps_cp)
+            chain_candidate = await find_chain_siret(
+                conn, chain_hit, maps_cp,
+                forme_juridique_filter=pj_filter,
+            )
             if chain_candidate:
+                # Municipal hits stamp method='commune_municipal' instead of 'chain'
+                # so the auto-confirm gate can apply the public-FJ override.
+                if chain_hit.sector == "commune_municipal":
+                    chain_candidate["method"] = "commune_municipal"
                 log.info("discovery.chain_match",
                          maps_name=maps_name, chain=chain_hit.chain_name,
                          siren=chain_candidate["siren"], maps_cp=maps_cp,
-                         sector=chain_hit.sector)
+                         sector=chain_hit.sector,
+                         method=chain_candidate.get("method", "chain"))
                 return chain_candidate
 
     # ── Step 1: SIREN from website (validated) ────────────────────────────
@@ -3303,7 +3337,7 @@ async def run(batch_id: str) -> None:
                     # enabling _copy_sirene_reference_data's COALESCE to preserve the Maps location
                     # instead of being overwritten by the SIRENE siège (Frankenstein fix, Apr 22).
                     _company_cp, _company_ville = _parse_maps_address(maps_address)
-                    _company_dept = _effective_dept or (_company_cp[:2] if _company_cp else None)
+                    _company_dept = (_company_cp[:2] if _company_cp else None) or _effective_dept
 
                     company = Company(
                         siren=siren,
@@ -3486,6 +3520,31 @@ async def run(batch_id: str) -> None:
                                              maps_name=maps_name, siren=target_siren,
                                              maps_cp=maps_cp, sirene_cp=sirene_cp,
                                              sirene_naf=matched_naf, picked_nafs=picked_nafs)
+                                # Municipal pseudo-chain auto-confirm — public-collectivité override.
+                                # When method=='commune_municipal', the matched SIRENE is a commune/EPCI
+                                # (forme_juridique 72xx/73xx/74xx) acting as the legal owner of a service
+                                # whose operational NAF differs from the FJ-implied admin NAF (84.11Z).
+                                # Example: SIREN 214002669 (COMMUNE DE ST JULIEN EN BORN, FJ=7210) is
+                                # the owner of SIRET 21400266900072 (NAF 55.30Z, the campground). At
+                                # the SIREN-aggregate level we only see 84.11Z. NAF mismatch is EXPECTED;
+                                # (brand prefix + maps_cp + public-FJ filter at the picker) is the trust.
+                                if (
+                                    not auto_confirm
+                                    and method == "commune_municipal"
+                                ):
+                                    # Re-fetch matched SIRENE's forme_juridique to confirm public-collectivité status.
+                                    fj_cur = await conn.execute(
+                                        "SELECT forme_juridique FROM companies WHERE siren = %s",
+                                        (target_siren,),
+                                    )
+                                    fj_row = await fj_cur.fetchone()
+                                    matched_fj = (fj_row[0] if fj_row else None) or ""
+                                    if matched_fj.startswith(("72", "73", "74")):
+                                        auto_confirm = True
+                                        log.info("discovery.commune_municipal_auto_confirm",
+                                                 maps_name=maps_name, siren=target_siren,
+                                                 maps_cp=maps_cp, matched_fj=matched_fj,
+                                                 matched_naf=matched_naf, picked_nafs=picked_nafs)
                                 # Chain post-else override: franchise storefronts only ever
                                 # produce 1 agreeing signal (enseigne). The (brand + CP +
                                 # sector-aligned NAF) triple already makes the match
@@ -3544,6 +3603,8 @@ async def run(batch_id: str) -> None:
                                     audit_action = "auto_linked_mentions_legales"
                                 elif method == "chain":
                                     audit_action = "auto_linked_chain"
+                                elif method == "commune_municipal":
+                                    audit_action = "auto_linked_municipal"
                                 elif method == "cp_name_disamb":
                                     audit_action = "auto_linked_cp_name_disamb"
                                 elif method == "cp_name_disamb_indiv":
@@ -4314,37 +4375,36 @@ async def run(batch_id: str) -> None:
                 )
 
                 # ── Cross-batch dedup (after lock — sees batch A's results) ──
-                if _dedup_dept_list:
-                    async with pool.connection() as conn:
-                        if batch_workspace_id is not None:
-                            cur = await conn.execute(
-                                """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
-                                   FROM companies c
-                                   WHERE c.siren LIKE 'MAPS%%'
-                                   AND c.departement = ANY(%s)
-                                   AND c.workspace_id = %s
-                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (_dedup_dept_list, batch_workspace_id),
-                            )
-                        else:
-                            cur = await conn.execute(
-                                """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
-                                   FROM companies c
-                                   WHERE c.siren LIKE 'MAPS%%'
-                                   AND c.departement = ANY(%s)
-                                   AND c.workspace_id IS NULL
-                                   AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
-                                (_dedup_dept_list,),
-                            )
-                        prev_rows = await cur.fetchall()
-                        for r in prev_rows:
-                            seen_names.add(f"{(r[0] or '').strip()}|{(r[1] or '').strip()}")
-                    log.info(
-                        "discovery.cross_batch_dedup",
-                        existing_maps_entities=len(prev_rows),
-                        dept_codes=_dedup_dept_list,
-                        workspace_id=batch_workspace_id,
-                    )
+                # Cross-batch dedup (Apr 29): dept filter removed because MAPS rows can
+                # carry wrong dept stamps from old batches (see _company_dept fix at line 3340).
+                # Filtering dedup by dept missed legitimate prior matches stored under a
+                # different dept code, producing duplicate MAPS entities.
+                async with pool.connection() as conn:
+                    if batch_workspace_id is not None:
+                        cur = await conn.execute(
+                            """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
+                               FROM companies c
+                               WHERE c.siren LIKE 'MAPS%%'
+                               AND c.workspace_id = %s
+                               AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
+                            (batch_workspace_id,),
+                        )
+                    else:
+                        cur = await conn.execute(
+                            """SELECT LOWER(c.denomination), LOWER(COALESCE(c.adresse, ''))
+                               FROM companies c
+                               WHERE c.siren LIKE 'MAPS%%'
+                               AND c.workspace_id IS NULL
+                               AND EXISTS (SELECT 1 FROM batch_tags bt WHERE bt.siren = c.siren)""",
+                        )
+                    prev_rows = await cur.fetchall()
+                    for r in prev_rows:
+                        seen_names.add(f"{(r[0] or '').strip()}|{(r[1] or '').strip()}")
+                log.info(
+                    "discovery.cross_batch_dedup",
+                    existing_maps_entities=len(prev_rows),
+                    workspace_id=batch_workspace_id,
+                )
 
                 # ── Build pre-dedup name set (for skipping cards before page visit) ──
                 _known_names: set[str] = set()

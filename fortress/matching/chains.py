@@ -363,6 +363,58 @@ def match_ehpad_pseudo_chain(maps_name: str) -> "ChainHit | None":
     return None
 
 
+# Public-collectivité service prefixes. Each entry: (prefix_normalized, NAF tuple, sector_id, confidence).
+# Order matters — longer prefixes first to avoid greedy short-prefix swallow.
+# Validated against ws174 last-60d batch data (Apr 29). Untested patterns
+# (Stade/Bibliothèque/Médiathèque/Piscine/Crèche/École Municipale, Salle des Fêtes)
+# omitted from V1 — extend only after they appear in real Maps results.
+_MUNICIPAL_PREFIX_PATTERNS: tuple[tuple[str, tuple[str, ...], str, float], ...] = (
+    ("camping municipal de", ("55.30Z",), "commune_municipal", 0.85),
+    ("camping municipal d'", ("55.30Z",), "commune_municipal", 0.85),
+    ("camping municipal", ("55.30Z",), "commune_municipal", 0.85),
+    ("office de tourisme de", ("84.11Z", "94.99Z"), "commune_municipal", 0.85),
+    ("office de tourisme d'", ("84.11Z", "94.99Z"), "commune_municipal", 0.85),
+    ("office de tourisme", ("84.11Z", "94.99Z"), "commune_municipal", 0.85),
+)
+
+
+def match_municipal_pseudo_chain(maps_name: str) -> "ChainHit | None":
+    """Detect commune-municipal service prefix and return ChainHit with residual locality.
+
+    Examples:
+      'Camping Municipal La Passerelle' -> ChainHit(chain_name='la passerelle', nafs=('55.30Z',), ...)
+      'Camping Municipal de Verdalle'    -> ChainHit(chain_name='verdalle', ...)
+      'Office de Tourisme Condom'        -> ChainHit(chain_name='condom', nafs=('84.11Z','94.99Z'), ...)
+      'Camping Municipal'                -> None (no residual)
+      'Camping Bel Air'                  -> None (no Municipal token)
+
+    'Mairie de X' / 'Commune de X' patterns intentionally NOT included — those names
+    ARE the commune itself and match via existing matchers (denomination exact). This
+    pseudo-chain is for service-type prefixes where the operating SIRET differs from
+    the commune SIRET.
+    """
+    from fortress.discovery import _normalize_name  # late import to avoid cycle
+    normalized = _normalize_name(maps_name)
+    if not normalized:
+        return None
+    for prefix, nafs, sector, confidence in _MUNICIPAL_PREFIX_PATTERNS:
+        prefix_tokens = prefix.split()
+        norm_tokens = normalized.split()
+        if len(norm_tokens) <= len(prefix_tokens):
+            continue
+        if norm_tokens[:len(prefix_tokens)] == prefix_tokens:
+            residual = " ".join(norm_tokens[len(prefix_tokens):])
+            if len(residual) >= 3:
+                return ChainHit(
+                    chain_name=residual,
+                    nafs=nafs,
+                    sector=sector,
+                    confidence=confidence,
+                    aliases=(),
+                )
+    return None
+
+
 def _row_to_candidate(row: Any) -> dict:
     return {
         "siren": row[0],
@@ -379,6 +431,7 @@ async def find_chain_siret(
     conn: Any,
     chain_hit: ChainHit,
     maps_cp: str,
+    forme_juridique_filter: tuple[str, ...] | None = None,
 ) -> "dict | None":
     """Query SIRENE for the chain storefront at maps_cp. Return candidate dict or None.
 
@@ -394,25 +447,31 @@ async def find_chain_siret(
     patterns = [chain_hit.chain_name] + list(chain_hit.aliases or ())
     like_patterns = [f"%{p.upper().replace(' ', '%')}%" for p in patterns]
 
-    cur = await conn.execute(
-        """SELECT siren, denomination, enseigne, adresse, ville, code_postal, naf_code
-             FROM companies
-            WHERE naf_code = ANY(%s)
-              AND code_postal = %s
-              AND statut = 'A'
-              AND siren NOT LIKE 'MAPS%%'
-              AND (
-                UPPER(COALESCE(enseigne, '')) ILIKE ANY(%s)
-                OR UPPER(COALESCE(denomination, '')) ILIKE ANY(%s)
-              )
+    base_sql = """SELECT siren, denomination, enseigne, adresse, ville, code_postal, naf_code
+                FROM companies
+               WHERE naf_code = ANY(%s)
+                 AND code_postal = %s
+                 AND statut = 'A'
+                 AND siren NOT LIKE 'MAPS%%'
+                 AND (
+                   UPPER(COALESCE(enseigne, '')) ILIKE ANY(%s)
+                   OR UPPER(COALESCE(denomination, '')) ILIKE ANY(%s)
+                 )"""
+    params: list[Any] = [list(chain_hit.nafs), maps_cp, like_patterns, like_patterns]
+
+    if forme_juridique_filter:
+        base_sql += " AND forme_juridique = ANY(%s)"
+        params.append(list(forme_juridique_filter))
+
+    base_sql += """
             ORDER BY GREATEST(
               similarity(COALESCE(enseigne, ''), %s),
               similarity(COALESCE(denomination, ''), %s)
             ) DESC
-            LIMIT 50""",
-        (list(chain_hit.nafs), maps_cp, like_patterns, like_patterns,
-         chain_hit.chain_name, chain_hit.chain_name),
-    )
+            LIMIT 50"""
+    params.extend([chain_hit.chain_name, chain_hit.chain_name])
+
+    cur = await conn.execute(base_sql, params)
     rows = await cur.fetchall()
     if not rows:
         return None
