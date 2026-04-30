@@ -461,6 +461,39 @@ async def lifespan(app: FastAPI):
                 # Also fixes the Apr 25 silent-fail for FILTERED_* and A2PENDING rows.
                 await conn.execute("ALTER TABLE batch_log ALTER COLUMN siren TYPE VARCHAR(50)")
 
+                # ── SIRET-level establishments side table ────────────────────
+                # Stores per-establishment NAF + address from the INSEE StockEtablissement
+                # file (~30M active SIRETs). Enables Step 2.7 siret_address_naf matcher
+                # to find businesses whose operating SIRET has a different NAF than the
+                # SIREN head SIRET (communes running municipal services, multi-site SCIs,
+                # franchise storefronts under a regional HQ, etc.).
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS establishments (
+                        siret VARCHAR(14) PRIMARY KEY,
+                        siren VARCHAR(9) NOT NULL,
+                        etablissement_siege BOOLEAN NOT NULL DEFAULT FALSE,
+                        etat_administratif VARCHAR(1) NOT NULL DEFAULT 'A',
+                        enseigne_etablissement TEXT,
+                        denomination_usuelle TEXT,
+                        naf_etablissement VARCHAR(10),
+                        code_postal_etab VARCHAR(10),
+                        adresse_etab TEXT,
+                        libelle_commune VARCHAR(100),
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_establishments_siren "
+                    "ON establishments(siren)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_establishments_cp_naf "
+                    "ON establishments(code_postal_etab, naf_etablissement)"
+                )
+
                 await conn.commit()
                 logger.info("✅ contact_requests and company_notes tables ready")
         except Exception as e:
