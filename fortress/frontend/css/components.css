@@ -3698,6 +3698,10 @@
     outline: none;
     border-color: var(--accent);
 }
+.naf-picker-input--unconfirmed {
+    border-color: var(--warning, #f59e0b);
+    box-shadow: 0 0 0 1px var(--warning, #f59e0b);
+}
 .naf-picker-dropdown {
     display: none;
     position: absolute;

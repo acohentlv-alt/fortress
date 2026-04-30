@@ -701,6 +701,7 @@
     "nafErrorSectionAlone": "Un filtre par section (A–U) doit être utilisé seul.",
     "nafErrorCap": "Maximum 10 codes NAF. Retirez-en un avant d'en ajouter d'autres.",
     "nafErrorDuplicate": "Ce code est déjà sélectionné.",
+    "nafErrorUnconfirmedInvalid": "NAF code not recognised — please select from the list",
     "nafSiblingsLabel": "Related sector — click to add",
     "nafSiblingsShowMore": "Show more ({{count}} others)",
     "nafSiblingsShowLess": "Collapse",

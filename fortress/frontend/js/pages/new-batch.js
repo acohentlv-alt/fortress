@@ -323,6 +323,7 @@ export async function renderNewBatch(container) {
         _pickedCodes.push(rawCode);
         _pickedLabels[rawCode] = label || _nafLabelByCode[rawCode] || rawCode;
         renderChips();
+        _updatePickerVisualHint();
         return { ok: true };
     }
 
@@ -347,7 +348,7 @@ export async function renderNewBatch(container) {
         nafDropdown.style.display = matches.length ? 'block' : 'none';
     }
 
-    nafInput.addEventListener('input', () => renderNafDropdown(nafInput.value));
+    nafInput.addEventListener('input', () => { renderNafDropdown(nafInput.value); _updatePickerVisualHint(); });
     nafInput.addEventListener('focus', () => renderNafDropdown(nafInput.value));
 
     // Paste handler: split on comma/semicolon/newline and try each.
@@ -385,6 +386,7 @@ export async function renderNewBatch(container) {
         const res = tryAddCode(opt.dataset.code, opt.dataset.label);
         if (!res.ok && res.err) showNafError(res.err);
         nafInput.value = '';
+        _updatePickerVisualHint();
         nafDropdown.style.display = 'none';
         nafInput.focus();
     });
@@ -537,8 +539,31 @@ export async function renderNewBatch(container) {
         });
     } catch (e) { /* private mode */ }
 
+    // ── Visual hint helper for unconfirmed NAF input ─────────────────
+    function _updatePickerVisualHint() {
+        const has = (nafInput.value || '').trim().length > 0;
+        nafInput.classList.toggle('naf-picker-input--unconfirmed', has);
+    }
+
     // ── Launch button ─────────────────────────────────────────────────
     document.getElementById('btn-launch-batch').addEventListener('click', async () => {
+        // Auto-confirm: user typed a valid NAF code in the input but didn't click the
+        // suggestion or press Enter. Accept it now so the batch launches with the
+        // intended filter. (Fix for customer false-positive incident 2026-04-30.)
+        const _typed = (nafInput.value || '').trim().toUpperCase();
+        if (_typed && _nafLabelByCode[_typed] && !_pickedCodes.includes(_typed)) {
+            const res = tryAddCode(_typed, _nafLabelByCode[_typed]);
+            if (!res.ok) {
+                if (res.err) showNafError(res.err);
+                return;
+            }
+            nafInput.value = '';
+            _updatePickerVisualHint();
+        } else if (_typed && !_nafLabelByCode[_typed]) {
+            showNafError(t('newBatch.nafErrorUnconfirmedInvalid'));
+            return;
+        }
+
         const queryInputs = [
             document.querySelector('.gemini-query-input.primary'),
             ...document.querySelectorAll('#additional-queries .gemini-query-input')
