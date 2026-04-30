@@ -1067,7 +1067,7 @@ async def get_job_queries(batch_id: str, request: Request):
         ws_params = ()
 
     job = await fetch_one(
-        f"SELECT queries_json, current_query, time_cap_per_query_min FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        f"SELECT queries_json, current_query, time_cap_per_query_min, time_cap_total_min FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
         (batch_id,) + ws_params,
     )
     if not job:
@@ -1082,4 +1082,5 @@ async def get_job_queries(batch_id: str, request: Request):
         "queries": queries,
         "current_query": job.get("current_query"),
         "time_cap_min": job.get("time_cap_per_query_min"),
+        "time_cap_total_min": job.get("time_cap_total_min"),
     }

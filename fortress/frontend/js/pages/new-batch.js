@@ -89,11 +89,35 @@ export async function renderNewBatch(container) {
                     <div class="time-cap-pills" id="time-cap-pills" role="radiogroup">
                         <button type="button" class="cap-pill" data-cap-min="5">5 min</button>
                         <button type="button" class="cap-pill" data-cap-min="10">10 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="15">15 min</button>
                         <button type="button" class="cap-pill" data-cap-min="30">30 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="45">45 min</button>
                         <button type="button" class="cap-pill active" data-cap-min="60">60 min</button>
                         <button type="button" class="cap-pill" data-cap-min="120">120 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="240">240 min</button>
                         <button type="button" class="cap-pill" data-cap-min="0">${t('newBatch.timeCapNone')}</button>
                     </div>
+                </div>
+
+                <div style="text-align: center; margin: var(--space-md) 0;">
+                    <div style="color: var(--text-secondary); font-size: var(--font-sm); margin-bottom: var(--space-sm);">
+                        ${t('newBatch.timeCapTotalLabel')}
+                    </div>
+                    <div class="time-cap-pills" id="time-cap-total-pills" role="radiogroup">
+                        <button type="button" class="cap-pill" data-cap-min="5">5 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="10">10 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="15">15 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="30">30 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="45">45 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="60">60 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="120">120 min</button>
+                        <button type="button" class="cap-pill" data-cap-min="240">240 min</button>
+                        <button type="button" class="cap-pill active" data-cap-min="0">${t('newBatch.timeCapNone')}</button>
+                    </div>
+                </div>
+
+                <div id="duration-estimator" style="display:none; text-align:center; color:var(--text-secondary); font-size:var(--font-sm); margin-top:var(--space-sm);">
+                    <span id="duration-estimator-text"></span>
                 </div>
 
                 <div id="naf-siblings-row" style="display:none; margin-top:var(--space-sm)">
@@ -135,12 +159,23 @@ export async function renderNewBatch(container) {
 
     // ── Time cap state ────────────────────────────────────────────────
     let _selectedTimeCap = 60;
+    let _selectedTotalCap = 0;
 
     document.querySelectorAll('#time-cap-pills .cap-pill').forEach(p => {
         p.addEventListener('click', () => {
             document.querySelectorAll('#time-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
             p.classList.add('active');
             _selectedTimeCap = parseInt(p.dataset.capMin, 10);
+            _updateDurationEstimator();
+        });
+    });
+
+    document.querySelectorAll('#time-cap-total-pills .cap-pill').forEach(p => {
+        p.addEventListener('click', () => {
+            document.querySelectorAll('#time-cap-total-pills .cap-pill').forEach(x => x.classList.remove('active'));
+            p.classList.add('active');
+            _selectedTotalCap = parseInt(p.dataset.capMin, 10);
+            _updateDurationEstimator();
         });
     });
 
@@ -595,8 +630,31 @@ export async function renderNewBatch(container) {
         return warnings;
     }
 
+    // ── Duration estimator ────────────────────────────────────────────
+    function _updateDurationEstimator() {
+        const inputs = [
+            document.querySelector('.gemini-query-input.primary'),
+            ...document.querySelectorAll('#additional-queries .gemini-query-input')
+        ].filter(Boolean);
+        const nQueries = inputs.map(i => (i.value || '').trim()).filter(q => q.length > 0).length;
+        const el = document.getElementById('duration-estimator');
+        const txt = document.getElementById('duration-estimator-text');
+        if (!el || !txt) return;
+        if (!nQueries) { el.style.display = 'none'; return; }
+        const perCap = _selectedTimeCap > 0 ? _selectedTimeCap : null;
+        const totalCap = _selectedTotalCap > 0 ? _selectedTotalCap : null;
+        let upperMin = null;
+        if (perCap && totalCap) upperMin = Math.min(perCap * nQueries, totalCap);
+        else if (perCap) upperMin = perCap * nQueries;
+        else if (totalCap) upperMin = totalCap;
+        if (upperMin === null) { el.style.display = 'none'; return; }
+        txt.textContent = t('newBatch.durationEstimator', { n: nQueries, min: upperMin });
+        el.style.display = 'block';
+    }
+
     // ── Live summary ──────────────────────────────────────────────────
     function updateSummary() {
+        _updateDurationEstimator();
         const inputs = [
             document.querySelector('.gemini-query-input.primary'),
             ...document.querySelectorAll('#additional-queries .gemini-query-input')
@@ -710,6 +768,7 @@ export async function renderNewBatch(container) {
             search_queries: queries,
             naf_codes: _pickedCodes.length > 0 ? [..._pickedCodes] : null,
             time_cap_per_query_min: _selectedTimeCap > 0 ? _selectedTimeCap : null,
+            time_cap_total_min: _selectedTotalCap > 0 ? _selectedTotalCap : null,
         };
 
         btn.disabled = true;

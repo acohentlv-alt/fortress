@@ -710,7 +710,9 @@
     "nafVariantTooltip": "Add a query: {{phrasing}}",
     "nafVariantsEmpty": "No variants for these codes",
     "timeCapLabel": "Max time per query",
-    "timeCapNone": "Unlimited"
+    "timeCapNone": "Unlimited",
+    "timeCapTotalLabel": "Max total time (batch)",
+    "durationEstimator": "{{n}} queries · max ~{{min}} min"
   },
   "upload": {
     "title": "Import / Export",

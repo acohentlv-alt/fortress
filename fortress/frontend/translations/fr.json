@@ -739,7 +739,9 @@
     "nafVariantTooltip": "Ajouter une requête : {{phrasing}}",
     "nafVariantsEmpty": "Aucune variante pour ces codes",
     "timeCapLabel": "Temps maximum par requête",
-    "timeCapNone": "Illimité"
+    "timeCapNone": "Illimité",
+    "timeCapTotalLabel": "Temps maximum total (batch)",
+    "durationEstimator": "{{n}} requêtes · max ~{{min}} min"
   },
   "upload": {
     "title": "Import / Export",

@@ -25,6 +25,7 @@ import signal
 import sys
 import time
 import unicodedata
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -2468,7 +2469,7 @@ async def run(batch_id: str) -> None:
             cur = await conn_holder[0].execute(
                 """SELECT batch_name, search_queries, filters_json, batch_size,
                           workspace_id, completed_queries_count, queries_json, id,
-                          time_cap_per_query_min
+                          time_cap_per_query_min, time_cap_total_min, created_at
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -2485,6 +2486,8 @@ async def run(batch_id: str) -> None:
             _prior_queries_json = row[6]
             batch_int_id: int = int(row[7])  # INTEGER PK of batch_data row — used for pipeline_timings FK
             _time_cap_min: int | None = row[8] if row[8] is not None else None
+            _time_cap_total_min: int | None = row[9] if row[9] is not None else None
+            _batch_created_at: datetime = row[10]
 
             # Set ContextVar so Maps scraper can write timing rows without threading batch_id through callbacks
             batch_id_var.set(batch_int_id)
@@ -4701,6 +4704,13 @@ async def run(batch_id: str) -> None:
                         queue_maxsize=settings.worker_pool_queue_maxsize,
                     )
 
+                # ── Total time cap setup (resume-aware) ───────────────
+                _total_cap_sec: float | None = (_time_cap_total_min * 60) if _time_cap_total_min else None
+                _total_cap_buffer_sec = 30  # mirrors per-query drain buffer
+
+                def _total_elapsed_sec() -> float:
+                    return (datetime.now(timezone.utc) - _batch_created_at).total_seconds()
+
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
                     # Resume: skip queries that completed in a prior run
@@ -4708,6 +4718,10 @@ async def run(batch_id: str) -> None:
                         continue
                     # Resolve per-query effective dept (overrides batch-level dept_filter)
                     _effective_dept = _parse_dept_hint_from_query(search_query) or dept_filter
+                    # Total-cap check between queries
+                    if _total_cap_sec is not None and _total_elapsed_sec() >= _total_cap_sec:
+                        log.warning("discovery.total_time_cap_hit_between_queries", batch_id=batch_id, cap_min=_time_cap_total_min, elapsed_min=round(_total_elapsed_sec()/60, 1))
+                        break
                     # Check for graceful shutdown
                     if _shutdown:
                         log.warning(
@@ -4823,9 +4837,24 @@ async def run(batch_id: str) -> None:
 
                     results: list = []
                     _query_abort_reason: str | None = None
+                    # Compute effective timeout: whichever cap fires first wins
+                    _per_query_remaining: float | None = _query_deadline_sec
+                    _total_remaining: float | None = (_total_cap_sec - _total_elapsed_sec()) if _total_cap_sec is not None else None
+                    if _total_remaining is not None and _total_remaining < 0:
+                        _total_remaining = 0
+
+                    _effective_timeout: float | None
+                    _effective_reason_on_timeout: str
+                    if _total_remaining is not None and (_per_query_remaining is None or _total_remaining < _per_query_remaining):
+                        _effective_timeout = _total_remaining
+                        _effective_reason_on_timeout = "total_time_cap_reached"
+                    else:
+                        _effective_timeout = _per_query_remaining
+                        _effective_reason_on_timeout = "time_cap_reached_primary"
+
                     try:
-                        if _query_deadline_sec is not None:
-                            results = await asyncio.wait_for(_scraper_task, timeout=_query_deadline_sec)
+                        if _effective_timeout is not None:
+                            results = await asyncio.wait_for(_scraper_task, timeout=_effective_timeout)
                         else:
                             results = await _scraper_task
                     except asyncio.TimeoutError:
@@ -4833,7 +4862,7 @@ async def run(batch_id: str) -> None:
                             "discovery.query_time_cap_hit",
                             query=search_query, cap_min=_time_cap_min,
                         )
-                        _query_abort_reason = "time_cap_reached_primary"
+                        _query_abort_reason = _effective_reason_on_timeout
                         _scraper_task.cancel()
                         if settings.worker_pool_enabled:
                             try:
@@ -4868,6 +4897,8 @@ async def run(batch_id: str) -> None:
                             "duration_sec": round(time.monotonic() - _query_start, 1),
                             "abort_reason": _query_abort_reason,
                         })
+                        if _query_abort_reason == "total_time_cap_reached":
+                            break
                         continue   # bypass expansion loop for this query
 
                     log.info(
@@ -4943,6 +4974,10 @@ async def run(batch_id: str) -> None:
                                     break
                                 if _shutdown:
                                     _widen_stop_reason = "shutdown"
+                                    break
+                                # Total-cap check inside widening loop
+                                if _total_cap_sec is not None and _total_elapsed_sec() >= _total_cap_sec:
+                                    _widen_stop_reason = "total_time_cap_reached"
                                     break
                                 # Soft cap: covers primary→expansion cumulative time. Primary search_all itself is not killable mid-scrape.
                                 if _time_cap_min is not None and (time.monotonic() - _query_start) >= _time_cap_min * 60:
@@ -5081,6 +5116,8 @@ async def run(batch_id: str) -> None:
                                 "stop_reason": _widen_stop_reason,
                                 "total_widened": _widened_count,
                             }
+                            if _widen_stop_reason == "total_time_cap_reached":
+                                break  # break OUTER `for q_idx in enumerate(search_queries, 1):` loop
 
                     # ── Record query in memory ──
                     try:
