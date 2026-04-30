@@ -3892,3 +3892,22 @@
 @media (max-width: 700px) {
     .quality-gauges-grid { grid-template-columns: repeat(3, 1fr) !important; }
 }
+
+/* ── NAF variant pills (Lever D — Apr 30) ────────────────────────────
+   Visually distinct from sibling-NAF chips: peach tint to signal
+   "this adds a query, not a NAF code". */
+.naf-variant-chip {
+    background: rgba(251, 146, 60, 0.10);
+    border-color: rgba(251, 146, 60, 0.30);
+    color: rgb(194, 102, 28);
+}
+.naf-variant-chip:hover {
+    background: rgba(251, 146, 60, 0.18);
+    border-color: rgba(251, 146, 60, 0.55);
+    color: rgb(124, 65, 18);
+}
+.naf-variant-chip::before {
+    content: "+ ";
+    opacity: 0.6;
+    font-weight: 600;
+}

@@ -706,6 +706,9 @@
     "nafSiblingsShowMore": "Show more ({{count}} others)",
     "nafSiblingsShowLess": "Collapse",
     "nafSiblingsEmpty": "No related codes for these filters",
+    "nafVariantsLabel": "Search variants — click to add a query",
+    "nafVariantTooltip": "Add a query: {{phrasing}}",
+    "nafVariantsEmpty": "No variants for these codes",
     "timeCapLabel": "Max time per query",
     "timeCapNone": "Unlimited"
   },

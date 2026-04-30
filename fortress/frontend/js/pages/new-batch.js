@@ -101,6 +101,11 @@ export async function renderNewBatch(container) {
                     <div class="gemini-chips" id="naf-siblings-chips" style="margin-top:var(--space-xs)"></div>
                 </div>
 
+                <div id="naf-variants-row" style="display:none; margin-top:var(--space-sm)">
+                    <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafVariantsLabel')}</span>
+                    <div class="gemini-chips" id="naf-variants-chips" style="margin-top:var(--space-xs)"></div>
+                </div>
+
                 <div class="duration-hint">
                     <span class="duration-hint-icon">⏱</span>
                     <span>${t('newBatch.durationHint')}</span>
@@ -191,6 +196,8 @@ export async function renderNewBatch(container) {
     // Frontend mirror of SECTOR_EXPANSIONS — fetched fresh every page load via
     // /api/batch/naf-codes. Source of truth is fortress/config/naf_sector_expansion.py.
     const _sectorExpansions = _nafData?.sector_expansions || {};
+    // Per-sector Maps query phrasing variants — Lever D (sector_query_variants.py).
+    const _sectorQueryVariants = _nafData?.sector_query_variants || {};
 
     function sameSectorGroup(a, b) {
         if (a === b) return true;
@@ -275,6 +282,47 @@ export async function renderNewBatch(container) {
         _siblingsChips.innerHTML = html;
     }
 
+    const _variantsRow = document.getElementById('naf-variants-row');
+    const _variantsChips = document.getElementById('naf-variants-chips');
+
+    function renderVariantsRow() {
+        if (!_variantsRow || !_variantsChips) return;
+        if (_pickedCodes.length === 0) {
+            _variantsRow.style.display = 'none';
+            return;
+        }
+        // Apr 30 (Cindy bug fix): UNION across all picked NAFs, not intersection.
+        // Previously intersection broke when a sibling NAF without its own
+        // variants entry was added (e.g., picking 55.30Z camping then adding
+        // 55.10Z hotels via the sibling chip → empty intersection → variants
+        // vanished). Same-sector-group rule already prevents truly cross-sector
+        // picks at the chip-add stage, so union is safe.
+        const seen = new Set();
+        const unionVariants = [];
+        for (const code of _pickedCodes) {
+            const list = _sectorQueryVariants[code];
+            if (!list || !Array.isArray(list)) continue;
+            for (const v of list) {
+                if (!seen.has(v.phrasing)) {
+                    seen.add(v.phrasing);
+                    unionVariants.push(v);
+                }
+            }
+        }
+        if (unionVariants.length === 0) {
+            _variantsRow.style.display = 'none';
+            return;
+        }
+        _variantsRow.style.display = '';
+        _variantsChips.innerHTML = unionVariants.map(v => `
+            <button type="button" class="chip naf-variant-chip"
+                    data-phrasing="${escapeHtml(v.phrasing)}"
+                    title="${escapeHtml(t('newBatch.nafVariantTooltip').replace('{{phrasing}}', v.phrasing))}">
+                ${escapeHtml(v.label)}
+            </button>
+        `).join('');
+    }
+
     function renderChips() {
         nafChips.innerHTML = _pickedCodes.map(code => `
             <span class="naf-chip" data-code="${escapeHtml(code)}">
@@ -283,6 +331,7 @@ export async function renderNewBatch(container) {
             </span>
         `).join('');
         renderSiblingsRow();
+        renderVariantsRow();
     }
 
     function tryAddCode(code, label) {
@@ -433,6 +482,47 @@ export async function renderNewBatch(container) {
                 const res = tryAddCode(chip.dataset.code, _nafLabelByCode[chip.dataset.code]);
                 if (!res.ok && res.err) showNafError(res.err);
             }
+        });
+    }
+
+    // ── NAF variant chip click handler ────────────────────────────────
+    // Clicking a variant pill spawns a NEW query row prefilled with
+    // `<phrasing> <dept>`. Department is extracted using the same logic as
+    // the launch handler — kept inline (do not promote to top-level helper:
+    // wider blast radius not justified for this brief).
+    if (_variantsChips) {
+        _variantsChips.addEventListener('click', (e) => {
+            const chip = e.target.closest('.naf-variant-chip');
+            if (!chip || !chip.dataset.phrasing) return;
+            const phrasing = chip.dataset.phrasing;
+
+            // Extract dept from existing query inputs (mirrors launch handler).
+            const inputs = [
+                document.querySelector('.gemini-query-input.primary'),
+                ...document.querySelectorAll('#additional-queries .gemini-query-input')
+            ].filter(Boolean);
+            const queries = inputs.map(i => i.value.trim()).filter(q => q.length > 0);
+            let department = '';
+            const _normalize = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+            for (const q of queries) {
+                const dept2 = q.match(/\b(\d{2})\b/);
+                if (dept2) { department = dept2[1]; break; }
+                const postal = q.match(/\b(\d{5})\b/);
+                if (postal) { department = postal[1].substring(0, 2); break; }
+                const norm = _normalize(q);
+                const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
+                for (const name of sortedKeys) {
+                    if (norm.includes(name)) { department = DEPT_NAMES[name]; break; }
+                }
+                if (department) break;
+            }
+            const value = department ? `${phrasing} ${department}` : phrasing;
+
+            const newRow = createSubordinateQueryRow(value);
+            document.getElementById('additional-queries').appendChild(newRow);
+            updateSummary();
+            const newInput = newRow.querySelector('.gemini-query-input');
+            if (newInput) newInput.focus();
         });
     }
 

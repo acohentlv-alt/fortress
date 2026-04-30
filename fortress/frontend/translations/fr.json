@@ -735,6 +735,9 @@
     "nafSiblingsShowMore": "Voir plus ({{count}} autres)",
     "nafSiblingsShowLess": "Réduire",
     "nafSiblingsEmpty": "Aucune filière proche pour ces codes",
+    "nafVariantsLabel": "Variantes de recherche — cliquez pour ajouter une requête",
+    "nafVariantTooltip": "Ajouter une requête : {{phrasing}}",
+    "nafVariantsEmpty": "Aucune variante pour ces codes",
     "timeCapLabel": "Temps maximum par requête",
     "timeCapNone": "Illimité"
   },

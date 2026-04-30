@@ -296,12 +296,14 @@ async def list_naf_codes(request: Request):
         divisions.append({"code": div, "label": f"{div} — {section_label}"})
 
     from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
+    from fortress.config.sector_query_variants import SECTOR_QUERY_VARIANTS
 
     return {
         "sections": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_SECTIONS.items()],
         "divisions": sorted(divisions, key=lambda d: d["code"]),
         "codes": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_CODES.items()],
         "sector_expansions": {k: sorted(list(v)) for k, v in SECTOR_EXPANSIONS.items()},
+        "sector_query_variants": SECTOR_QUERY_VARIANTS,
     }
 
 
