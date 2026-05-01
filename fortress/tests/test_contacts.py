@@ -121,9 +121,9 @@ def test_accept_siren_handles_none_and_empty():
 
 
 def test_hosting_sirens_frozenset_size():
-    # Sanity: 5 hosting + 5 franchise umbrella + 2 cross-CP HQ leaks + 1 Phase 1b = 13 entries.
+    # Sanity: 5 hosting + 5 franchise umbrella + 2 cross-CP HQ leaks + 1 Phase 1b + 1 Phase 1c = 14 entries.
     # When adding a new entry, bump this count and document the source above.
-    assert len(_HOSTING_SIRENS) == 13
+    assert len(_HOSTING_SIRENS) == 14
 
 
 def test_extract_siret_rejects_franchise_footer():
