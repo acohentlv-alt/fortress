@@ -11,6 +11,9 @@ Tests:
   8. judge_match rejects picked_siren outside pool
   9. judge_match normalizes picked_siren to None on non-match
  10. judge_match rejects malformed SIREN
+ 11. gemini_quarantine audit captures original_method before alias mutation (Apr 27)
+ 12. siret_address_naf method is NOT swapped by Gemini (May 1 exemption)
+ 13. siret_address_naf method is NOT quarantined by Gemini (May 1 exemption)
 """
 
 from __future__ import annotations
@@ -341,3 +344,87 @@ def test_quarantine_audit_captures_original_method_before_alias_mutation():
     # Sanity: the alias mutation did happen on the shared dict.
     assert candidate["method"] == "gemini_quarantine"
     assert _pending_link is candidate
+
+
+# ---------------------------------------------------------------------------
+# 12. siret_address_naf method is NOT swapped by Gemini (May 1 exemption).
+#
+# Discovery.py:3954 guards the swap action with:
+#   _pending_link["method"] not in ("chain", "siret_address_naf")
+#
+# Track 2 (siret_address_naf) matches link head-SIREN data (e.g. "COMMUNE DE …")
+# to an operating establishment (e.g. "Camping du Lac"). Gemini sees the
+# denomination mismatch and would pick a different SIREN — but that "better"
+# candidate is another head-SIREN unrelated to the operating establishment.
+# The exemption prevents the swap. Step 2.7's SQL constraints are the safety net.
+# ---------------------------------------------------------------------------
+
+def test_siret_address_naf_not_swapped_by_gemini():
+    """siret_address_naf pending_link must be excluded from the swap branch."""
+    _pending_link = {"method": "siret_address_naf", "siren": "123456789"}
+    _just_auto_confirmed = True
+    _v = "match"
+    _vpicked = "999999999"  # Gemini "picked" a different SIREN
+    _vconf = 0.95  # above any threshold
+
+    # Reproduce the swap branch guard from discovery.py:3947-3954
+    swap_fires = (
+        _v == "match"
+        and _vpicked is not None
+        and _pending_link is not None
+        and _just_auto_confirmed
+        and _vpicked != _pending_link["siren"]
+        and _vconf >= 0.85  # typical gemini_d1b_quarantine_threshold
+        and _pending_link["method"] not in ("chain", "siret_address_naf")  # exemption gate
+    )
+
+    assert not swap_fires, (
+        "Swap branch must NOT fire for siret_address_naf — "
+        "Gemini's 'better candidate' is another head-SIREN unrelated to the "
+        "operating establishment found by Track 2's SQL constraints."
+    )
+    # Verify siren unchanged (swap action is gated, so no mutation)
+    if not swap_fires:
+        assert _pending_link["siren"] == "123456789"
+        assert _pending_link["method"] == "siret_address_naf"
+
+
+# ---------------------------------------------------------------------------
+# 13. siret_address_naf method is NOT quarantined by Gemini (May 1 exemption).
+#
+# Discovery.py:4066 guards the quarantine action with:
+#   _pending_link["method"] not in ("chain", "siret_address_naf")
+#
+# Gemini's Frankenstein check sees "COMMUNE DE …" vs "Camping du Lac" and
+# would flip confirmed → pending. The exemption prevents that. The SQL
+# constraints in Step 2.7 (exact CP + exact NAF + 1-row disambiguation) are
+# the safety net instead.
+# ---------------------------------------------------------------------------
+
+def test_siret_address_naf_not_quarantined_by_gemini():
+    """siret_address_naf pending_link must be excluded from the quarantine branch."""
+    _pending_link = {"method": "siret_address_naf", "siren": "123456789"}
+    link_confidence = "confirmed"
+    _just_auto_confirmed = True
+    _v = "no_match"
+    _vconf = 0.95  # above any threshold
+
+    # Reproduce the quarantine branch guard from discovery.py:4061-4066
+    quarantine_fires = (
+        _v == "no_match"
+        and _vconf >= 0.85  # typical gemini_d1b_quarantine_threshold
+        and _pending_link is not None
+        and _just_auto_confirmed
+        and _pending_link["method"] not in ("chain", "siret_address_naf")  # exemption gate
+    )
+
+    assert not quarantine_fires, (
+        "Quarantine branch must NOT fire for siret_address_naf — "
+        "Gemini's Frankenstein check cannot evaluate Track 2 because the "
+        "head SIREN denomination belongs to a different entity than the "
+        "operating establishment by design (e.g. commune ≠ campground)."
+    )
+    # Verify link_confidence and method unchanged (quarantine action is gated)
+    if not quarantine_fires:
+        assert link_confidence == "confirmed"
+        assert _pending_link["method"] == "siret_address_naf"

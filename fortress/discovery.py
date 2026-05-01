@@ -3854,7 +3854,7 @@ async def run(batch_id: str) -> None:
                                     if candidate is not None:
                                         if (
                                             settings.gemini_multi_candidate_enabled
-                                            and candidate.get("method") != "chain"
+                                            and candidate.get("method") not in ("chain", "siret_address_naf")
                                         ):
                                             _alternatives = await _gather_alternatives(
                                                 conn, maps_name, _maps_lat, _maps_lng,
@@ -3951,7 +3951,7 @@ async def run(batch_id: str) -> None:
                                                 and _just_auto_confirmed
                                                 and _vpicked != _pending_link["siren"]
                                                 and _vconf >= settings.gemini_d1b_quarantine_threshold
-                                                and _pending_link["method"] != "chain"
+                                                and _pending_link["method"] not in ("chain", "siret_address_naf")
                                             ):
                                                 _target_for_swap = _vpicked
                                                 _original_siren = _pending_link["siren"]
@@ -4063,7 +4063,7 @@ async def run(batch_id: str) -> None:
                                                 and _vconf >= settings.gemini_d1b_quarantine_threshold
                                                 and _pending_link is not None
                                                 and _just_auto_confirmed  # was auto-confirmed pre-Gemini
-                                                and _pending_link["method"] != "chain"  # exclude chain (Agent B territory)
+                                                and _pending_link["method"] not in ("chain", "siret_address_naf")  # exclude chain (Agent B territory) and siret_address_naf (Track 2 — parent SIREN ≠ operating establishment by design)
                                             ):
                                                 _target_for_frank = _pending_link["siren"]
                                                 # Fetch SIRENE denom+enseigne for Frankenstein check.
