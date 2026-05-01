@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
+import psutil
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -34,6 +36,16 @@ from fortress.api.routes import activity, admin, auth as auth_routes, batch, bla
 from fortress.config.settings import settings
 
 logger = logging.getLogger("fortress.api")
+# Surface fortress.api logger.info() calls — stdlib defaults block them.
+# Why basicConfig (not setLevel on the leaf logger): INFO records propagate
+# from fortress.api to root. Root's default level is WARNING (filters them
+# out) AND root has no handlers (no destination). setLevel on fortress.api
+# alone doesn't fix either gate. basicConfig sets root level + adds a
+# StreamHandler in one call. force=True overrides any future dictConfig.
+# QA verified May 1 — empirically proven that setLevel alone is insufficient.
+# Bonus: also unblocks the existing _periodic_orphan_sweeper INFO logs
+# that have been silently dropped in production until now.
+logging.basicConfig(level=logging.INFO, force=True)
 
 
 @asynccontextmanager
@@ -629,12 +641,60 @@ async def lifespan(app: FastAPI):
     import asyncio as _asyncio_top
     _sweeper_task = _asyncio_top.create_task(_periodic_orphan_sweeper())
 
+    # ── Web-service memory observability (Diagnostic A+B, May 1) ─────
+    # Logs RSS of the web service process + summary of all python procs
+    # in the container every 60s. Pure observability — no behavior
+    # change, no schema change, no endpoint change. Companion to the
+    # per-batch-subprocess heartbeat at discovery.py:2380.
+    # Threshold 1500 MB = 75% of Render Standard plan's 2 GiB cap.
+    _PYTHON_PROC_NAMES = ("python", "python3", "python3.13", "uvicorn")
+
+    async def _web_heartbeat():
+        while True:
+            try:
+                rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
+                logger.info("web.heartbeat_rss rss_mb=%.1f", rss_mb)
+                if rss_mb > 1500:
+                    logger.warning(
+                        "web.heartbeat_rss_high rss_mb=%.1f", rss_mb
+                    )
+            except Exception as _hb_exc:
+                logger.debug("web.heartbeat_rss_failed err=%s", _hb_exc)
+
+            # Process summary — total RSS + count of python processes
+            try:
+                total_rss = 0
+                proc_count = 0
+                for _proc in psutil.process_iter(['name', 'memory_info']):
+                    try:
+                        if _proc.info['name'] in _PYTHON_PROC_NAMES:
+                            total_rss += _proc.info['memory_info'].rss
+                            proc_count += 1
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                logger.info(
+                    "web.process_summary total_python_rss_mb=%.1f "
+                    "python_proc_count=%d",
+                    total_rss / 1024 / 1024, proc_count,
+                )
+            except Exception as _ps_exc:
+                logger.debug("web.process_summary_failed err=%s", _ps_exc)
+
+            await _asyncio_top.sleep(60)
+
+    _web_hb_task = _asyncio_top.create_task(_web_heartbeat())
+
     try:
         yield
     finally:
         _sweeper_task.cancel()
+        _web_hb_task.cancel()
         try:
             await _sweeper_task
+        except (Exception, BaseException):
+            pass
+        try:
+            await _web_hb_task
         except (Exception, BaseException):
             pass
         await close_pool()
