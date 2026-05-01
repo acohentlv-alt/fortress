@@ -12,7 +12,9 @@ class _DecimalEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 
-from fastapi import APIRouter, Request
+import re
+
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -135,7 +137,7 @@ _EXPORT_JOINS = """
 """
 
 
-async def _fetch_export_data(batch_id: str) -> list[dict]:
+async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> list[dict]:
     """Fetch all companies + contacts for a specific batch.
 
     Scoped via batch_tags (one row per actual Maps result, keyed by
@@ -149,12 +151,27 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
     can act on confirmed contacts immediately and review pending ones
     afterwards. Pending rows are flagged via the `Statut lien` column
     ("En attente") and shaded in XLSX exports.
+
+    When search_query is set (E4.A), only entities whose batch_log row
+    recorded this exact search_query are returned.
     """
     job = await fetch_one(
         "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return []
+
+    sq_clause = ""
+    sq_params: tuple = ()
+    if search_query:
+        # E4.A — only entities whose batch_log row recorded this exact search_query.
+        sq_clause = """
+          AND co.siren IN (
+              SELECT DISTINCT siren FROM batch_log
+              WHERE batch_id = %s AND search_query = %s
+          )
+        """
+        sq_params = (batch_id, search_query)
 
     return await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s')}
@@ -164,9 +181,10 @@ async def _fetch_export_data(batch_id: str) -> list[dict]:
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
           AND (co.naf_status IS DISTINCT FROM 'mismatch' OR co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf'))
+          {sq_clause}
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
-    """, (batch_id, batch_id))
+    """, (batch_id, batch_id) + sq_params)
 
 
 # ── MASTER EXPORT (must be declared BEFORE parameterised routes) ──
@@ -368,7 +386,7 @@ async def export_contacts_filtered_csv(
 
 
 @router.get("/{batch_id}/csv")
-async def export_csv(batch_id: str, request: Request):
+async def export_csv(batch_id: str, request: Request, search_query: str = Query("", description="E4.A drill-down filter")):
     """Download all companies for a query as CSV."""
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
@@ -378,12 +396,20 @@ async def export_csv(batch_id: str, request: Request):
         if not batch or batch["workspace_id"] != user.workspace_id:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=403, content={"error": "Accès refusé."})
-    rows = await _fetch_export_data(batch_id)
+    rows = await _fetch_export_data(batch_id, search_query=search_query or None)
+
+    # Build filename — include slugged search_query when drill-down is active (E4.A)
+    if search_query:
+        sq_slug = re.sub(r'[^a-zA-Z0-9]+', '_', search_query).strip('_')[:50]
+        filename = f"{batch_id}_{sq_slug}.csv"
+    else:
+        filename = f"{batch_id}.csv"
+
     if not rows:
         return StreamingResponse(
             io.BytesIO(b"No data"),
             media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={batch_id}.csv"},
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     buf = io.StringIO()
@@ -398,7 +424,7 @@ async def export_csv(batch_id: str, request: Request):
     return StreamingResponse(
         io.BytesIO(content),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={batch_id}.csv"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

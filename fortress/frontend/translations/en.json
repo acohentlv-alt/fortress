@@ -560,7 +560,8 @@
     "queriesStateDone": "Search complete",
     "queriesStateRunning": "Search running",
     "queriesStateQueued": "Queued",
-    "queriesRunningLive": "{{count}} entities found (live)"
+    "queriesRunningLive": "{{count}} entities found (live)",
+    "queriesPrimaryWithExpansions": "{{total}} total (incl. {{expansion}} via expansion)"
   },
   "job": {
     "title": "Batch details",
@@ -671,6 +672,9 @@
     "queriesCitiesBucket": "Cities ({{count}})",
     "queriesPostalsBucket": "Postal codes ({{count}})",
     "queriesBranchError": "Error",
+    "queriesClickToFilter": "Click to filter the list",
+    "queriesFilterChip": "Filtered by: {{query}}",
+    "queriesFilterClear": "Clear filter",
     "scoreboardPendingApproval": "AWAITING REVIEW",
     "scoreboardSubtextPending": "{{count}} companies need manual review.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmed, {{pending}} pending)"

@@ -50,25 +50,41 @@ export function renderQueriesPanel(queries, opts = {}) {
     const primaries = (queries || []).filter(q => !q.is_expansion);
     const lines = [];
 
-    // Done rows
     for (const p of primaries) {
         const expansions = (queries || []).filter(q => q.is_expansion && q.primary_query === p.query);
         const cityExp = expansions.filter(e => e.widening_type === 'city');
         const postalExp = expansions.filter(e => e.widening_type === 'postal_code');
+
         const primaryEntityCount = p.new_companies || 0;
+        const expansionEntityTotal = expansions.reduce((s, e) => s + (e.new_companies || 0), 0);
         const expansionCount = expansions.length;
+        const totalEntityCount = primaryEntityCount + expansionEntityTotal;
         const durationStr = p.duration_sec != null ? `${p.duration_sec}s` : '';
         const primaryId = `qp-primary-${Math.random().toString(36).slice(2, 8)}`;
 
-        const summaryParts = [`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`];
-        if (expansionCount > 0) summaryParts.push(`${expansionCount} ${t('monitor.queriesElargissements') || 'élargissements'}`);
+        const summaryParts = [];
+        if (expansionCount > 0) {
+            summaryParts.push(t('monitor.queriesPrimaryWithExpansions', {
+                total: totalEntityCount,
+                expansion: expansionEntityTotal,
+            }));
+        } else {
+            summaryParts.push(`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`);
+        }
         if (durationStr) summaryParts.push(durationStr);
 
         if (collapsible) {
             if (expansionCount === 0) {
                 lines.push(`
                     <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
-                        <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)">
+                        <div
+                            class="qp-row-clickable"
+                            data-search-query="${escapeHtml(p.query)}"
+                            role="button"
+                            tabindex="0"
+                            style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
+                            title="${t('job.queriesClickToFilter')}"
+                        >
                             <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
                             <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
                             <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
@@ -79,17 +95,28 @@ export function renderQueriesPanel(queries, opts = {}) {
                 lines.push(`
                     <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
                         <div
+                            class="qp-row-clickable"
+                            data-search-query="${escapeHtml(p.query)}"
+                            role="button"
+                            tabindex="0"
                             style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
-                            onclick="(function(el){
-                                var body=document.getElementById('${primaryId}');
-                                if(!body) return;
-                                var chevron=el.querySelector('.qp-chevron');
-                                var hidden=body.style.display==='none';
-                                body.style.display=hidden?'':'none';
-                                if(chevron) chevron.style.transform=hidden?'rotate(90deg)':'';
-                            })(this)"
+                            title="${t('job.queriesClickToFilter')}"
                         >
-                            <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
+                            <span
+                                class="qp-chevron-btn"
+                                data-toggle-target="${primaryId}"
+                                style="cursor:pointer; padding:0 4px"
+                                onclick="event.stopPropagation(); (function(el){
+                                    var body=document.getElementById(el.dataset.toggleTarget);
+                                    if(!body) return;
+                                    var chevron=el.querySelector('.qp-chevron');
+                                    var hidden=body.style.display==='none';
+                                    body.style.display=hidden?'':'none';
+                                    if(chevron) chevron.style.transform=hidden?'rotate(90deg)':'';
+                                })(this)"
+                            >
+                                <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
+                            </span>
                             <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
                             <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
                             <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
@@ -103,7 +130,14 @@ export function renderQueriesPanel(queries, opts = {}) {
         } else {
             lines.push(`
                 <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
-                    <div style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0">
+                    <div
+                        class="qp-row-clickable"
+                        data-search-query="${escapeHtml(p.query)}"
+                        role="button"
+                        tabindex="0"
+                        style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0; cursor:pointer"
+                        title="${t('job.queriesClickToFilter')}"
+                    >
                         <span><span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span> <strong>${escapeHtml(p.query)}</strong></span>
                         <span style="color:var(--text-muted); font-size:var(--font-sm)">→ ${summaryParts.join(' · ')}</span>
                     </div>
@@ -115,7 +149,6 @@ export function renderQueriesPanel(queries, opts = {}) {
         }
     }
 
-    // Running row (single, if present and not already rendered as done)
     if (running && running.query) {
         lines.push(`
             <div class="qp-row qp-row--running" style="margin-bottom:var(--space-sm)">
@@ -128,7 +161,6 @@ export function renderQueriesPanel(queries, opts = {}) {
         `);
     }
 
-    // Queued rows
     for (const q of queued) {
         if (!q) continue;
         lines.push(`
@@ -262,9 +294,17 @@ function _renderBranchRow(e) {
     const errorChip = e.error
         ? `<span style="color:var(--danger); cursor:help; margin-left:4px" title="${escapeHtml(e.error)}">❌ ${t('job.queriesBranchError')}</span>`
         : '';
+    const branchQuery = e.query || '';
 
     return `
-        <div style="display:flex; gap:6px; padding:3px 0; font-size:var(--font-xs); color:var(--text-secondary)">
+        <div
+            class="qp-row-clickable qp-row-clickable--branch"
+            data-search-query="${escapeHtml(branchQuery)}"
+            role="button"
+            tabindex="0"
+            style="display:flex; gap:6px; padding:3px 0; font-size:var(--font-xs); color:var(--text-secondary); cursor:${branchQuery ? 'pointer' : 'default'}"
+            title="${branchQuery ? t('job.queriesClickToFilter') : ''}"
+        >
             <span style="color:var(--text-muted)">└─</span>
             <span style="flex:1">${escapeHtml(e.value || '')}</span>
             <span>→ ${n} ${t('monitor.queriesNewEntities')}</span>
@@ -272,4 +312,40 @@ function _renderBranchRow(e) {
             ${errorChip}
         </div>
     `;
+}
+
+/**
+ * Bind click + keyboard handlers on the panel's clickable rows.
+ * Dispatches a `qp:filter` CustomEvent with detail.searchQuery on the panel root.
+ *
+ * !!! NON-IDEMPOTENT — DO NOT CALL MORE THAN ONCE PER ROOT ELEMENT !!!
+ * Each call adds a fresh pair of listeners. Calling twice on the same root
+ * causes click events to fire qp:filter TWICE; calling N times causes Nx stacking.
+ *
+ * Safe usage:
+ *   - monitor.js: bind ONCE, OUTSIDE the 1.5s polling callback
+ *   - job.js: bind per renderJob() call (qPanel is freshly recreated each render)
+ *   - DO NOT call from inside setInterval / poll loops on persistent DOM nodes
+ *
+ * @param {HTMLElement} root - the container that wraps renderQueriesPanel output
+ */
+export function bindQueriesPanelClicks(root) {
+    if (!root) return;
+    const handler = (e) => {
+        const target = e.target.closest('.qp-row-clickable');
+        if (!target) return;
+        const sq = target.dataset.searchQuery;
+        if (!sq) return;
+        root.dispatchEvent(new CustomEvent('qp:filter', { detail: { searchQuery: sq }, bubbles: true }));
+    };
+    root.addEventListener('click', handler);
+    root.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const target = e.target.closest('.qp-row-clickable');
+        if (!target) return;
+        e.preventDefault();
+        const sq = target.dataset.searchQuery;
+        if (!sq) return;
+        root.dispatchEvent(new CustomEvent('qp:filter', { detail: { searchQuery: sq }, bubbles: true }));
+    });
 }
