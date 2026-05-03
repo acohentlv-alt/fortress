@@ -561,7 +561,8 @@
     "queriesStateRunning": "Search running",
     "queriesStateQueued": "Queued",
     "queriesRunningLive": "{{count}} entities found (live)",
-    "queriesPrimaryWithExpansions": "{{total}} total (incl. {{expansion}} via expansion)"
+    "queriesBreakdown_one": "{{primary}} from primary search, {{widen}} via {{count}} expansion",
+    "queriesBreakdown_other": "{{primary}} from primary search, {{widen}} via {{count}} expansions"
   },
   "job": {
     "title": "Batch details",

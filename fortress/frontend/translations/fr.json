@@ -567,7 +567,8 @@
     "queriesStateRunning": "Recherche en cours",
     "queriesStateQueued": "En file d'attente",
     "queriesRunningLive": "{{count}} entités trouvées (en direct)",
-    "queriesPrimaryWithExpansions": "{{total}} total (dont {{expansion}} par élargissement)"
+    "queriesBreakdown_one": "{{primary}} par recherche directe, {{widen}} via {{count}} élargissement",
+    "queriesBreakdown_other": "{{primary}} par recherche directe, {{widen}} via {{count}} élargissements"
   },
   "job": {
     "title": "Détail du batch",

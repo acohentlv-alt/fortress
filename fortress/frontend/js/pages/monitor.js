@@ -305,7 +305,7 @@ async function renderJobMonitor(container, batchId) {
         <!-- Queries Panel (Lever E1 — Apr 30): live done/running/queued breakdown -->
         <div class="card" style="margin-bottom:var(--space-xl)">
             <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                ${t('monitor.queriesTitle') || 'Recherches effectuées'}
+                ${t('monitor.queriesPanel')}
             </h3>
             <div id="mon-queries-list">
                 <span style="color:var(--text-muted); font-style:italic">${t('monitor.queriesLoading') || 'Chargement…'}</span>

@@ -64,9 +64,11 @@ export function renderQueriesPanel(queries, opts = {}) {
 
         const summaryParts = [];
         if (expansionCount > 0) {
-            summaryParts.push(t('monitor.queriesPrimaryWithExpansions', {
-                total: totalEntityCount,
-                expansion: expansionEntityTotal,
+            summaryParts.push(`${totalEntityCount} ${t('monitor.queriesNewEntities')}`);
+            summaryParts.push(t('monitor.queriesBreakdown', {
+                primary: primaryEntityCount,
+                widen: expansionEntityTotal,
+                count: expansionCount,
             }));
         } else {
             summaryParts.push(`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`);
