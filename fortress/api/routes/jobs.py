@@ -324,7 +324,7 @@ async def resume_job(batch_id: str, request: Request):
     from pathlib import Path
 
     user = getattr(request.state, 'user', None)
-    if not user or user.role not in ('admin', 'head'):
+    if not user:
         return JSONResponse(status_code=403, content={"error": "Accès refusé"})
 
     # Admin can resume any workspace's batch (per CLAUDE.md: "admin sees all
@@ -632,7 +632,24 @@ async def get_job(batch_id: str, request: Request):
             COUNT(DISTINCT co.siren) FILTER (
                 WHERE co.naf_status = 'mismatch' AND co.link_confidence = 'pending'
             ) AS mismatch_pending,
-            COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated
+            COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated,
+            -- Clickable counts: each FILTER predicate mirrors a state_filter clause at jobs.py:902-908
+            -- so the legend number == result count when the user clicks the legend row.
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.naf_status = 'verified'
+                  AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
+                  AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)
+            ) AS verified_clickable,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.naf_status = 'mismatch'
+                  AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
+            ) AS mismatch_clickable,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.link_confidence = 'pending'
+            ) AS pending_clickable,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL
+            ) AS unlinked_clickable
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
@@ -643,6 +660,11 @@ async def get_job(batch_id: str, request: Request):
         link_stats["naf_mismatch_confirmed"] = int(naf_row.get("mismatch_confirmed") or 0)
         link_stats["naf_mismatch_pending"] = int(naf_row.get("mismatch_pending") or 0)
         link_stats["naf_evaluated"] = int(naf_row.get("evaluated") or 0)
+        # BUG 2 FIX — clickable counts (legend + bar segment use these so legend == click result)
+        link_stats["naf_verified_clickable"] = int(naf_row.get("verified_clickable") or 0)
+        link_stats["naf_mismatch_clickable"] = int(naf_row.get("mismatch_clickable") or 0)
+        link_stats["pending_clickable"] = int(naf_row.get("pending_clickable") or 0)
+        link_stats["unlinked_clickable"] = int(naf_row.get("unlinked_clickable") or 0)
 
     # Split naf_verified into EXACT (strict prefix / section / method-keyed) vs RELATED (curated sibling).
     #

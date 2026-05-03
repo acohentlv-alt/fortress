@@ -38,8 +38,12 @@ function buildScoreboardCard(job, linkStats, summary) {
     const pending = linkStats.pending || 0;
     const unlinked = linkStats.unlinked || 0;
     const total = linkStats.total || (confirmed + pending + unlinked);
-    const nafVerified = linkStats.naf_verified || 0;
-    const nafMismatch = linkStats.naf_mismatch || 0;
+    // Bug 2 fix: keep both gross + clickable. Bar/legend/greenCount use clickable;
+    // nafNotEvaluated calc at line 366 uses gross to avoid pending-row double-counting.
+    const nafVerified = linkStats.naf_verified || 0;                       // gross — used in nafNotEvaluated calc
+    const nafMismatch = linkStats.naf_mismatch || 0;                       // gross — used in nafNotEvaluated calc
+    const nafVerifiedClickable = linkStats.naf_verified_clickable || 0;    // legend + bar
+    const nafMismatchClickable = linkStats.naf_mismatch_clickable || 0;    // legend + bar
     const nafEvaluated = linkStats.naf_evaluated || 0;
     const byMethod = linkStats.by_method || {};
     const byNaf = linkStats.by_naf || [];
@@ -116,8 +120,8 @@ function buildScoreboardCard(job, linkStats, summary) {
     `;
 
     // ── B: Batch shape bar + clickable legend ─────────────────────
-    const verified = nafVerified;
-    const mismatch = nafMismatch;
+    const verified = nafVerifiedClickable;
+    const mismatch = nafMismatchClickable;
     const barTotal = total || 1;
 
     // Build bar segments (omit zero-count)
@@ -192,7 +196,11 @@ function buildScoreboardCard(job, linkStats, summary) {
         </div>
     `;
 
-    const greenCount = pickedNafs.length === 0 ? confirmed : verified;
+    // Bug 2 fix (reviewer B1): use verified (= verified_clickable) always.
+    // In no-NAF batches, naf_status is never 'verified' so verified_clickable === 0 →
+    // the legend self-hides via the `greenCount > 0` guard at line 198. This avoids
+    // the silent 4→0 click divergence in no-NAF batches.
+    const greenCount = verified;
     const legendHtml = `
         <div style="margin-bottom:var(--space-lg)">
             ${greenLegendLabel && greenCount > 0 ? legendRow('naf_confirmed', 'var(--success)', greenCount, greenLegendLabel) : ''}
@@ -389,6 +397,8 @@ function buildScoreboardCard(job, linkStats, summary) {
                     ${nafExact > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafExactTooltip'))}"><span style="color:var(--success)">✓✓</span> <strong>${nafExact}</strong> ${t('job.linkStatsNafExact')}</span>` : ''}
                     ${nafRelated > 0 ? `<span title="${escapeHtml(t('job.linkStatsNafRelatedTooltip'))}"><span style="color:var(--success)">~</span> <strong>${nafRelated}</strong> ${t('job.linkStatsNafRelated')}</span>` : ''}
                     <span title="${escapeHtml(t('job.linkStatsNafMismatchTooltip'))}">
+                        ${/* Disclosure subline keeps gross naf_mismatch_confirmed + naf_mismatch_pending —
+                           provides breakdown context for the smaller clickable parent count above. */''}
                         <span style="color:#ef4444">✗</span> <strong>${nafMismatch}</strong> ${t('job.linkStatsNafMismatch')}
                         ${nafMismatch > 0 ? `<span style="color:var(--text-muted); font-weight:400; margin-left:4px">${t('job.linkStatsNafMismatchSubline', { confirmed: nafMismatchConfirmed, pending: nafMismatchPending })}</span>` : ''}
                     </span>
