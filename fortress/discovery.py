@@ -5441,8 +5441,11 @@ async def run(batch_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 async def _spawn_next_queued(workspace_id: int | None) -> None:
-    """Pick the oldest 'queued' batch in this workspace and spawn its runner.
+    """Pick the oldest 'queued' batch globally (any workspace) and spawn its runner.
     Called at end-of-run from the discovery process's outer finally block.
+    The workspace_id argument is accepted for backward compatibility but IGNORED —
+    global concurrency cap = 1 across all workspaces (matches batch.py guard and
+    the periodic sweeper in api/main.py).
     Idempotent under race: the spawned process's own pg_advisory_lock(42424242)
     serializes Maps work; if another spawner picked the same batch, the second
     process waits on the lock or exits cleanly when discovery.py's startup
@@ -5458,19 +5461,11 @@ async def _spawn_next_queued(workspace_id: int | None) -> None:
         settings.db_url, autocommit=True, **_KEEPALIVE_PARAMS
     )
     try:
-        if workspace_id is not None:
-            cur = await _conn.execute(
-                """SELECT batch_id FROM batch_data
-                   WHERE workspace_id = %s AND status = 'queued'
-                   ORDER BY created_at ASC LIMIT 1""",
-                (workspace_id,),
-            )
-        else:
-            cur = await _conn.execute(
-                """SELECT batch_id FROM batch_data
-                   WHERE workspace_id IS NULL AND status = 'queued'
-                   ORDER BY created_at ASC LIMIT 1""",
-            )
+        cur = await _conn.execute(
+            """SELECT batch_id FROM batch_data
+               WHERE status = 'queued'
+               ORDER BY created_at ASC LIMIT 1"""
+        )
         row = await cur.fetchone()
         if row:
             next_batch_id = row[0]

@@ -177,30 +177,21 @@ async def run_batch(body: BatchRunRequest, request: Request):
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id
 
-            # ── Same-workspace batch guard ─────────────────────────────────────
-            if workspace_id is not None:
-                guard_cur = await conn.execute(
-                    """SELECT 1 FROM batch_data
-                       WHERE workspace_id = %s
-                       AND status IN ('queued', 'in_progress')
-                       AND updated_at > NOW() - INTERVAL '15 minutes'
-                       LIMIT 1""",
-                    (workspace_id,),
-                )
-            else:
-                guard_cur = await conn.execute(
-                    """SELECT 1 FROM batch_data
-                       WHERE workspace_id IS NULL
-                       AND status IN ('queued', 'in_progress')
-                       AND updated_at > NOW() - INTERVAL '15 minutes'
-                       LIMIT 1""",
-                )
+            # ── Global batch guard — cap concurrent batches to 1 across all workspaces ──
+            # Render Standard plan = 2 GiB RAM. Two concurrent batches (2× Chromium)
+            # overflow the container. Guard is intentionally workspace-agnostic.
+            guard_cur = await conn.execute(
+                """SELECT 1 FROM batch_data
+                   WHERE status IN ('queued', 'in_progress')
+                   AND updated_at > NOW() - INTERVAL '15 minutes'
+                   LIMIT 1"""
+            )
             blocking = await guard_cur.fetchone()
             if blocking and not body.queue:
                 return JSONResponse(
                     status_code=409,
                     content={
-                        "error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine.",
+                        "error": "Un batch est déjà en cours sur le système. Veuillez patienter.",
                         "can_queue": True,
                     }
                 )

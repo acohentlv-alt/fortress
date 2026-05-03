@@ -512,41 +512,35 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Could not create dynamic tables: %s", e)
 
-        # ── E2: startup catch-up — spawn any orphaned 'queued' batches per workspace ──
+        # ── E2: startup catch-up — spawn at most ONE oldest queued batch globally ──
         # On boot (or restart), if the previous discovery process died without
-        # picking up the next queued batch, kick off the oldest queued batch
-        # for each workspace. Only one per workspace at a time.
+        # picking up the next queued batch, kick off the single oldest queued batch
+        # globally (any workspace). Only if zero in_progress batches exist anywhere
+        # (global concurrency cap = 1 across all workspaces, matching the guard in
+        # batch.py and the sweeper below).
         try:
             from fortress.api.db import get_conn
             import subprocess, sys as _sys, os as _os
             from pathlib import Path as _Path
             async with get_conn() as _conn:
-                _cur = await _conn.execute(
-                    """SELECT DISTINCT ON (workspace_id) batch_id, workspace_id
-                       FROM batch_data
-                       WHERE status = 'queued'
-                       ORDER BY workspace_id, created_at ASC"""
+                _running_cur = await _conn.execute(
+                    "SELECT 1 FROM batch_data WHERE status='in_progress' LIMIT 1"
                 )
-                _orphaned = await _cur.fetchall()
+                _has_running = await _running_cur.fetchone()
+                if not _has_running:
+                    _cur = await _conn.execute(
+                        """SELECT batch_id, workspace_id FROM batch_data
+                           WHERE status = 'queued'
+                           ORDER BY created_at ASC LIMIT 1"""
+                    )
+                    _orphaned = await _cur.fetchall()
+                else:
+                    _orphaned = []
             if _orphaned:
                 _fortress_root = _Path(__file__).resolve().parent.parent  # parent of fortress/
                 for _row in _orphaned:
                     _bid = _row[0] if isinstance(_row, tuple) else _row["batch_id"]
                     _ws = _row[1] if isinstance(_row, tuple) else _row["workspace_id"]
-                    # Skip if another in_progress batch already exists for this workspace
-                    async with get_conn() as _conn2:
-                        if _ws is not None:
-                            _check = await _conn2.execute(
-                                "SELECT 1 FROM batch_data WHERE workspace_id=%s AND status='in_progress' LIMIT 1",
-                                (_ws,),
-                            )
-                        else:
-                            _check = await _conn2.execute(
-                                "SELECT 1 FROM batch_data WHERE workspace_id IS NULL AND status='in_progress' LIMIT 1",
-                            )
-                        _running = await _check.fetchone()
-                    if _running:
-                        continue  # active batch's finally block (or sweeper) will pick it up
                     _runner_cmd = [_sys.executable, "-m", "fortress.discovery", _bid]
                     _launcher = _Path("/tmp/fortress_launcher.py")
                     if _launcher.exists():
@@ -570,9 +564,9 @@ async def lifespan(app: FastAPI):
     # Recovers from discovery.py SIGKILL/OOM-kill where the finally block
     # didn't fire (per memory reference_render_api.md — Render OOM-kill is
     # the literal "==> Detected service running on port 10000" log line).
-    # Every 5 min: find workspaces with queued batches but no in_progress
-    # sibling, where the oldest queued row is >10 min old, and spawn the
-    # head of that workspace's queue.
+    # Every 5 min: if no in_progress batch exists globally, spawn the single
+    # oldest queued batch (>10 min old) across all workspaces.
+    # Global concurrency cap = 1 (matches batch.py guard and E2 catch-up above).
     async def _periodic_orphan_sweeper():
         import asyncio as _asyncio
         import subprocess as _subprocess
@@ -584,43 +578,25 @@ async def lifespan(app: FastAPI):
                 await _asyncio.sleep(300)  # 5 min
                 from fortress.api.db import get_conn as _get_conn
                 async with _get_conn() as _swp_conn:
-                    _swp_cur = await _swp_conn.execute(
-                        """SELECT DISTINCT bd1.workspace_id
-                           FROM batch_data bd1
-                           WHERE bd1.status = 'queued'
-                             AND bd1.created_at < NOW() - INTERVAL '10 minutes'
-                             AND NOT EXISTS (
-                                 SELECT 1 FROM batch_data bd2
-                                 WHERE (bd2.workspace_id = bd1.workspace_id
-                                        OR (bd2.workspace_id IS NULL AND bd1.workspace_id IS NULL))
-                                   AND bd2.status = 'in_progress'
-                             )"""
+                    _running_cur = await _swp_conn.execute(
+                        "SELECT 1 FROM batch_data WHERE status='in_progress' LIMIT 1"
                     )
-                    _orphan_ws = await _swp_cur.fetchall()
-                if not _orphan_ws:
+                    _running = await _running_cur.fetchone()
+                    if _running:
+                        continue  # something already running — wait
+                    _swp_cur = await _swp_conn.execute(
+                        """SELECT batch_id, workspace_id FROM batch_data
+                           WHERE status = 'queued'
+                             AND created_at < NOW() - INTERVAL '10 minutes'
+                           ORDER BY created_at ASC LIMIT 1"""
+                    )
+                    _orphan_rows = await _swp_cur.fetchall()
+                if not _orphan_rows:
                     continue
                 _fr = _Path(__file__).resolve().parent.parent
-                for _ws_row in _orphan_ws:
-                    _ws_id = _ws_row[0] if isinstance(_ws_row, tuple) else _ws_row.get("workspace_id")
-                    # Pick oldest queued in this workspace
-                    async with _get_conn() as _pick_conn:
-                        if _ws_id is not None:
-                            _pick = await _pick_conn.execute(
-                                """SELECT batch_id FROM batch_data
-                                   WHERE workspace_id = %s AND status = 'queued'
-                                   ORDER BY created_at ASC LIMIT 1""",
-                                (_ws_id,),
-                            )
-                        else:
-                            _pick = await _pick_conn.execute(
-                                """SELECT batch_id FROM batch_data
-                                   WHERE workspace_id IS NULL AND status = 'queued'
-                                   ORDER BY created_at ASC LIMIT 1"""
-                            )
-                        _pr = await _pick.fetchone()
-                    if not _pr:
-                        continue
+                for _pr in _orphan_rows:
                     _next_bid = _pr[0] if isinstance(_pr, tuple) else _pr.get("batch_id")
+                    _ws_id = _pr[1] if isinstance(_pr, tuple) else _pr.get("workspace_id")
                     _cmd = [_sys.executable, "-m", "fortress.discovery", _next_bid]
                     _lc = _Path("/tmp/fortress_launcher.py")
                     if _lc.exists():
@@ -647,7 +623,7 @@ async def lifespan(app: FastAPI):
     # change, no schema change, no endpoint change. Companion to the
     # per-batch-subprocess heartbeat at discovery.py:2380.
     # Threshold 1500 MB = 75% of Render Standard plan's 2 GiB cap.
-    _PYTHON_PROC_NAMES = ("python", "python3", "python3.13", "uvicorn")
+    _PYTHON_PROC_NAMES = ("python", "python3", "python3.13", "uvicorn", "chrome", "chromium", "chromium-browser", "node")
 
     async def _web_heartbeat():
         while True:
@@ -673,8 +649,8 @@ async def lifespan(app: FastAPI):
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
                 logger.info(
-                    "web.process_summary total_python_rss_mb=%.1f "
-                    "python_proc_count=%d",
+                    "web.process_summary total_proc_rss_mb=%.1f "
+                    "proc_count=%d",
                     total_rss / 1024 / 1024, proc_count,
                 )
             except Exception as _ps_exc:
