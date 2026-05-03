@@ -219,9 +219,9 @@ function buildScoreboardCard(job, linkStats, summary) {
     // Numerator/denominator for Secteur metric
     let sectorNum, sectorDenom, sectorPct;
     if (hasPicked) {
-        sectorNum = nafVerified;
+        sectorNum = nafVerifiedClickable;
         sectorDenom = total;
-        sectorPct = pct(nafVerified);
+        sectorPct = pct(nafVerifiedClickable);
     } else if (dominantNaf) {
         sectorNum = dominantNaf.count;
         sectorDenom = confirmed;
@@ -247,9 +247,9 @@ function buildScoreboardCard(job, linkStats, summary) {
                 sectorSubtext = t('job.scoreboardSubtextSectorAllMatch');
             } else if (siblingNafs.length === 1) {
                 sectorSubtext = t('job.scoreboardSubtextSectorOneSibling', {
-                    verified: nafVerified,
+                    verified: nafVerifiedClickable,
                     pickedCode,
-                    mismatch: nafMismatch,
+                    mismatch: nafMismatchClickable,
                     siblingCode: siblingNafs[0].code,
                     siblingLabel: siblingNafs[0].label,
                 });
@@ -260,9 +260,9 @@ function buildScoreboardCard(job, linkStats, summary) {
                     ? `${top3SiblingsStr} ${t('job.scoreboardSubtextSiblingsMoreSuffix', { count: moreSiblings })}`
                     : top3SiblingsStr;
                 sectorSubtext = t('job.scoreboardSubtextSectorManySiblings', {
-                    verified: nafVerified,
+                    verified: nafVerifiedClickable,
                     pickedCode,
-                    mismatch: nafMismatch,
+                    mismatch: nafMismatchClickable,
                     siblingList,
                 });
             }
