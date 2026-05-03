@@ -191,14 +191,15 @@ async def upsert_officer(conn: Any, officer: Officer) -> None:
     await conn.execute(
         """
         INSERT INTO officers (siren, nom, prenom, role, civilite,
-                              email_direct, ligne_directe, source, collected_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                              email_direct, ligne_directe, annee_naissance, source, collected_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (siren, nom, COALESCE(prenom, '')) DO UPDATE SET
-            role          = COALESCE(EXCLUDED.role,          officers.role),
-            civilite      = COALESCE(EXCLUDED.civilite,      officers.civilite),
-            email_direct  = COALESCE(EXCLUDED.email_direct,  officers.email_direct),
-            ligne_directe = COALESCE(EXCLUDED.ligne_directe, officers.ligne_directe),
-            collected_at  = EXCLUDED.collected_at
+            role             = COALESCE(EXCLUDED.role,             officers.role),
+            civilite         = COALESCE(EXCLUDED.civilite,         officers.civilite),
+            email_direct     = COALESCE(EXCLUDED.email_direct,     officers.email_direct),
+            ligne_directe    = COALESCE(EXCLUDED.ligne_directe,    officers.ligne_directe),
+            annee_naissance  = COALESCE(EXCLUDED.annee_naissance,  officers.annee_naissance),
+            collected_at     = EXCLUDED.collected_at
         """,
         (
             officer.siren,
@@ -208,6 +209,7 @@ async def upsert_officer(conn: Any, officer: Officer) -> None:
             officer.civilite,
             officer.email_direct,
             officer.ligne_directe,
+            officer.annee_naissance,
             officer.source.value,
             officer.collected_at or datetime.now(tz=timezone.utc),
         ),

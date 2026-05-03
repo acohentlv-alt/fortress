@@ -48,6 +48,62 @@ _A2_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 15.0)
 _LAST_A2_RATE_LIMIT_EXHAUSTED: bool = False
 
 
+def parse_company_fields(hit: dict) -> dict[str, Any]:
+    """Extract company-level fields from a raw Recherche Entreprises API hit.
+
+    Returns a dict with the same keys that fetch_dirigeants builds into
+    company_data, so callers (fetch_dirigeants and Step 0 save sites) share
+    a single extraction path.
+    """
+    result: dict[str, Any] = {}
+
+    finances = hit.get("finances", {})
+    if finances:
+        latest_year = max(finances.keys(), default=None)
+        if latest_year:
+            ca = finances[latest_year].get("ca")
+            resultat = finances[latest_year].get("resultat_net")
+            if ca is not None:
+                result["chiffre_affaires"] = ca
+                result["annee_ca"] = latest_year
+            if resultat is not None:
+                result["resultat_net"] = resultat
+
+    effectif = hit.get("tranche_effectif_salarie")
+    if effectif:
+        result["tranche_effectif"] = effectif
+
+    cat = hit.get("categorie_entreprise")
+    if cat:
+        result["categorie_entreprise"] = cat
+
+    nature = hit.get("nature_juridique")
+    if nature:
+        result["nature_juridique"] = nature
+
+    for src_key, dst_key in [
+        ("date_creation", "date_creation_inpi"),
+        ("date_fermeture", "date_fermeture"),
+        ("etat_administratif", "etat_administratif_inpi"),
+        ("nombre_etablissements_ouverts", "nombre_etablissements_ouverts"),
+    ]:
+        v = hit.get(src_key)
+        if v is not None and v != "":
+            result[dst_key] = v
+
+    siege = hit.get("siege") or {}
+    if isinstance(siege, dict):
+        siege_data: dict[str, Any] = {}
+        if siege.get("adresse"):
+            siege_data["adresse"] = siege["adresse"]
+        if siege.get("liste_enseignes"):
+            siege_data["enseignes"] = siege["liste_enseignes"]
+        if siege_data:
+            result["_siege"] = siege_data
+
+    return result
+
+
 async def _fire_inpi_get(url: str) -> tuple[int, dict | None]:
     """Fire one INPI GET request under the global lock with the post-call rate gate.
 
@@ -80,7 +136,7 @@ async def search_by_name(
     cp: str | None = None,
     *,
     retry_on_rate_limit: bool = True,
-) -> tuple[str, str | None, str | None, str | None] | None:
+) -> tuple[str, str | None, str | None, str | None, dict] | None:
     """Search for a company by name in Recherche Entreprises API.
 
     Args:
@@ -95,7 +151,8 @@ async def search_by_name(
             from any future call site that explicitly wants fail-fast.
 
     Returns:
-        (siren, naf_code, nom_complet, cp) tuple on hit, or None.
+        (siren, naf_code, nom_complet, cp, hit) 5-tuple on hit, or None.
+        hit is the raw API result dict for field harvesting via parse_company_fields.
     """
     params: list[str] = [f"q={query}", "per_page=3"]
     if cp:
@@ -158,7 +215,7 @@ async def search_by_name(
         return None
 
     log.info("inpi.search_by_name_hit", query=query, siren=siren, nom=nom_complet, naf=naf_code)
-    return (siren, naf_code, nom_complet, hit_cp or cp)
+    return (siren, naf_code, nom_complet, hit_cp or cp, hit)
 
 
 async def fetch_dirigeants(
@@ -210,30 +267,7 @@ async def fetch_dirigeants(
 
         company = results[0]
 
-        company_data: dict[str, Any] = {}
-        finances = company.get("finances", {})
-        if finances:
-            latest_year = max(finances.keys(), default=None)
-            if latest_year:
-                ca = finances[latest_year].get("ca")
-                resultat = finances[latest_year].get("resultat_net")
-                if ca is not None:
-                    company_data["chiffre_affaires"] = ca
-                    company_data["ca_annee"] = latest_year
-                if resultat is not None:
-                    company_data["resultat_net"] = resultat
-
-        effectif = company.get("tranche_effectif_salarie")
-        if effectif:
-            company_data["tranche_effectif"] = effectif
-
-        cat = company.get("categorie_entreprise")
-        if cat:
-            company_data["categorie_entreprise"] = cat
-
-        nature = company.get("nature_juridique")
-        if nature:
-            company_data["nature_juridique"] = nature
+        company_data: dict[str, Any] = parse_company_fields(company)
 
         dirigeants_raw = company.get("dirigeants", [])
         dirigeants: list[dict[str, Any]] = []
@@ -256,11 +290,13 @@ async def fetch_dirigeants(
             elif "président" in qualite_lower or "directeur" in qualite_lower or "gérant" in qualite_lower:
                 civilite = "M."
 
+            annee_naissance = (d.get("annee_de_naissance") or "").strip() or None
             dirigeants.append({
                 "nom": nom,
                 "prenom": prenom if prenom else None,
                 "qualite": qualite,
                 "civilite": civilite,
+                "annee_naissance": annee_naissance,
             })
 
         log.info(

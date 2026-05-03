@@ -659,6 +659,8 @@ export async function renderCompany(container, siren) {
                     </span>` : ''}
                     ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.ratingTooltip')}</strong><br>${t('company.ratingTooltipDesc')}<span class="info-tip-source">${t('company.ratingTooltipSource')}</span></span></span></span>` : ''}
                     ${mc.maps_url ? `<a href="${mc.maps_url}" target="_blank" rel="noopener" class="glass-badge glass-badge--lg glass-badge--cyan" style="text-decoration:none">🗺️ Google Maps ↗</a>` : ''}
+                    ${data.rescued_by === 'inpi_validated' ? `<span class="badge badge-success">✓ Validé par INPI</span>` : ''}
+                    ${co.etat_administratif_inpi === 'F' ? `<span class="badge badge-danger">⚠ Entreprise fermée (RNE)</span>` : ''}
                 </div>
             </div>
             <div class="company-detail-actions">

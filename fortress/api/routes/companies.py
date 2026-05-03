@@ -5,6 +5,7 @@ Detail view retrieves full data including enriched fields:
   Forme Juridique, Code NAF, Headcount, Dirigeants, Revenue (nullable).
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -1168,6 +1169,10 @@ async def _get_company_impl(siren: str, request=None):
             co.created_at, co.updated_at,
             co.linked_siren, co.link_confidence, co.link_method,
             co.naf_status, co.link_signals,
+            co.rescued_by, co.etat_administratif_inpi,
+            co.categorie_entreprise, co.nature_juridique,
+            co.date_creation_inpi, co.date_fermeture,
+            co.nombre_etablissements_ouverts,
             co.workspace_id
         FROM companies co
         WHERE co.siren = %s
@@ -1399,6 +1404,13 @@ async def _get_company_impl(siren: str, request=None):
         "link_method": company.get("link_method"),
         "link_confidence": company.get("link_confidence"),
         "link_signals": company.get("link_signals"),
+        "rescued_by": company.get("rescued_by"),
+        "etat_administratif_inpi": company.get("etat_administratif_inpi"),
+        "categorie_entreprise": company.get("categorie_entreprise"),
+        "nature_juridique": company.get("nature_juridique"),
+        "date_creation_inpi": company.get("date_creation_inpi"),
+        "date_fermeture": company.get("date_fermeture"),
+        "nombre_etablissements_ouverts": company.get("nombre_etablissements_ouverts"),
         "suggested_matches": suggested_matches,
         "matching_available": siren.startswith("MAPS") and not company.get("linked_siren") and company.get("link_confidence") is None,
         "data_conflicts": merged.get("data_conflicts", []),
@@ -1785,6 +1797,7 @@ async def _post_link_inpi_enrich(target_siren: str, maps_siren: str):
                     prenom=d.get("prenom"),
                     role=d.get("qualite"),
                     civilite=d.get("civilite"),
+                    annee_naissance=d.get("annee_naissance"),
                     source=ContactSource.RECHERCHE_ENTREPRISES,
                 )
                 await upsert_officer(conn, officer)
@@ -1796,18 +1809,37 @@ async def _post_link_inpi_enrich(target_siren: str, maps_siren: str):
                     detail=f"{len(dirigeants)} dirigeant(s) via INPI après lien confirmé",
                 )
 
-            # Update financial data on the target company row
+            # Update financial and INPI-harvested data on the target company row
             if company_data:
+                _DIRECT_FIELDS = [
+                    ("chiffre_affaires", "chiffre_affaires", None),
+                    ("resultat_net", "resultat_net", None),
+                    ("annee_ca", "annee_ca", "int"),
+                    ("categorie_entreprise", "categorie_entreprise", None),
+                    ("nature_juridique", "nature_juridique", None),
+                    ("date_creation_inpi", "date_creation_inpi", None),
+                    ("date_fermeture", "date_fermeture", None),
+                    ("etat_administratif_inpi", "etat_administratif_inpi", None),
+                    ("nombre_etablissements_ouverts", "nombre_etablissements_ouverts", "int"),
+                ]
                 parts, vals = [], []
-                if "chiffre_affaires" in company_data:
-                    parts.append("chiffre_affaires = %s")
-                    vals.append(company_data["chiffre_affaires"])
-                if "resultat_net" in company_data:
-                    parts.append("resultat_net = %s")
-                    vals.append(company_data["resultat_net"])
+                for src, col, coerce in _DIRECT_FIELDS:
+                    if src not in company_data:
+                        continue
+                    v = company_data[src]
+                    if coerce == "int":
+                        try:
+                            v = int(v)
+                        except (ValueError, TypeError):
+                            continue
+                    parts.append(f"{col} = %s")
+                    vals.append(v)
                 if "tranche_effectif" in company_data:
                     parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
                     vals.append(company_data["tranche_effectif"])
+                if "_siege" in company_data:
+                    parts.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s::jsonb")
+                    vals.append(json.dumps({"inpi_siege": company_data["_siege"]}))
                 if parts:
                     vals.append(target_siren)
                     await conn.execute(

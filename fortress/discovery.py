@@ -1536,7 +1536,7 @@ async def _match_to_sirene(
                     pass  # _inpi_hit stays None — fall through to other steps
 
         if _inpi_hit:
-            inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp = _inpi_hit
+            inpi_siren, _inpi_naf, _inpi_nom, _inpi_cp, _inpi_full = _inpi_hit
             local_cur = await conn.execute(
                 """SELECT siren, denomination, enseigne, adresse, code_postal, ville, departement
                    FROM companies
@@ -1563,6 +1563,59 @@ async def _match_to_sirene(
                     log.info("discovery.inpi_primary_match",
                              maps_name=maps_name, siren=inpi_siren,
                              local_denom=local_denom, local_enseigne=local_enseigne)
+                    # Phase 3 — Step 0 harvest: save INPI company fields immediately
+                    # on primary match, before the expensive website-crawl path.
+                    try:
+                        from fortress.matching.inpi import parse_company_fields
+                        _step0_data = parse_company_fields(_inpi_full)
+                        if _step0_data:
+                            _DIRECT_FIELDS = [
+                                ("chiffre_affaires", "chiffre_affaires", None),
+                                ("resultat_net", "resultat_net", None),
+                                ("annee_ca", "annee_ca", "int"),
+                                ("categorie_entreprise", "categorie_entreprise", None),
+                                ("nature_juridique", "nature_juridique", None),
+                                ("date_creation_inpi", "date_creation_inpi", None),
+                                ("date_fermeture", "date_fermeture", None),
+                                ("etat_administratif_inpi", "etat_administratif_inpi", None),
+                                ("nombre_etablissements_ouverts", "nombre_etablissements_ouverts", "int"),
+                            ]
+                            _s0_parts, _s0_vals = [], []
+                            for _src, _col, _coerce in _DIRECT_FIELDS:
+                                if _src not in _step0_data: continue
+                                _v = _step0_data[_src]
+                                if _coerce == "int":
+                                    try: _v = int(_v)
+                                    except (ValueError, TypeError): continue
+                                _s0_parts.append(f"{_col} = %s"); _s0_vals.append(_v)
+                            if "tranche_effectif" in _step0_data:
+                                _s0_parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                                _s0_vals.append(_step0_data["tranche_effectif"])
+                            if "_siege" in _step0_data:
+                                _s0_parts.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s::jsonb")
+                                _s0_vals.append(json.dumps({"inpi_siege": _step0_data["_siege"]}))
+                            if _s0_parts:
+                                _s0_vals.append(inpi_siren)
+                                await conn.execute(
+                                    f"UPDATE companies SET {', '.join(_s0_parts)} WHERE siren = %s",
+                                    tuple(_s0_vals),
+                                )
+                                _s0_saved = [_c for _,_c,_cc in _DIRECT_FIELDS if _ in _step0_data]
+                                if "tranche_effectif" in _step0_data: _s0_saved.append("tranche_effectif")
+                                if "_siege" in _step0_data: _s0_saved.append("inpi_siege")
+                                _s0_bid = _timing_batch_id
+                                if _s0_bid is not None:
+                                    _s0_pool = pool_var.get()
+                                    if _s0_pool is not None:
+                                        async with _s0_pool.connection() as _s0_conn:
+                                            await log_audit(
+                                                _s0_conn, batch_id=str(_s0_bid),
+                                                siren=inpi_siren,
+                                                action="financial_data", result="success",
+                                                detail=f"Données INPI (step0): {', '.join(_s0_saved)}",
+                                            )
+                    except Exception as _s0_exc:
+                        log.debug("discovery.step0_inpi_save_failed", siren=inpi_siren, error=str(_s0_exc))
                     return {
                         "siren": inpi_siren,
                         "denomination": local_denom,
@@ -3005,7 +3058,7 @@ async def run(batch_id: str) -> None:
                                             _a2_hit = None
 
                                         if _a2_hit:
-                                            _a2_siren, _a2_naf, _a2_nom, _a2_cp = _a2_hit
+                                            _a2_siren, _a2_naf, _a2_nom, _a2_cp, _a2_full = _a2_hit
                                             log.info(
                                                 "discovery.a2_sirene_searched",
                                                 maps_name=maps_name,
@@ -3079,6 +3132,56 @@ async def run(batch_id: str) -> None:
                                                         "adresse": _a2_local_row[3] or "",
                                                         "ville": _a2_local_row[5] or "",
                                                     }
+                                                    # Phase 3 — A2 harvest: save INPI company fields
+                                                    # on A2 confirms, targeting the matched real SIREN.
+                                                    try:
+                                                        from fortress.matching.inpi import parse_company_fields
+                                                        _a2_data = parse_company_fields(_a2_full)
+                                                        if _a2_data:
+                                                            _A2_DIRECT_FIELDS = [
+                                                                ("chiffre_affaires", "chiffre_affaires", None),
+                                                                ("resultat_net", "resultat_net", None),
+                                                                ("annee_ca", "annee_ca", "int"),
+                                                                ("categorie_entreprise", "categorie_entreprise", None),
+                                                                ("nature_juridique", "nature_juridique", None),
+                                                                ("date_creation_inpi", "date_creation_inpi", None),
+                                                                ("date_fermeture", "date_fermeture", None),
+                                                                ("etat_administratif_inpi", "etat_administratif_inpi", None),
+                                                                ("nombre_etablissements_ouverts", "nombre_etablissements_ouverts", "int"),
+                                                            ]
+                                                            _a2p, _a2v = [], []
+                                                            for _src, _col, _coerce in _A2_DIRECT_FIELDS:
+                                                                if _src not in _a2_data: continue
+                                                                _v = _a2_data[_src]
+                                                                if _coerce == "int":
+                                                                    try: _v = int(_v)
+                                                                    except (ValueError, TypeError): continue
+                                                                _a2p.append(f"{_col} = %s"); _a2v.append(_v)
+                                                            if "tranche_effectif" in _a2_data:
+                                                                _a2p.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
+                                                                _a2v.append(_a2_data["tranche_effectif"])
+                                                            if "_siege" in _a2_data:
+                                                                _a2p.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s::jsonb")
+                                                                _a2v.append(json.dumps({"inpi_siege": _a2_data["_siege"]}))
+                                                            if _a2p:
+                                                                _a2v.append(_a2_siren)
+                                                                async with pool.connection() as _a2_save_conn:
+                                                                    await _a2_save_conn.execute(
+                                                                        f"UPDATE companies SET {', '.join(_a2p)} WHERE siren = %s",
+                                                                        tuple(_a2v),
+                                                                    )
+                                                                    _a2_saved = [_c for _,_c,_cc in _A2_DIRECT_FIELDS if _ in _a2_data]
+                                                                    if "tranche_effectif" in _a2_data: _a2_saved.append("tranche_effectif")
+                                                                    if "_siege" in _a2_data: _a2_saved.append("inpi_siege")
+                                                                    await log_audit(
+                                                                        _a2_save_conn, batch_id=batch_id,
+                                                                        siren=_a2_siren,
+                                                                        action="financial_data", result="success",
+                                                                        detail=f"Données INPI (A2): {', '.join(_a2_saved)}",
+                                                                        workspace_id=batch_workspace_id,
+                                                                    )
+                                                    except Exception as _a2_save_exc:
+                                                        log.debug("discovery.a2_inpi_save_failed", siren=_a2_siren, error=str(_a2_save_exc))
                                                 else:
                                                     log.info(
                                                         "discovery.a2_match_rejected",
@@ -4430,6 +4533,7 @@ async def run(batch_id: str) -> None:
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
                     # Fuzzy name matches wait for user confirmation before INPI call.
                     _inpi_officers_fires = bool(_pending_link and _pending_link["method"] in _STRONG_METHODS)
+                    re_company_data: dict = {}  # populated by fetch_dirigeants when fires; checked by Phase 4 rescue
                     if _inpi_officers_fires:
                         try:
                             from fortress.matching.inpi import fetch_dirigeants
@@ -4447,6 +4551,7 @@ async def run(batch_id: str) -> None:
                                         prenom=d.get("prenom"),
                                         role=d.get("qualite"),
                                         civilite=d.get("civilite"),
+                                        annee_naissance=d.get("annee_naissance"),
                                         source=CS.RECHERCHE_ENTREPRISES,
                                     )
                                     # Check RGPD opposition before upserting officer
@@ -4468,27 +4573,44 @@ async def run(batch_id: str) -> None:
                                     )
 
                                 if re_company_data:
+                                    _DIRECT_FIELDS = [
+                                        ("chiffre_affaires", "chiffre_affaires", None),
+                                        ("resultat_net", "resultat_net", None),
+                                        ("annee_ca", "annee_ca", "int"),
+                                        ("categorie_entreprise", "categorie_entreprise", None),
+                                        ("nature_juridique", "nature_juridique", None),
+                                        ("date_creation_inpi", "date_creation_inpi", None),
+                                        ("date_fermeture", "date_fermeture", None),
+                                        ("etat_administratif_inpi", "etat_administratif_inpi", None),
+                                        ("nombre_etablissements_ouverts", "nombre_etablissements_ouverts", "int"),
+                                    ]
                                     parts, vals = [], []
-                                    if "chiffre_affaires" in re_company_data:
-                                        parts.append("chiffre_affaires = %s")
-                                        vals.append(re_company_data["chiffre_affaires"])
-                                    if "resultat_net" in re_company_data:
-                                        parts.append("resultat_net = %s")
-                                        vals.append(re_company_data["resultat_net"])
+                                    for src, col, coerce in _DIRECT_FIELDS:
+                                        if src not in re_company_data: continue
+                                        v = re_company_data[src]
+                                        if coerce == "int":
+                                            try: v = int(v)
+                                            except (ValueError, TypeError): continue
+                                        parts.append(f"{col} = %s"); vals.append(v)
                                     if "tranche_effectif" in re_company_data:
                                         parts.append("tranche_effectif = COALESCE(tranche_effectif, %s)")
                                         vals.append(re_company_data["tranche_effectif"])
+                                    if "_siege" in re_company_data:
+                                        parts.append("extra_data = COALESCE(extra_data, '{}'::jsonb) || %s::jsonb")
+                                        vals.append(json.dumps({"inpi_siege": re_company_data["_siege"]}))
                                     if parts:
                                         vals.append(siren)
                                         await conn.execute(
                                             f"UPDATE companies SET {', '.join(parts)} WHERE siren = %s",
                                             tuple(vals),
                                         )
-                                        _fin_fields = [k for k in ("chiffre_affaires", "resultat_net", "tranche_effectif") if k in re_company_data]
+                                        _saved = [c for _,c,_c in _DIRECT_FIELDS if _ in re_company_data]
+                                        if "tranche_effectif" in re_company_data: _saved.append("tranche_effectif")
+                                        if "_siege" in re_company_data: _saved.append("inpi_siege")
                                         await log_audit(
                                             conn, batch_id=batch_id, siren=siren,
                                             action="financial_data", result="success",
-                                            detail=f"Données financières: {', '.join(_fin_fields)}",
+                                            detail=f"Données INPI: {', '.join(_saved)}",
                                             workspace_id=batch_workspace_id,
                                         )
                         except Exception as exc:
@@ -4497,6 +4619,65 @@ async def run(batch_id: str) -> None:
                         # Not a strong-method confirm — record skip row
                         async with time_step(pool, batch_int_id, siren, "inpi_officers", fired=False):
                             pass
+
+                    # Phase 4: Post-officer-fetch INPI corroboration rescue.
+                    # Mirrors gemini_rescue pattern at lines 4220-4248.
+                    # Upgrades pending → confirmed when Maps↔INPI signals corroborate
+                    # the match, even on NAF mismatch.
+                    if (
+                        _pending_link
+                        and _pending_link["method"] in _STRONG_METHODS
+                        and re_company_data
+                        and re_company_data.get("_siege")
+                    ):
+                        async with pool.connection() as conn:
+                            _row_cursor = await conn.execute(
+                                "SELECT link_confidence, naf_status FROM companies WHERE siren = %s",
+                                (siren,)
+                            )
+                            _row = await _row_cursor.fetchone()
+                            if _row and _row[0] == "pending" and _row[1] == "mismatch":
+                                from fortress.matching.entities import normalize_street_key
+                                _inpi_addr = re_company_data["_siege"].get("adresse") or ""
+                                _inpi_enseignes = re_company_data["_siege"].get("enseignes") or []
+
+                                _addr_match = False
+                                if _inpi_addr and maps_address:
+                                    _addr_match = (
+                                        normalize_street_key(_inpi_addr.lower()) ==
+                                        normalize_street_key(maps_address.lower())
+                                    )
+
+                                _enseigne_match = False
+                                if _inpi_enseignes and maps_name:
+                                    _enseigne_match = any(
+                                        _name_match_score(maps_name, e) >= 0.8
+                                        for e in _inpi_enseignes if e
+                                    )
+
+                                if _addr_match and _enseigne_match:
+                                    _target = _pending_link["siren"]
+                                    await conn.execute(
+                                        """UPDATE companies
+                                           SET link_confidence = 'confirmed',
+                                               rescued_by = 'inpi_validated',
+                                               link_signals = COALESCE(link_signals, '{}'::jsonb)
+                                                              || jsonb_build_object('inpi_corroboration',
+                                                                  jsonb_build_object('address_match', true,
+                                                                                     'enseigne_match', true))
+                                           WHERE siren = %s""",
+                                        (siren,),
+                                    )
+                                    await _copy_sirene_reference_data(conn, siren, _target)
+                                    await log_audit(
+                                        conn, batch_id=batch_id, siren=siren,
+                                        action="auto_linked_inpi_validated", result="success",
+                                        detail=f"Maps↔INPI corroboration: address_match=true, enseigne_match=true (method={_pending_link['method']})",
+                                        workspace_id=batch_workspace_id,
+                                    )
+                                    log.info("discovery.inpi_validated_rescue",
+                                             maps_name=maps_name, siren=_target,
+                                             original_method=_pending_link["method"])
 
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(

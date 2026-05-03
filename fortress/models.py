@@ -110,6 +110,7 @@ class Officer(BaseModel):
     civilite: str | None = None
     email_direct: str | None = None
     ligne_directe: str | None = None
+    annee_naissance: str | None = None
     source: ContactSource = ContactSource.INPI
     collected_at: datetime | None = None
 

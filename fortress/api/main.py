@@ -249,6 +249,41 @@ async def lifespan(app: FastAPI):
                     ON companies (departement, LOWER(adresse))
                 """)
 
+                # ── INPI-harvested fields (Phase 2) ───────────────────
+                for col, col_type in [
+                    ("categorie_entreprise", "TEXT"),
+                    ("nature_juridique", "TEXT"),
+                    ("date_creation_inpi", "DATE"),
+                    ("date_fermeture", "DATE"),
+                    ("etat_administratif_inpi", "VARCHAR(1)"),
+                    ("nombre_etablissements_ouverts", "INTEGER"),
+                ]:
+                    await conn.execute(
+                        f"ALTER TABLE companies ADD COLUMN IF NOT EXISTS {col} {col_type} DEFAULT NULL"
+                    )
+
+                # Partial index for dead-company export filter
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_etat_inpi
+                    ON companies (etat_administratif_inpi)
+                    WHERE etat_administratif_inpi = 'F'
+                """)
+
+                # ── Rescue tracking (denormalized for fast export filter) ─
+                await conn.execute(
+                    "ALTER TABLE companies ADD COLUMN IF NOT EXISTS rescued_by TEXT DEFAULT NULL"
+                )
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_companies_rescued_by
+                    ON companies (rescued_by)
+                    WHERE rescued_by IS NOT NULL
+                """)
+
+                # Officers — birth year for disambiguation
+                await conn.execute(
+                    "ALTER TABLE officers ADD COLUMN IF NOT EXISTS annee_naissance VARCHAR(4) DEFAULT NULL"
+                )
+
                 # ── Workspace isolation ──────────────────────────────
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS workspaces (
