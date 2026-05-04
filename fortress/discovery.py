@@ -3837,12 +3837,18 @@ async def run(batch_id: str) -> None:
                             # a picker or is within the division_whitelist (section-letter pick).
                             # NULL when no picker was applied — the column has no meaning without a filter.
                             _strict_match: bool | None = None
-                            if matched_naf and picked_nafs:
+                            if not picked_nafs:
+                                # No NAF filter applied — every match is trivially "strict" by definition.
+                                # Forward-compat for export filter that requires strict_match=true.
+                                _strict_match = True
+                            elif matched_naf:
                                 if naf_division_whitelist is not None:
                                     _strict_match = any(matched_naf.startswith(d) for d in naf_division_whitelist)
                                 else:
                                     _strict_match = any(matched_naf.startswith(p) for p in picked_nafs)
-                            # elif not picked_nafs: _strict_match stays None (no picker → not applicable)
+                            else:
+                                # Picker set but candidate has no NAF → strict-fail.
+                                _strict_match = False
 
                             await conn.execute(
                                 """UPDATE companies

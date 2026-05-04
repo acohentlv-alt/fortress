@@ -156,12 +156,10 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
     recorded this exact search_query are returned.
     """
     job = await fetch_one(
-        "SELECT batch_id, COALESCE(strict_naf, FALSE) AS strict_naf FROM batch_data WHERE batch_id = %s", (batch_id,)
+        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return []
-
-    strict = bool(job.get("strict_naf"))
 
     sq_clause = ""
     sq_params: tuple = ()
@@ -175,16 +173,12 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
         """
         sq_params = (batch_id, search_query)
 
-    if strict:
-        # Mode strict: only entities with strict_match=true (exact NAF prefix).
-        naf_where = """AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND co.strict_match = true
-          AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
-    else:
-        # Wide mode (default): include rescue methods + clique siblings.
-        naf_where = """AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
-          AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
+    # Brief 2 v3: unified strict filter. Wide-mode rescues excluded by design.
+    # Hotfix: stripped leading AND — naf_where is consumed via WHERE {naf_where}
+    # so it must be a self-contained predicate, not a continuation.
+    naf_where = """(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+      AND co.strict_match = true
+      AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
 
     return await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s')}
@@ -220,7 +214,7 @@ async def export_master_csv(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
+          AND co.strict_match = true
           AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
@@ -262,7 +256,7 @@ async def export_master_xlsx(request: Request):
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
         WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
+          AND co.strict_match = true
           AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
@@ -338,8 +332,8 @@ async def export_contacts_filtered_csv(
     # Pending rows are flagged via the `Statut lien` column and sorted to the bottom
     # so Cindy sees confirmed contacts first.
     where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))")
-    # Exclude NAF-mismatch rows — except chain, gemini_judge, and siret_address_naf matches which are included (high-confidence)
-    where_parts.append("(co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))")
+    # Brief 2 v3: unified strict filter — only strict_match=true rows exported.
+    where_parts.append("co.strict_match = true")
     # Exclude confirmed-dead companies (etat_administratif_inpi = 'F' means fermée / closed)
     where_parts.append("(co.etat_administratif_inpi IS DISTINCT FROM 'F')")
 
@@ -356,6 +350,8 @@ async def export_contacts_filtered_csv(
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
         LEFT JOIN merged_contacts mc ON mc.siren = co.siren
+        LEFT JOIN companies sirene_ref ON sirene_ref.siren = co.linked_siren
+                                      AND co.siren LIKE 'MAPS%%'
         LEFT JOIN LATERAL (
             SELECT * FROM officers off2 WHERE off2.siren = co.siren
             ORDER BY (off2.ligne_directe IS NOT NULL)::int DESC
@@ -465,6 +461,8 @@ async def export_jsonl(batch_id: str, request: Request):
                 clean[k] = v.isoformat()
             else:
                 clean[k] = v
+        # Brief 2 v3: 2-state export_color for downstream consumers
+        clean["export_color"] = "pending" if row.get("link_confidence") == "pending" else "verified"
         lines.append(json.dumps(clean, cls=_DecimalEncoder, ensure_ascii=False))
 
     content = "\n".join(lines).encode("utf-8")
@@ -523,7 +521,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
             WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
+              AND co.strict_match = true
               AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
             ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                      co.denomination
@@ -536,7 +534,7 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
               AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-              AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
+              AND co.strict_match = true
               AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
             ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                      co.denomination
@@ -564,7 +562,7 @@ def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
     Pending rows (link_confidence='pending') are filled with soft peach
     (FFE6CC) so they're visually distinct from confirmed rows."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
     wb = Workbook()
     ws = wb.active
@@ -581,6 +579,13 @@ def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
 
     # Pending-row fill: soft peach matching the --warning palette in the UI
     pending_fill = PatternFill(start_color="FFE6CC", end_color="FFE6CC", fill_type="solid")
+    # Brief 2 v3: peach-darker border (FF8C42) for visual contrast on pending rows
+    pending_border = Border(
+        left=Side(border_style="thin", color="FF8C42"),
+        right=Side(border_style="thin", color="FF8C42"),
+        top=Side(border_style="thin", color="FF8C42"),
+        bottom=Side(border_style="thin", color="FF8C42"),
+    )
 
     # Data rows
     for row_idx, row in enumerate(rows or [], 2):
@@ -592,6 +597,7 @@ def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
             cell = ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
             if is_pending:
                 cell.fill = pending_fill
+                cell.border = pending_border
 
     # Auto-width (approximate)
     for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
