@@ -2578,6 +2578,7 @@ async def run(batch_id: str) -> None:
             # launched before the migration.
             dept_filter = None
             picked_nafs: list[str] = []
+            _no_widen_set: set[str] = set()
             if filters_raw:
                 try:
                     filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
@@ -2589,6 +2590,9 @@ async def run(batch_id: str) -> None:
                         legacy = (filters.get("naf_code") or "").strip()
                         if legacy:
                             picked_nafs = [legacy]
+                    # NEW: no_widen_queries extraction (added by Brief 2 v5)
+                    _nw_list = filters.get("no_widen_queries") or []
+                    _no_widen_set = set((q or "").strip() for q in _nw_list if q and (q or "").strip())
                 except Exception:
                     pass
 
@@ -5178,6 +5182,7 @@ async def run(batch_id: str) -> None:
                         and _effective_dept
                         and not _shutdown
                         and companies_discovered < 2000
+                        and (search_query or "").strip() not in _no_widen_set  # NEW: skip widening for primaries with manual city picks
                     ):
                         # Check cancel flag before starting widening
                         _widen_cancelled = False

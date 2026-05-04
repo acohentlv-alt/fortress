@@ -46,6 +46,58 @@ const DEPT_NAMES = {
     'pau':'64','bayonne':'64','biarritz':'64','lourdes':'65','tarbes':'65',
 };
 
+/**
+ * Parse a query string into a dept code.
+ * Mirrors fortress/discovery.py:104 _parse_dept_hint_from_query.
+ */
+function parseDeptHint(query) {
+    if (!query) return null;
+    const postal = query.match(/\b(\d{5})\b/);
+    if (postal) {
+        const p = postal[1];
+        // Corsica: 20000-20190 → 2A, 20200+ → 2B
+        if (p.startsWith('20')) {
+            const num = parseInt(p, 10);
+            return num <= 20190 ? '2A' : '2B';
+        }
+        if (p.startsWith('97') || p.startsWith('98')) return p.substring(0, 3);
+        return p.substring(0, 2);
+    }
+    const dept = query.match(/\b(\d{2,3})\b/);
+    if (dept) return dept[1];
+    const norm = query.toLowerCase();
+    const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
+    for (const name of sortedKeys) {
+        if (norm.includes(name)) return DEPT_NAMES[name];
+    }
+    return null;
+}
+
+/**
+ * Strip dept-hint tokens from a primary query, preserving sector tokens.
+ */
+function extractSectorTokens(primaryQuery) {
+    if (!primaryQuery) return '';
+    const queryDept = parseDeptHint(primaryQuery);
+    return primaryQuery
+        .split(/\s+/)
+        .filter(token => {
+            if (/^\d{2,5}$/.test(token)) return false;
+            const lower = token.toLowerCase();
+            if (queryDept && DEPT_NAMES[lower] === queryDept) return false;
+            return true;
+        })
+        .join(' ')
+        .trim();
+}
+
+/**
+ * Paris arrondissement filter regex. Covers all 6 observed formats:
+ * PARIS 1, PARIS 12, PARIS 04, PARIS 11E, PARIS 16E ARRONDISSEMENT,
+ * PARIS 1ER ARRONDISSEMENT, PARIS CEDEX 19. Does NOT match bare "PARIS".
+ */
+const PARIS_ARR_RE = /^PARIS\s+(\d{1,2}(?:E|ER)?(\s+ARRONDISSEMENT)?|CEDEX\s+\d+)$/i;
+
 export async function renderNewBatch(container) {
     container.innerHTML = `
         <div class="gemini-wrapper">
@@ -61,6 +113,35 @@ export async function renderNewBatch(container) {
                             autocomplete="off">
                     </div>
                     <div id="additional-queries"></div>
+                    <div class="city-picker-panel" id="city-picker-panel" style="display:none">
+                      <div class="city-picker-header">
+                        <h4 class="city-picker-title">
+                          Communes du département <span id="city-picker-dept">--</span>
+                          <span class="city-picker-count" id="city-picker-count"></span>
+                        </h4>
+                        <input type="text" id="city-picker-search"
+                               placeholder="${t('newBatch.cityPicker.searchPlaceholder')}"
+                               class="city-picker-search">
+                      </div>
+                      <div class="city-picker-chips" id="city-picker-chips"></div>
+                      <div class="city-picker-actions">
+                        <button type="button" id="city-picker-expand" class="btn btn-secondary city-picker-expand">
+                          ${t('newBatch.cityPicker.expandPrefix')} <span id="city-picker-more">0</span> ${t('newBatch.cityPicker.expandSuffix')}
+                        </button>
+                        <button type="button" id="city-picker-select-topN" class="btn btn-secondary city-picker-action">
+                          <span id="city-picker-select-label">${t('newBatch.cityPicker.selectFirstN').replace('{{n}}', '10')}</span>
+                        </button>
+                        <button type="button" id="city-picker-clear" class="btn btn-secondary city-picker-action">
+                          ${t('newBatch.cityPicker.clearAll')}
+                        </button>
+                      </div>
+                      <div class="city-picker-info">
+                        <small>${t('newBatch.cityPicker.info')}</small>
+                      </div>
+                      <div class="city-picker-paris-hint" id="city-picker-paris-hint" style="display:none">
+                        <small>${t('newBatch.cityPicker.parisHint')}</small>
+                      </div>
+                    </div>
                     <button type="button" id="btn-add-query" class="gemini-add-query-btn">
                         ${t('newBatch.addQueryBtn')}
                     </button>
@@ -165,6 +246,21 @@ export async function renderNewBatch(container) {
             </div>
         </div>
     `;
+
+    // ── City picker state — per-render-instance (cleared on SPA navigation away/back) ──
+    const _cityPickerCache = {};
+    let _cityPickerCurrentDept = null;
+    let _cityPickerCurrentPrimary = null;
+    let _cityPickerSelectedCities = new Set();
+    let _cityPickerExpanded = false;
+    let _cityPickerInputDebounce = null;
+
+    function hideCityPanel() {
+        const panel = document.getElementById('city-picker-panel');
+        if (panel) panel.style.display = 'none';
+        _cityPickerCurrentDept = null;
+        _cityPickerCurrentPrimary = null;
+    }
 
     // ── E3: form draft helpers (sessionStorage) ─────────────────────
     const DRAFT_KEY = 'fortress_new_batch_draft';
@@ -598,34 +694,23 @@ export async function renderNewBatch(container) {
 
     // ── NAF variant chip click handler ────────────────────────────────
     // Clicking a variant pill spawns a NEW query row prefilled with
-    // `<phrasing> <dept>`. Department is extracted using the same logic as
-    // the launch handler — kept inline (do not promote to top-level helper:
-    // wider blast radius not justified for this brief).
+    // `<phrasing> <dept>`. Department is extracted via parseDeptHint (module-scope).
     if (_variantsChips) {
         _variantsChips.addEventListener('click', (e) => {
             const chip = e.target.closest('.naf-variant-chip');
             if (!chip || !chip.dataset.phrasing) return;
             const phrasing = chip.dataset.phrasing;
 
-            // Extract dept from existing query inputs (mirrors launch handler).
+            // Extract dept from existing query inputs using module-scope parseDeptHint.
             const inputs = [
                 document.querySelector('.gemini-query-input.primary'),
                 ...document.querySelectorAll('#additional-queries .gemini-query-input')
             ].filter(Boolean);
             const queries = inputs.map(i => i.value.trim()).filter(q => q.length > 0);
             let department = '';
-            const _normalize = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
             for (const q of queries) {
-                const dept2 = q.match(/\b(\d{2})\b/);
-                if (dept2) { department = dept2[1]; break; }
-                const postal = q.match(/\b(\d{5})\b/);
-                if (postal) { department = postal[1].substring(0, 2); break; }
-                const norm = _normalize(q);
-                const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
-                for (const name of sortedKeys) {
-                    if (norm.includes(name)) { department = DEPT_NAMES[name]; break; }
-                }
-                if (department) break;
+                const hint = parseDeptHint(q);
+                if (hint) { department = hint; break; }
             }
             const value = department ? `${phrasing} ${department}` : phrasing;
 
@@ -773,6 +858,186 @@ export async function renderNewBatch(container) {
         nafInput.classList.toggle('naf-picker-input--unconfirmed', has);
     }
 
+    // ── City picker functions (Section 2.D – 2.J) ────────────────────
+
+    async function handlePrimaryQueryChange(primaryQuery) {
+        primaryQuery = primaryQuery.trim();
+        if (!primaryQuery) {
+            hideCityPanel();
+            return;
+        }
+        const dept = parseDeptHint(primaryQuery);
+        if (!dept) {
+            hideCityPanel();
+            return;
+        }
+        if (dept === _cityPickerCurrentDept) {
+            _cityPickerCurrentPrimary = primaryQuery;
+            return;
+        }
+        _cityPickerCurrentDept = dept;
+        _cityPickerCurrentPrimary = primaryQuery;
+        _cityPickerSelectedCities.clear();
+        _cityPickerExpanded = false;
+
+        if (!_cityPickerCache[dept]) {
+            try {
+                const resp = await fetch(`/api/departments/${dept}/communes`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                _cityPickerCache[dept] = data.communes || [];
+            } catch (err) {
+                console.error('city panel fetch failed', err);
+                hideCityPanel();
+                return;
+            }
+        }
+        renderCityPanel();
+    }
+
+    function getDefaultVisibleCommunes(allCommunes) {
+        return allCommunes.filter(c => !PARIS_ARR_RE.test(c.name)).slice(0, 20);
+    }
+
+    function applySearchFilter(communes) {
+        const term = (document.getElementById('city-picker-search')?.value || '').trim().toLowerCase();
+        if (!term) return communes;
+        const normalize = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const normalizedTerm = normalize(term);
+        return communes.filter(c => normalize(c.name).includes(normalizedTerm));
+    }
+
+    function renderCityPanel() {
+        const all = _cityPickerCache[_cityPickerCurrentDept] || [];
+        const filteredDefault = getDefaultVisibleCommunes(all);
+        const visible = _cityPickerExpanded ? all : filteredDefault;
+        const filtered = applySearchFilter(visible);
+
+        document.getElementById('city-picker-dept').textContent = _cityPickerCurrentDept;
+        document.getElementById('city-picker-count').textContent = `(${all.length} communes)`;
+
+        const chipsEl = document.getElementById('city-picker-chips');
+        if (filtered.length === 0) {
+            chipsEl.innerHTML = `<div class="city-picker-empty">${escapeHtml(t('newBatch.cityPicker.empty'))}</div>`;
+        } else {
+            chipsEl.innerHTML = filtered.map(c => `
+                <button type="button"
+                        class="city-chip ${_cityPickerSelectedCities.has(c.name) ? 'selected' : ''}"
+                        data-commune="${escapeHtml(c.name)}">
+                    ${escapeHtml(c.name)}
+                    <span class="city-chip-count">(${c.company_count.toLocaleString('fr-FR')})</span>
+                </button>
+            `).join('');
+        }
+
+        const expandBtn = document.getElementById('city-picker-expand');
+        if (!_cityPickerExpanded && all.length > filteredDefault.length) {
+            expandBtn.style.display = '';
+            document.getElementById('city-picker-more').textContent = (all.length - filteredDefault.length).toLocaleString('fr-FR');
+        } else {
+            expandBtn.style.display = 'none';
+        }
+
+        const selectBtn = document.getElementById('city-picker-select-topN');
+        const selectableCount = Math.min(10, filteredDefault.length);
+        const selectLabel = document.getElementById('city-picker-select-label');
+        if (selectableCount === 0) {
+            selectBtn.style.display = 'none';
+        } else if (selectableCount === 1) {
+            selectBtn.style.display = '';
+            selectLabel.textContent = t('newBatch.cityPicker.selectFirst');
+        } else {
+            selectBtn.style.display = '';
+            selectLabel.textContent = t('newBatch.cityPicker.selectFirstN').replace('{{n}}', selectableCount);
+        }
+
+        document.getElementById('city-picker-paris-hint').style.display = (_cityPickerCurrentDept === '75') ? '' : 'none';
+
+        document.getElementById('city-picker-panel').style.display = '';
+    }
+
+    function addCityRow(commune) {
+        const sector = extractSectorTokens(_cityPickerCurrentPrimary);
+        const newQuery = sector ? `${sector} ${commune}` : commune;
+        const newRow = createSubordinateQueryRow(newQuery);
+        newRow.setAttribute('data-city-picker-source', commune);
+        document.getElementById('additional-queries').appendChild(newRow);
+    }
+
+    function removeCityRow(commune) {
+        const row = document.querySelector(
+            `#additional-queries .gemini-query-row[data-city-picker-source="${CSS.escape(commune)}"]`
+        );
+        if (row) row.remove();
+    }
+
+    function onChipClick(e) {
+        const chip = e.target.closest('.city-chip');
+        if (!chip) return;
+        const commune = chip.dataset.commune;
+        if (_cityPickerSelectedCities.has(commune)) {
+            _cityPickerSelectedCities.delete(commune);
+            chip.classList.remove('selected');
+            removeCityRow(commune);
+        } else {
+            _cityPickerSelectedCities.add(commune);
+            chip.classList.add('selected');
+            addCityRow(commune);
+        }
+    }
+
+    function onSelectTopN() {
+        const all = _cityPickerCache[_cityPickerCurrentDept] || [];
+        const filteredDefault = getDefaultVisibleCommunes(all);
+        const topN = filteredDefault.slice(0, 10);
+        for (const c of topN) {
+            if (!_cityPickerSelectedCities.has(c.name)) {
+                _cityPickerSelectedCities.add(c.name);
+                addCityRow(c.name);
+            }
+        }
+        renderCityPanel();
+    }
+
+    function onClearAll() {
+        for (const commune of Array.from(_cityPickerSelectedCities)) {
+            removeCityRow(commune);
+        }
+        _cityPickerSelectedCities.clear();
+        renderCityPanel();
+    }
+
+    function onExpand() {
+        _cityPickerExpanded = true;
+        renderCityPanel();
+    }
+
+    function onSearchInput() {
+        renderCityPanel();
+    }
+
+    function wireCityPickerListeners() {
+        const primaryInput = document.querySelector('.gemini-query-input.primary');
+        if (primaryInput) {
+            primaryInput.addEventListener('input', (e) => {
+                clearTimeout(_cityPickerInputDebounce);
+                _cityPickerInputDebounce = setTimeout(() => {
+                    handlePrimaryQueryChange(e.target.value);
+                }, 300);
+            });
+        }
+        document.getElementById('city-picker-chips')?.addEventListener('click', onChipClick);
+        document.getElementById('city-picker-search')?.addEventListener('input', onSearchInput);
+        document.getElementById('city-picker-select-topN')?.addEventListener('click', onSelectTopN);
+        document.getElementById('city-picker-clear')?.addEventListener('click', onClearAll);
+        document.getElementById('city-picker-expand')?.addEventListener('click', onExpand);
+
+        // Initialize state from current primary input value (handles rerun/draft restore)
+        if (primaryInput && primaryInput.value.trim()) {
+            handlePrimaryQueryChange(primaryInput.value);
+        }
+    }
+
     // ── Launch button ─────────────────────────────────────────────────
     document.getElementById('btn-launch-batch').addEventListener('click', async () => {
         // Auto-confirm: user typed a valid NAF code in the input but didn't click the
@@ -818,25 +1083,12 @@ export async function renderNewBatch(container) {
         const firstQuery = queries[0];
         const sector = firstQuery.split(/\s+/)[0] || 'RECHERCHE';
 
-        // Try to extract department from queries
+        // Try to extract department from queries using module-scope parseDeptHint.
         // Priority: 2-digit code → 5-digit postal → department/city name → 'FR'
         let department = '';
-        const _normalize = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
         for (const q of queries) {
-            // Match exact 2-digit department code
-            const dept2 = q.match(/\b(\d{2})\b/);
-            if (dept2) { department = dept2[1]; break; }
-            // Match 5-digit postal code → take first 2 as department
-            const postal = q.match(/\b(\d{5})\b/);
-            if (postal) { department = postal[1].substring(0, 2); break; }
-            // Match department or city name from DEPT_NAMES
-            const norm = _normalize(q);
-            // Try longest matches first (e.g. "pyrenees orientales" before "pyrenees")
-            const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
-            for (const name of sortedKeys) {
-                if (norm.includes(name)) { department = DEPT_NAMES[name]; break; }
-            }
-            if (department) break;
+            const hint = parseDeptHint(q);
+            if (hint) { department = hint; break; }
         }
         if (!department) department = 'FR';
 
@@ -852,6 +1104,15 @@ export async function renderNewBatch(container) {
             time_cap_total_min: _selectedTotalCap > 0 ? _selectedTotalCap : null,
             strict_naf: _strictToggleEl ? Boolean(_strictToggleEl.checked && !_strictToggleEl.disabled) : false,
         };
+
+        // Refresh tracking from current primary input value
+        const _primaryEl = document.querySelector('.gemini-query-input.primary');
+        if (_primaryEl) _cityPickerCurrentPrimary = _primaryEl.value.trim();
+
+        // NEW — include the primary in no_widen_queries IF user picked any cities
+        if (_cityPickerSelectedCities.size > 0 && _cityPickerCurrentPrimary) {
+            payload.no_widen_queries = [_cityPickerCurrentPrimary];
+        }
 
         btn.disabled = true;
         btn.innerHTML = t('newBatch.launching');
@@ -1021,4 +1282,7 @@ export async function renderNewBatch(container) {
             }
         } catch (_e) { /* private mode or malformed */ }
     }
+
+    // ── Wire city picker listeners (after draft/rerun restoration) ───
+    wireCityPickerListeners();
 }

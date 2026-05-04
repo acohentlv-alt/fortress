@@ -41,7 +41,12 @@ class BatchRunRequest(BaseModel):
     time_cap_total_min: int | None = Field(None, ge=1, le=600, description="Total batch time budget in minutes (measured from batch_data.created_at, so resumed batches don't get a fresh budget); null = no cap. Hard block when fired — drains in-flight entities (~30s) then ends batch with abort_reason=total_time_cap_reached. Max 600min defensible because 10 queries × 60min hits 600 naturally.")
     queue: bool = Field(False, description="If true and another batch is already running in this workspace, enqueue instead of returning 409. Worker will spawn this batch when the running one finishes.")
     strict_naf: bool = Field(False, description="Mode strict — uniquement le code NAF exact, sans expansion sectorielle ni rattrapages haute-confiance.")
-
+    no_widen_queries: list[str] | None = Field(
+        None,
+        description="List of primary query strings whose auto-widening should be suppressed "
+                    "(typically because the user manually picked cities for them via the "
+                    "#/new-batch city panel)."
+    )
 
 
 def _build_batch_id(sector: str, dept: str, workspace_id: int | None = None) -> str:
@@ -114,6 +119,8 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["naf_codes"] = picked_codes
     if body.department:
         filters_dict["department"] = body.department.strip()
+    if body.no_widen_queries:
+        filters_dict["no_widen_queries"] = [q.strip() for q in body.no_widen_queries if q and q.strip()]
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
     # Build search_queries JSON for Maps-first mode

@@ -750,6 +750,17 @@
         "off": "Wide mode (default): The batch includes ALL NAF codes in the same business sector, plus high-confidence rescue methods.\n\nExample — if you choose 55.30Z (camping): the batch will ALSO include hotels (55.10Z), tourist residences (55.20Z), other accommodation (55.90Z), plus detected chains/franchises and Gemini/INPI rescues. Cindy treats these 4 codes as one \"tourist accommodation\" sector — you get ~30-40%% more entities than strict mode.",
         "on": "Strict mode: The batch contains ONLY entities with the exact NAF code you chose. Off-target entities scraped from Google Maps are saved to the database but hidden from all views (table, CSV, contacts).\n\nExample — if you choose 55.30Z (camping): ONLY entities classified exactly 55.30Z will appear. No hotels, no residences. High-confidence rescue methods (Gemini, INPI corroboration, franchise detection, SIRET establishment lookup) are disabled. You get fewer entities but 100%% of the requested NAF code."
       }
+    },
+    "cityPicker": {
+      "searchPlaceholder": "Filter communes…",
+      "expandPrefix": "Show",
+      "expandSuffix": "more communes",
+      "selectFirstN": "Select first {{n}}",
+      "selectFirst": "Select first commune",
+      "clearAll": "Deselect all",
+      "empty": "No matching communes.",
+      "info": "Each commune clicked is added as a separate query. Auto-widening is disabled for primary queries with city picks.",
+      "parisHint": "Tip: click PARIS to target the whole city, or click \"Show more communes\" for individual arrondissements."
     }
   },
   "upload": {

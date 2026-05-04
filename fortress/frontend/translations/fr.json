@@ -779,6 +779,17 @@
         "off": "Mode élargi (par défaut) : Le batch inclut TOUS les codes NAF du même secteur métier, plus les rattrapages haute-confiance.\n\nExemple — si vous choisissez 55.30Z (camping) : le batch incluera AUSSI les hôtels (55.10Z), résidences de tourisme (55.20Z), autres hébergements (55.90Z), ainsi que les chaînes/franchises détectées et les rattrapages Gemini/INPI. Cindy traite ces 4 codes comme un seul secteur « hébergement touristique » — vous récupérez ~30-40% d'entités en plus que le mode strict.",
         "on": "Mode strict : Le batch contient UNIQUEMENT les entités avec le code NAF exact que vous avez choisi. Les entités hors-cible scrapées sur Google Maps sont sauvegardées en base mais cachées de toutes les vues (tableau, CSV, contacts).\n\nExemple — si vous choisissez 55.30Z (camping) : SEULES les entités classées exactement 55.30Z apparaîtront. Pas d'hôtels, pas de résidences. Les rattrapages haute-confiance (Gemini, corroboration INPI, détection de franchises, lookup SIRET établissement) sont désactivés. Vous obtenez moins d'entités mais 100% du code NAF demandé."
       }
+    },
+    "cityPicker": {
+      "searchPlaceholder": "Filtrer les communes…",
+      "expandPrefix": "Voir les",
+      "expandSuffix": "autres communes",
+      "selectFirstN": "Sélectionner les {{n}} premières",
+      "selectFirst": "Sélectionner la première commune",
+      "clearAll": "Tout désélectionner",
+      "empty": "Aucune commune ne correspond.",
+      "info": "Chaque commune cliquée est ajoutée comme requête séparée. L'élargissement automatique est désactivé pour les requêtes principales avec villes.",
+      "parisHint": "Astuce : cliquez sur PARIS pour cibler la ville entière, ou cliquez sur \"Voir les autres communes\" pour les arrondissements."
     }
   },
   "upload": {

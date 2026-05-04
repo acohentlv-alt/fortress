@@ -4033,3 +4033,94 @@
         font-size: 0.7rem;
     }
 }
+
+/* ── City Picker Panel ───────────────────────────────────────── */
+.city-picker-panel {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin: 12px 0;
+    background: var(--bg-tertiary);
+}
+.city-picker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.city-picker-title {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-default);
+}
+.city-picker-count {
+    color: var(--text-muted);
+    font-weight: normal;
+    font-size: 12px;
+    margin-left: 4px;
+}
+.city-picker-search {
+    flex: 0 0 200px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+}
+.city-picker-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 240px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+}
+.city-chip {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    color: var(--text-default);
+    transition: background 0.1s, border-color 0.1s;
+}
+.city-chip:hover { background: var(--bg-hover); }
+.city-chip.selected {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+.city-chip-count {
+    color: var(--text-muted);
+    margin-left: 4px;
+    font-size: 11px;
+}
+.city-chip.selected .city-chip-count { color: rgba(255,255,255,0.85); }
+.city-picker-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.city-picker-info,
+.city-picker-paris-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+.city-picker-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 8px;
+}
+@media (max-width: 600px) {
+    .city-picker-header { flex-direction: column; align-items: stretch; }
+    .city-picker-search { flex: 1 1 auto; }
+    .city-picker-actions { flex-direction: column; }
+    .city-picker-actions button { width: 100%; }
+    .city-picker-chips { max-height: 180px; }
+}
+@media (max-width: 768px) {
+    .city-picker-search { flex: 1 1 100%; }
+}

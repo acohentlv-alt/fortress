@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 
 from fortress.api.db import fetch_all
 from fortress.api.sql_helpers import merged_contacts_cte
+from fortress.config.dept_communes import DEPT_COMMUNES
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
 
@@ -143,3 +144,22 @@ async def get_department_jobs(dept: str, request: Request):
         ORDER BY sj.created_at DESC
     """, ws_params)
     return rows
+
+
+@router.get("/{dept}/communes")
+async def list_communes(dept: str, request: Request):
+    """Return commune list for a department, ranked by SIRENE company count desc.
+
+    Source: hardcoded fortress/config/dept_communes.py (no runtime SIRENE query).
+    Universal data — no workspace scoping.
+    """
+    dept = dept.strip().upper()
+    communes_raw = DEPT_COMMUNES.get(dept, [])
+    return {
+        "dept": dept,
+        "total": len(communes_raw),
+        "communes": [
+            {"name": ville, "company_count": n}
+            for ville, n in communes_raw
+        ],
+    }
