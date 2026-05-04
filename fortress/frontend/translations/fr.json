@@ -434,8 +434,12 @@
     "bulkCount": "☑ {{count}} sélectionnée{{plural}}",
     "pendingApproval": "En attente d'approbation",
     "pendingApprovalTitle": "Lien MAPS non confirmé — approuvez ou rejetez depuis la fiche",
-    "filter.strictOnly.label": "Mode strict uniquement",
-    "filter.strictOnly.tooltip": "Afficher uniquement les entreprises avec un code NAF strictement correspondant au code recherché (sans expansion sectorielle)."
+    "filter": {
+      "strictOnly": {
+        "label": "Mode strict uniquement",
+        "tooltip": "Afficher uniquement les entreprises avec un code NAF strictement correspondant au code recherché (sans expansion sectorielle)."
+      }
+    }
   },
   "search": {
     "title": "Base SIRENE",
@@ -713,8 +717,10 @@
     "scoreboardPendingApproval": "À VALIDER",
     "scoreboardSubtextPending": "{{count}} entreprises ont besoin de validation manuelle.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmées, {{pending}} en attente)",
-    "strictMode.badge": "MODE STRICT",
-    "strictMode.tooltip": "Cette campagne n'inclut que le code NAF exact, sans expansion sectorielle. Les entités hors-cible sont cachées."
+    "strictMode": {
+      "badge": "MODE STRICT",
+      "tooltip": "Cette campagne n'inclut que le code NAF exact, sans expansion sectorielle. Les entités hors-cible sont cachées."
+    }
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",
@@ -766,10 +772,14 @@
     "queuedSuccessDetail": "ID : {{id}} — démarrage automatique à la fin du batch précédent.",
     "draftRestored": "📝 Brouillon restauré",
     "draftClear": "Tout effacer",
-    "strictMode.label": "Mode strict — uniquement le code NAF exact",
-    "strictMode.disabledTooltip": "Sélectionnez au moins un code NAF pour activer le mode strict.",
-    "strictMode.explanation.off": "Mode élargi (par défaut) : Le batch inclut TOUS les codes NAF du même secteur métier, plus les rattrapages haute-confiance.\n\nExemple — si vous choisissez 55.30Z (camping) : le batch incluera AUSSI les hôtels (55.10Z), résidences de tourisme (55.20Z), autres hébergements (55.90Z), ainsi que les chaînes/franchises détectées et les rattrapages Gemini/INPI. Cindy traite ces 4 codes comme un seul secteur « hébergement touristique » — vous récupérez ~30-40% d'entités en plus que le mode strict.",
-    "strictMode.explanation.on": "Mode strict : Le batch contient UNIQUEMENT les entités avec le code NAF exact que vous avez choisi. Les entités hors-cible scrapées sur Google Maps sont sauvegardées en base mais cachées de toutes les vues (tableau, CSV, contacts).\n\nExemple — si vous choisissez 55.30Z (camping) : SEULES les entités classées exactement 55.30Z apparaîtront. Pas d'hôtels, pas de résidences. Les rattrapages haute-confiance (Gemini, corroboration INPI, détection de franchises, lookup SIRET établissement) sont désactivés. Vous obtenez moins d'entités mais 100% du code NAF demandé."
+    "strictMode": {
+      "label": "Mode strict — uniquement le code NAF exact",
+      "disabledTooltip": "Sélectionnez au moins un code NAF pour activer le mode strict.",
+      "explanation": {
+        "off": "Mode élargi (par défaut) : Le batch inclut TOUS les codes NAF du même secteur métier, plus les rattrapages haute-confiance.\n\nExemple — si vous choisissez 55.30Z (camping) : le batch incluera AUSSI les hôtels (55.10Z), résidences de tourisme (55.20Z), autres hébergements (55.90Z), ainsi que les chaînes/franchises détectées et les rattrapages Gemini/INPI. Cindy traite ces 4 codes comme un seul secteur « hébergement touristique » — vous récupérez ~30-40% d'entités en plus que le mode strict.",
+        "on": "Mode strict : Le batch contient UNIQUEMENT les entités avec le code NAF exact que vous avez choisi. Les entités hors-cible scrapées sur Google Maps sont sauvegardées en base mais cachées de toutes les vues (tableau, CSV, contacts).\n\nExemple — si vous choisissez 55.30Z (camping) : SEULES les entités classées exactement 55.30Z apparaîtront. Pas d'hôtels, pas de résidences. Les rattrapages haute-confiance (Gemini, corroboration INPI, détection de franchises, lookup SIRET établissement) sont désactivés. Vous obtenez moins d'entités mais 100% du code NAF demandé."
+      }
+    }
   },
   "upload": {
     "title": "Import / Export",
