@@ -308,7 +308,7 @@ async function renderJobMonitor(container, batchId) {
                 ${t('monitor.queriesPanel')}
             </h3>
             <div id="mon-queries-list">
-                <span style="color:var(--text-muted); font-style:italic">${t('monitor.queriesLoading') || 'Chargement…'}</span>
+                <span style="color:var(--text-muted); font-style:italic">${t('monitor.loading')}</span>
             </div>
         </div>
 
