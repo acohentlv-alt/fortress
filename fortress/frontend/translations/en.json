@@ -577,6 +577,7 @@
     "duration": "Duration",
     "target": "Target",
     "found": "Found",
+    "foundVia": "Found via:",
     "enriched": "Enriched",
     "failed": "Failed",
     "companies": "Companies",

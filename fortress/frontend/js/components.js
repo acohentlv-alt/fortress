@@ -193,7 +193,7 @@ export function companyCard(company, opts = {}) {
         return `
             <div class="company-card company-card-compact${opts.checked ? ' card-selected' : ''}" data-siren="${siren}"
                  style="padding:var(--space-md) var(--space-lg); min-height:auto">
-                <a href="#/company/${siren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
+                <a href="#/company/${displaySiren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:var(--space-md)">
                     ${checkbox}
                     <div style="min-width:0; flex:1">
@@ -220,7 +220,7 @@ export function companyCard(company, opts = {}) {
     // Full card for enriched companies
     return `
         <div class="company-card${opts.checked ? ' card-selected' : ''}" data-siren="${siren}">
-            <a href="#/company/${siren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
+            <a href="#/company/${displaySiren}" class="company-card-link" aria-label="${escapeHtml(company.denomination || siren)}"></a>
             ${removeBtn}
             <div class="company-card-header">
                 <div style="display:flex; align-items:flex-start; gap:var(--space-sm); min-width:0; flex:1">
@@ -240,6 +240,12 @@ export function companyCard(company, opts = {}) {
                 📍 ${escapeHtml(company.ville || '—')}${company.departement ? ` (${company.departement})` : ''}
                 ${company.naf_libelle ? ` · ${escapeHtml(company.naf_libelle)}` : ''}
             </div>
+            ${(company.search_queries && company.search_queries.length) ? `
+                <div class="company-card-found-via" style="margin-top:4px; font-size:var(--font-xs); color:var(--text-secondary)">
+                    ${t('job.foundVia')}
+                    ${company.search_queries.map(q => `<span style="background:var(--bg-elevated); border:1px solid var(--border-subtle); padding:1px 6px; border-radius:var(--radius-sm); margin-right:4px">${escapeHtml(q)}</span>`).join('')}
+                </div>
+            ` : ''}
             ${contactIndicators(company)}
             ${completudeBar(company)}
         </div>

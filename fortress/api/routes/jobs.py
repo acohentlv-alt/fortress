@@ -976,11 +976,42 @@ async def get_job_companies(
     # Fetch companies with merged contact per SIREN — scoped to this batch.
     # Uses merged_contacts CTE (ARRAY_AGG with source priority) to pick the
     # best value per field across all contact rows for a given SIREN.
+    # Item C2 (May 4): search_queries CTE adds per-card "Trouvé via" chips.
     rows = await fetch_all(f"""
         WITH batch_sirens AS (
             SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s
         ),
-        {merged_contacts_cte('SELECT siren FROM batch_sirens')}
+        {merged_contacts_cte('SELECT siren FROM batch_sirens')},
+        search_queries AS (
+            -- Item C2 (May 4) -- distinct search queries that found each siren.
+            -- maps_lookup fires for every Maps result with search_query populated.
+            -- JOIN via batch_tags ensures only real primary matches (not A2 candidate
+            -- audit rows logged under candidate SIRENs as siren='A2PENDING').
+            SELECT bl.siren, ARRAY_AGG(DISTINCT bl.search_query) AS queries
+            FROM batch_log bl
+            JOIN batch_tags bt ON bt.batch_id = bl.batch_id AND bt.siren = bl.siren
+            WHERE bl.batch_id = %s
+              AND bl.search_query IS NOT NULL
+              AND bl.action IN (
+                  'maps_lookup',
+                  'auto_linked_verified',
+                  'auto_linked_expanded',
+                  'auto_linked_mismatch_accepted',
+                  'auto_linked_strong_no_filter',
+                  'auto_linked_inpi_agree',
+                  'auto_linked_chain',
+                  'auto_linked_municipal',
+                  'auto_linked_mentions_legales',
+                  'auto_linked_cp_name_disamb',
+                  'auto_linked_individual_match',
+                  'auto_linked_geo_proximity',
+                  'auto_linked_gemini_rescue',
+                  'auto_linked_gemini_swap',
+                  'auto_linked_siret_address_naf',
+                  'auto_linked_inpi_validated'
+              )
+            GROUP BY bl.siren
+        )
         SELECT
             co.siren, co.denomination, co.naf_code, co.naf_libelle,
             co.forme_juridique, co.adresse, co.code_postal, co.ville,
@@ -991,16 +1022,18 @@ async def get_job_companies(
             mc.social_linkedin, mc.social_facebook, mc.social_twitter,
             mc.rating, mc.review_count, mc.maps_url, mc.contact_source,
             mc.phone_source, mc.email_source, mc.website_source,
+            sq.queries AS search_queries,
             CASE WHEN mc.phone IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN mc.email IS NOT NULL THEN 1 ELSE 0 END +
             CASE WHEN mc.website IS NOT NULL THEN 1 ELSE 0 END AS completude
         FROM batch_sirens bs
         JOIN companies co ON co.siren = bs.siren
         LEFT JOIN merged_contacts mc ON mc.siren = co.siren
+        LEFT JOIN search_queries sq ON sq.siren = co.siren
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}
         LIMIT %s OFFSET %s
-    """, tuple([qid] + search_params + sq_params + [page_size, offset]))
+    """, tuple([qid, qid] + search_params + sq_params + [page_size, offset]))
 
     return {"companies": rows, "total": total, "page": page, "page_size": page_size}
 

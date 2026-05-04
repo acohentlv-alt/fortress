@@ -245,7 +245,7 @@ export async function renderContacts(container) {
                     </thead>
                     <tbody>
                         ${allResults.map(r => `
-                            <tr class="contacts-row" onclick="window.location.hash='#/company/${r.siren}'"
+                            <tr class="contacts-row" onclick="window.location.hash='#/company/${(r.linked_siren && r.link_confidence && r.link_confidence !== 'rejected') ? r.linked_siren : r.siren}'"
                                 ${selectionMode && selectedSirens.has(r.siren) ? 'style="background:rgba(99,102,241,0.08)"' : ''}>
                                 ${selectionMode ? `
                                 <td style="width:40px; text-align:center; cursor:pointer" onclick="event.stopPropagation(); var cb=this.querySelector('input'); if(event.target!==cb){cb.checked=!cb.checked; cb.dispatchEvent(new Event('change',{bubbles:true}));}">

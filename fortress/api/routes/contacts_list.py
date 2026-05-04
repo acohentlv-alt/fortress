@@ -157,7 +157,7 @@ async def list_contacts(
             SELECT DISTINCT ON (co.siren)
                 co.siren, co.denomination, co.departement, co.naf_code,
                 co.ville, co.naf_libelle,
-                co.link_confidence,
+                co.link_confidence, co.linked_siren,
                 ct.phone, ct.email, ct.website, ct.contact_source,
                 ct.phone_source, ct.email_source, ct.website_source,
                 ct.social_linkedin, ct.rating, ct.review_count,

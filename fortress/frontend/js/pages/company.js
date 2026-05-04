@@ -603,6 +603,16 @@ export async function renderCompany(container, siren) {
         return;
     }
 
+    // Item Path2 (May 4) — if user landed on a MAPS URL but the entity
+    // is now confirmed/pending-linked, redirect once to the canonical real-SIREN URL.
+    // Stub responses (cross-workspace SIRENE-only fall-through) have data.link_confidence == null
+    // — the existing ?. chain skips redirect correctly. No extra null-guard needed.
+    if (siren.startsWith('MAPS')
+        && data.company?.linked_siren
+        && (data.link_confidence === 'confirmed' || data.link_confidence === 'pending')) {
+        history.replaceState(null, '', `#/company/${data.company.linked_siren}`);
+    }
+
     const co = data.company;
     const mc = data.merged_contact || {};
     const officers = data.officers || [];

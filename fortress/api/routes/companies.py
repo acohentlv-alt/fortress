@@ -1154,6 +1154,31 @@ async def get_company(siren: str, request: Request):
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 async def _get_company_impl(siren: str, request=None):
+    # Item Path2 (May 4) — URL canonicalization resolver.
+    # If path param is a real SIREN AND a MAPS row in the user's workspace
+    # has linked_siren=<this> with link_confidence in ('confirmed','pending'),
+    # swap to that MAPS siren so contacts/officers/notes (MAPS-keyed today)
+    # are returned. Workspace-scoped: ws174 user hitting a real SIREN that
+    # has only a ws1 MAPS row -> resolver returns nothing -> falls through to
+    # bare SIRENE stub (no enrichment leak).
+    if not siren.startswith("MAPS"):
+        user = getattr(getattr(request, "state", None), "user", None) if request else None
+        is_admin = user and getattr(user, "role", None) == "admin"
+        user_ws = None if is_admin else (user.workspace_id if user else None)
+        maps_row = await fetch_one("""
+            SELECT siren FROM companies
+            WHERE linked_siren = %s
+              AND siren LIKE 'MAPS%%'
+              AND link_confidence IN ('confirmed', 'pending')
+              AND (%s::int IS NULL OR workspace_id = %s)
+            ORDER BY
+              CASE WHEN link_confidence = 'confirmed' THEN 0 ELSE 1 END,
+              created_at DESC
+            LIMIT 1
+        """, (siren, user_ws, user_ws))
+        if maps_row:
+            siren = maps_row["siren"]
+
     company = await fetch_one("""
         SELECT
             co.siren, co.siret_siege, co.denomination, co.enseigne,
