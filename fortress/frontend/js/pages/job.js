@@ -94,6 +94,7 @@ function buildScoreboardCard(job, linkStats, summary) {
                 <div style="display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap">
                     ${statusBadge(job.status)}
                     ${(job.exhaustive && !job.exhaustive_default) ? `<span class="badge badge-exhaustive">⚡ ${t('job.exhaustiveMode', { target: job.batch_size })}</span>` : ''}
+                    ${job.strict_naf ? `<span class="strict-mode-badge" title="${t('job.strictMode.tooltip')}">${t('job.strictMode.badge')}</span>` : ''}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
                         ${t('job.createdOn')} ${formatDateTime(job.created_at)}
                     </span>

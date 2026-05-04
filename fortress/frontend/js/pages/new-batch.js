@@ -82,6 +82,15 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
+                <div class="strict-mode-block">
+                    <label class="strict-mode-toggle">
+                        <input type="checkbox" id="strict-naf-toggle" disabled title="${t('newBatch.strictMode.disabledTooltip')}">
+                        <span>${t('newBatch.strictMode.label')}</span>
+                    </label>
+                    <div class="strict-mode-explanation strict-explanation-off" id="strict-mode-explanation-off">${t('newBatch.strictMode.explanation.off')}</div>
+                    <div class="strict-mode-explanation strict-explanation-on" id="strict-mode-explanation-on" style="display:none">${t('newBatch.strictMode.explanation.on')}</div>
+                </div>
+
                 <div style="text-align: center; margin: var(--space-md) 0;">
                     <div style="color: var(--text-secondary); font-size: var(--font-sm); margin-bottom: var(--space-sm);">
                         ${t('newBatch.timeCapLabel')}
@@ -213,6 +222,14 @@ export async function renderNewBatch(container) {
             scheduleSaveDraft();
         });
     });
+
+    // ── Strict mode toggle ────────────────────────────────────────────
+    const strictToggle = document.getElementById('strict-naf-toggle');
+    if (strictToggle) {
+        strictToggle.addEventListener('change', () => {
+            _showStrictExplanation(strictToggle.checked);
+        });
+    }
 
     // ── Suggestion chips ──────────────────────────────────────────────
     const chipsContainer = document.getElementById('suggestion-chips');
@@ -402,6 +419,26 @@ export async function renderNewBatch(container) {
         `).join('');
         renderSiblingsRow();
         renderVariantsRow();
+        _updateStrictToggle();
+    }
+
+    function _updateStrictToggle() {
+        const toggle = document.getElementById('strict-naf-toggle');
+        if (!toggle) return;
+        const hasNaf = _pickedCodes.length > 0;
+        toggle.disabled = !hasNaf;
+        if (!hasNaf && toggle.checked) {
+            toggle.checked = false;
+            _showStrictExplanation(false);
+        }
+        toggle.title = hasNaf ? '' : t('newBatch.strictMode.disabledTooltip');
+    }
+
+    function _showStrictExplanation(isOn) {
+        const offEl = document.getElementById('strict-mode-explanation-off');
+        const onEl = document.getElementById('strict-mode-explanation-on');
+        if (offEl) offEl.style.display = isOn ? 'none' : '';
+        if (onEl) onEl.style.display = isOn ? '' : 'none';
     }
 
     function tryAddCode(code, label) {
@@ -803,6 +840,7 @@ export async function renderNewBatch(container) {
         }
         if (!department) department = 'FR';
 
+        const _strictToggleEl = document.getElementById('strict-naf-toggle');
         const payload = {
             sector: sector.toUpperCase(),
             department: department || '00',
@@ -812,6 +850,7 @@ export async function renderNewBatch(container) {
             naf_codes: _pickedCodes.length > 0 ? [..._pickedCodes] : null,
             time_cap_per_query_min: _selectedTimeCap > 0 ? _selectedTimeCap : null,
             time_cap_total_min: _selectedTotalCap > 0 ? _selectedTotalCap : null,
+            strict_naf: _strictToggleEl ? Boolean(_strictToggleEl.checked && !_strictToggleEl.disabled) : false,
         };
 
         btn.disabled = true;

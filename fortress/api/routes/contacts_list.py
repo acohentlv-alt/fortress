@@ -56,6 +56,7 @@ async def list_contacts(
     q: str = Query(None, description="Search by name, SIREN, phone, or email"),
     department: str = Query(None, description="Filter by department code"),
     naf_code: str = Query(None, description="Filter by NAF code prefix"),
+    strict_only: bool = Query(False, description="When true, only return entities with strict_match=true (exact NAF code)"),
     limit: int = Query(50, ge=1, le=250),
     offset: int = Query(0, ge=0),
 ):
@@ -112,6 +113,9 @@ async def list_contacts(
     if naf_code:
         where_parts.append("co.naf_code LIKE %s")
         params.append(f"{naf_code.strip().upper()}%")
+
+    if strict_only:
+        where_parts.append("co.strict_match = true")
 
     where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 

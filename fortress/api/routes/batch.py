@@ -40,6 +40,7 @@ class BatchRunRequest(BaseModel):
     time_cap_per_query_min: int | None = Field(None, ge=1, le=240, description="Per-query time budget in minutes; null = no cap. JS sends null when 'Illimité' pill is selected.")
     time_cap_total_min: int | None = Field(None, ge=1, le=600, description="Total batch time budget in minutes (measured from batch_data.created_at, so resumed batches don't get a fresh budget); null = no cap. Hard block when fired — drains in-flight entities (~30s) then ends batch with abort_reason=total_time_cap_reached. Max 600min defensible because 10 queries × 60min hits 600 naturally.")
     queue: bool = Field(False, description="If true and another batch is already running in this workspace, enqueue instead of returning 409. Worker will spawn this batch when the running one finishes.")
+    strict_naf: bool = Field(False, description="Mode strict — uniquement le code NAF exact, sans expansion sectorielle ni rattrapages haute-confiance.")
 
 
 
@@ -216,11 +217,17 @@ async def run_batch(body: BatchRunRequest, request: Request):
                         content={"error": f"File d'attente pleine (maximum {MAX_QUEUE_DEPTH}). Annulez un batch en attente avant d'en ajouter un autre."}
                     )
 
+            if body.strict_naf and not picked_codes:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Le mode strict nécessite au moins un code NAF sélectionné."}
+                )
+
             await conn.execute(
                 """INSERT INTO batch_data
-                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id, time_cap_per_query_min, time_cap_total_min)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min, body.time_cap_total_min),
+                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id, time_cap_per_query_min, time_cap_total_min, strict_naf)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min, body.time_cap_total_min, body.strict_naf),
             )
             await conn.commit()
 

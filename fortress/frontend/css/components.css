@@ -3942,3 +3942,94 @@
     background: var(--bg-hover);
     border-radius: var(--radius-sm);
 }
+
+/* ── Strict Mode — New Batch toggle ──────────────────────────── */
+.strict-mode-block {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 12px 16px;
+    margin: 8px 0;
+    background: var(--bg-card, var(--bg-secondary));
+}
+
+.strict-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    user-select: none;
+}
+
+.strict-mode-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+.strict-mode-toggle input[type="checkbox"]:disabled + span {
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+.strict-mode-toggle input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.strict-mode-explanation {
+    margin-top: 10px;
+    font-size: var(--font-xs, 0.75rem);
+    color: var(--text-muted);
+    line-height: 1.6;
+    white-space: pre-line;
+}
+
+/* ── Strict Mode — Job page badge ────────────────────────────── */
+.strict-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    background: var(--ink, #1a1a2e);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: help;
+    white-space: nowrap;
+}
+
+/* ── Strict Only — Contacts page filter ──────────────────────── */
+.strict-only-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.strict-only-checkbox input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+}
+
+@media (max-width: 375px) {
+    .strict-mode-block {
+        padding: 10px 12px;
+    }
+    .strict-mode-explanation {
+        font-size: 0.7rem;
+    }
+}

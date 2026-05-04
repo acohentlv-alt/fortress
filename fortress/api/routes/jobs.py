@@ -491,6 +491,7 @@ async def get_job(batch_id: str, request: Request):
             sj.mode,
             sj.shortfall_reason,
             sj.current_query,
+            COALESCE(sj.strict_naf, FALSE) AS strict_naf,
             EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds
         FROM batch_data sj
         WHERE sj.batch_id = %s {ws_filter}
@@ -565,6 +566,10 @@ async def get_job(batch_id: str, request: Request):
     # Remove internal field from response
     job = {k: v for k, v in job.items() if k != "idle_seconds"}
 
+    # Strict-mode filter: when batch was launched with strict_naf=true, all stat queries
+    # must filter to co.strict_match=true so counts/tiles reflect the visible entities only.
+    _strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
+
     # Also get departments this job touches
     depts = await fetch_all("""
         SELECT DISTINCT co.departement, COUNT(DISTINCT co.siren) AS company_count
@@ -575,11 +580,12 @@ async def get_job(batch_id: str, request: Request):
         ORDER BY co.departement
     """, (job["batch_name"],))
 
-    pending_row = await fetch_one("""
+    pending_row = await fetch_one(f"""
         SELECT COUNT(DISTINCT co.siren) AS pending_links
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s AND co.link_confidence = 'pending'
+        {_strict_filter}
     """, (batch_id,))
     pending_links = (pending_row or {}).get("pending_links", 0)
 
@@ -587,7 +593,7 @@ async def get_job(batch_id: str, request: Request):
     #   (1) auto-confirm rate = confirmed / total_found
     #   (2) NAF accuracy rate = naf_verified / total_found  (hidden when no NAF filter was set)
     # Plus a state breakdown + per-method breakdown for the [▸ détail] disclosure.
-    link_rows = await fetch_all("""
+    link_rows = await fetch_all(f"""
         SELECT
             CASE
                 WHEN co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL THEN 'unlinked'
@@ -599,6 +605,7 @@ async def get_job(batch_id: str, request: Request):
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
+        {_strict_filter}
         GROUP BY state, method
     """, (batch_id,))
     link_stats = {
@@ -622,7 +629,7 @@ async def get_job(batch_id: str, request: Request):
     # The "exact / related" split inside naf_verified comes from the batch_log.action:
     #   auto_linked_verified  = strict prefix OR section letter (treated as "exact or sector-same")
     #   auto_linked_expanded  = curated sibling family (treated as "related")
-    naf_row = await fetch_one("""
+    naf_row = await fetch_one(f"""
         SELECT
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'verified') AS verified,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status = 'mismatch') AS mismatch,
@@ -633,8 +640,6 @@ async def get_job(batch_id: str, request: Request):
                 WHERE co.naf_status = 'mismatch' AND co.link_confidence = 'pending'
             ) AS mismatch_pending,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated,
-            -- Clickable counts: each FILTER predicate mirrors a state_filter clause at jobs.py:902-908
-            -- so the legend number == result count when the user clicks the legend row.
             COUNT(DISTINCT co.siren) FILTER (
                 WHERE co.naf_status = 'verified'
                   AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
@@ -653,6 +658,7 @@ async def get_job(batch_id: str, request: Request):
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
+        {_strict_filter}
     """, (batch_id,))
     if naf_row:
         link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
@@ -682,13 +688,14 @@ async def get_job(batch_id: str, request: Request):
     # audit rows (e.g., initial auto_linked_geo_proximity → later auto_linked_gemini_swap).
     # EXACT takes precedence: if a SIREN appears in any EXACT action, it counts
     # as EXACT only — never also as RELATED. Prevents the disclosure summing > naf_verified.
-    naf_split = await fetch_one("""
+    naf_split = await fetch_one(f"""
         WITH exact_sirens AS (
             SELECT DISTINCT bl.siren
             FROM batch_log bl
             JOIN companies co ON co.siren = bl.siren
             WHERE bl.batch_id = %s
               AND co.naf_status = 'verified'
+              {_strict_filter}
               AND bl.action IN (
                   'auto_linked_verified',
                   'auto_linked_geo_proximity',
@@ -707,6 +714,7 @@ async def get_job(batch_id: str, request: Request):
             JOIN companies co ON co.siren = bl.siren
             WHERE bl.batch_id = %s
               AND co.naf_status = 'verified'
+              {_strict_filter}
               AND bl.action = 'auto_linked_expanded'
               AND bl.siren NOT IN (SELECT siren FROM exact_sirens)
         )
@@ -722,7 +730,7 @@ async def get_job(batch_id: str, request: Request):
     # Confirmed = NOT unlinked (MAPS with no linked_siren) AND NOT pending.
     # NULL-safe: native SIRENE matches have link_confidence IS NULL.
     from fortress.config.naf_codes import get_naf_label  # noqa: E402
-    naf_per_code = await fetch_all("""
+    naf_per_code = await fetch_all(f"""
         SELECT co.naf_code, COUNT(DISTINCT co.siren) AS n
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
@@ -730,6 +738,7 @@ async def get_job(batch_id: str, request: Request):
           AND co.naf_code IS NOT NULL
           AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)
           AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
+          {_strict_filter}
         GROUP BY co.naf_code
         ORDER BY n DESC
     """, (batch_id,))
@@ -892,15 +901,16 @@ async def get_job_companies(
         ws_filter = ""
         ws_params = ()
 
-    # Get the batch_name from the job, scoped to user's workspace
+    # Get the batch_name + strict_naf from the job, scoped to user's workspace
     job = await fetch_one(
-        f"SELECT batch_name FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
+        f"SELECT batch_name, COALESCE(strict_naf, FALSE) AS strict_naf FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
         (batch_id,) + ws_params,
     )
     if not job:
         return JSONResponse(status_code=404, content={"error": "Batch introuvable."})
 
     batch_name = job["batch_name"]
+    _co_strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
     qid = batch_id  # Use batch_id for batch-scoped data
     offset = (page - 1) * page_size
 
@@ -944,7 +954,7 @@ async def get_job_companies(
         """
         sq_params = [qid, search_query]
 
-    where_extra = where_extra + filter_clause + sq_clause
+    where_extra = where_extra + filter_clause + sq_clause + _co_strict_filter
 
     # Determine sort clause
     sort_clause = {

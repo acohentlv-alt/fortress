@@ -158,6 +158,7 @@ def _compute_naf_status(
     matched_naf: str | None,
     picked_nafs: list[str],
     division_whitelist: list[str] | None,
+    strict: bool = False,
 ) -> str:
     """Return 'verified' or 'mismatch' based on SIRENE NAF vs user's picker list.
 
@@ -175,6 +176,10 @@ def _compute_naf_status(
           → section-letter broadening
       2. strict prefix match of picker on matched NAF
       3. picker is a leaf in SECTOR_EXPANSIONS and matched NAF is a curated sibling
+         (disabled when strict=True)
+
+    When strict=True: only strict prefix match and division_whitelist checks apply.
+    Clique/sibling expansion (SECTOR_EXPANSIONS) is skipped.
     """
     candidate = (matched_naf or "")
     if division_whitelist is not None:
@@ -183,9 +188,10 @@ def _compute_naf_status(
     for picked in picked_nafs:
         if candidate.startswith(picked):
             return "verified"
-        expansion = SECTOR_EXPANSIONS.get(picked)
-        if expansion is not None and candidate in expansion:
-            return "verified"
+        if not strict:
+            expansion = SECTOR_EXPANSIONS.get(picked)
+            if expansion is not None and candidate in expansion:
+                return "verified"
     return "mismatch"
 
 
@@ -2541,7 +2547,8 @@ async def run(batch_id: str) -> None:
             cur = await conn_holder[0].execute(
                 """SELECT batch_name, search_queries, filters_json, batch_size,
                           workspace_id, completed_queries_count, queries_json, id,
-                          time_cap_per_query_min, time_cap_total_min, created_at
+                          time_cap_per_query_min, time_cap_total_min, created_at,
+                          COALESCE(strict_naf, FALSE)
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -2560,6 +2567,7 @@ async def run(batch_id: str) -> None:
             _time_cap_min: int | None = row[8] if row[8] is not None else None
             _time_cap_total_min: int | None = row[9] if row[9] is not None else None
             _batch_created_at: datetime = row[10]
+            strict_naf: bool = bool(row[11])  # 12th field — mode strict toggle
 
             # Set ContextVar so Maps scraper can write timing rows without threading batch_id through callbacks
             batch_id_var.set(batch_int_id)
@@ -3688,11 +3696,11 @@ async def run(batch_id: str) -> None:
                                         link_signals["sector_mismatch"] = True
                                 if naf_status == "verified":
                                     auto_confirm = True
-                                elif naf_status == "mismatch" and method == "siren_website" and link_signals.get("siren_website_match"):
+                                elif naf_status == "mismatch" and not strict_naf and method == "siren_website" and link_signals.get("siren_website_match"):
                                     # Fix A: self-declared SIREN on website footer is deterministic proof.
                                     # 1 signal (the siren_website_match itself) is enough, even with NAF mismatch.
                                     auto_confirm = True
-                                elif naf_status == "mismatch" and agree_count >= 2:
+                                elif naf_status == "mismatch" and not strict_naf and agree_count >= 2:
                                     auto_confirm = True
                                 elif picked_nafs == []:
                                     # Safeguard: name-only strong methods with no NAF filter
@@ -3732,6 +3740,7 @@ async def run(batch_id: str) -> None:
                                 # Reuses auto_linked_mismatch_accepted audit action.
                                 if (
                                     not auto_confirm
+                                    and not strict_naf
                                     and method == "enseigne"
                                     and naf_status == "mismatch"
                                     and agree_count == 1
@@ -3755,6 +3764,7 @@ async def run(batch_id: str) -> None:
                                 # (brand prefix + maps_cp + public-FJ filter at the picker) is the trust.
                                 if (
                                     not auto_confirm
+                                    and not strict_naf
                                     and method == "commune_municipal"
                                 ):
                                     # Re-fetch matched SIRENE's forme_juridique to confirm public-collectivité status.
@@ -3777,6 +3787,7 @@ async def run(batch_id: str) -> None:
                                 # final safeguard. Independent of Giclette (different method).
                                 if (
                                     not auto_confirm
+                                    and not strict_naf
                                     and method == "chain"
                                     and naf_status == "mismatch"
                                     and agree_count >= 1
@@ -3802,6 +3813,7 @@ async def run(batch_id: str) -> None:
                                 # picker. Trust the SQL constraints.
                                 if (
                                     not auto_confirm
+                                    and not strict_naf
                                     and method == "siret_address_naf"
                                     and naf_status == "mismatch"
                                 ):
@@ -3821,6 +3833,17 @@ async def run(batch_id: str) -> None:
 
                             link_state = "confirmed" if auto_confirm else "pending"
 
+                            # Compute strict_match: TRUE iff matched NAF strictly prefix-matches
+                            # a picker or is within the division_whitelist (section-letter pick).
+                            # NULL when no picker was applied — the column has no meaning without a filter.
+                            _strict_match: bool | None = None
+                            if matched_naf and picked_nafs:
+                                if naf_division_whitelist is not None:
+                                    _strict_match = any(matched_naf.startswith(d) for d in naf_division_whitelist)
+                                else:
+                                    _strict_match = any(matched_naf.startswith(p) for p in picked_nafs)
+                            # elif not picked_nafs: _strict_match stays None (no picker → not applicable)
+
                             await conn.execute(
                                 """UPDATE companies
                                    SET linked_siren    = %s,
@@ -3835,8 +3858,8 @@ async def run(batch_id: str) -> None:
 
                             if naf_status is not None:
                                 await conn.execute(
-                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
-                                    (naf_status, siren),
+                                    "UPDATE companies SET naf_status = %s, strict_match = %s WHERE siren = %s",
+                                    (naf_status, _strict_match, siren),
                                 )
 
                             if auto_confirm:
@@ -3926,7 +3949,7 @@ async def run(batch_id: str) -> None:
                         # MAPS-only (no SIRENE candidate): mark naf_status if NAF filter was applied
                         if not _pending_link and picked_nafs:
                             await conn.execute(
-                                "UPDATE companies SET naf_status = 'maps_only' WHERE siren = %s",
+                                "UPDATE companies SET naf_status = 'maps_only', strict_match = NULL WHERE siren = %s",
                                 (siren,),
                             )
 
@@ -4066,8 +4089,10 @@ async def run(batch_id: str) -> None:
                                             # Fire when: currently auto-confirmed, Gemini says match
                                             # but to a DIFFERENT SIREN than the one we just confirmed,
                                             # at high confidence, AND this is NOT a chain match.
+                                            # Disabled in strict_naf mode (no rescue methods allowed).
                                             if (
                                                 _v == "match"
+                                                and not strict_naf
                                                 and _vpicked is not None
                                                 and _pending_link is not None
                                                 and _just_auto_confirmed
@@ -4128,13 +4153,18 @@ async def run(batch_id: str) -> None:
                                                             await _copy_sirene_reference_data(conn, siren, _target_for_swap)
                                                             _swap_naf = _swap_row[5] or ""
                                                             _swap_status = None
+                                                            _swap_strict_match: bool | None = None
                                                             if picked_nafs:
                                                                 _swap_status = _compute_naf_status(
                                                                     _swap_naf, picked_nafs, naf_division_whitelist,
                                                                 )
+                                                                if naf_division_whitelist is not None:
+                                                                    _swap_strict_match = any(_swap_naf.startswith(d) for d in naf_division_whitelist)
+                                                                else:
+                                                                    _swap_strict_match = any(_swap_naf.startswith(p) for p in picked_nafs)
                                                                 await conn.execute(
-                                                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
-                                                                    (_swap_status, siren),
+                                                                    "UPDATE companies SET naf_status = %s, strict_match = %s WHERE siren = %s",
+                                                                    (_swap_status, _swap_strict_match, siren),
                                                                 )
                                                             # (e) Update link state.
                                                             await conn.execute(
@@ -4261,8 +4291,10 @@ async def run(batch_id: str) -> None:
                                             #            Gemini said match at high confidence with a picked_siren,
                                             #            the picked SIREN passes section-letter NAF check
                                             #            (if picker non-empty), AND is not on hosting blacklist.
+                                            # Disabled in strict_naf mode (no rescue methods allowed).
                                             elif (
                                                 _v == "match"
+                                                and not strict_naf
                                                 and _vconf >= settings.gemini_d1b_rescue_threshold
                                                 and _vpicked is not None
                                                 and not _just_auto_confirmed  # currently pending or maps_only
@@ -4312,13 +4344,18 @@ async def run(batch_id: str) -> None:
                                                             )
                                                             # Recompute naf_status if picker was applied.
                                                             _rescue_status = None
+                                                            _rescue_strict_match: bool | None = None
                                                             if picked_nafs:
                                                                 _rescue_status = _compute_naf_status(
                                                                     _rescue_naf, picked_nafs, naf_division_whitelist,
                                                                 )
+                                                                if naf_division_whitelist is not None:
+                                                                    _rescue_strict_match = any(_rescue_naf.startswith(d) for d in naf_division_whitelist)
+                                                                else:
+                                                                    _rescue_strict_match = any(_rescue_naf.startswith(p) for p in picked_nafs)
                                                                 await conn.execute(
-                                                                    "UPDATE companies SET naf_status = %s WHERE siren = %s",
-                                                                    (_rescue_status, siren),
+                                                                    "UPDATE companies SET naf_status = %s, strict_match = %s WHERE siren = %s",
+                                                                    (_rescue_status, _rescue_strict_match, siren),
                                                                 )
                                                             # Copy SIRENE reference data (same semantics as manual /link approve).
                                                             await _copy_sirene_reference_data(conn, siren, _vpicked)
@@ -4624,8 +4661,10 @@ async def run(batch_id: str) -> None:
                     # Mirrors gemini_rescue pattern at lines 4220-4248.
                     # Upgrades pending → confirmed when Maps↔INPI signals corroborate
                     # the match, even on NAF mismatch.
+                    # Disabled in strict_naf mode (no rescue methods allowed).
                     if (
-                        _pending_link
+                        not strict_naf
+                        and _pending_link
                         and _pending_link["method"] in _STRONG_METHODS
                         and re_company_data
                         and re_company_data.get("_siege")

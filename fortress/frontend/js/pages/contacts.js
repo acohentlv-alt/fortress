@@ -24,6 +24,7 @@ export async function renderContacts(container) {
     let currentDepartment = '';
     let currentNafCode = '';
     let currentQuery = '';
+    let currentStrictOnly = false;
     const PAGE_SIZE = 50;
     const INITIAL_PAGES = 5;
     let allResults = [];
@@ -81,6 +82,10 @@ export async function renderContacts(container) {
                        padding:var(--space-sm) var(--space-md); font-family:var(--font-family)"
                 autocomplete="off"
             >
+            <label class="strict-only-checkbox" title="${t('contacts.filter.strictOnly.tooltip')}">
+                <input type="checkbox" id="strict-only-filter">
+                <span>${t('contacts.filter.strictOnly.label')}</span>
+            </label>
         </div>
 
         <!-- Results -->
@@ -326,6 +331,7 @@ export async function renderContacts(container) {
         if (currentQuery) params.q = currentQuery;
         if (currentDepartment) params.department = currentDepartment;
         if (currentNafCode) params.naf_code = currentNafCode;
+        if (currentStrictOnly) params.strict_only = 'true';
 
         const data = await getContactsList(params);
 
@@ -366,6 +372,7 @@ export async function renderContacts(container) {
         if (currentQuery) params.q = currentQuery;
         if (currentDepartment) params.department = currentDepartment;
         if (currentNafCode) params.naf_code = currentNafCode;
+        if (currentStrictOnly) params.strict_only = 'true';
 
         const data = await getContactsList(params);
 
@@ -413,6 +420,11 @@ export async function renderContacts(container) {
             currentNafCode = nafFilter.value.trim();
             doSearch();
         }, 400);
+    });
+
+    document.getElementById('strict-only-filter')?.addEventListener('change', (e) => {
+        currentStrictOnly = e.target.checked;
+        doSearch();
     });
 
     // Select toggle button

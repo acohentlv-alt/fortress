@@ -156,10 +156,12 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
     recorded this exact search_query are returned.
     """
     job = await fetch_one(
-        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        "SELECT batch_id, COALESCE(strict_naf, FALSE) AS strict_naf FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return []
+
+    strict = bool(job.get("strict_naf"))
 
     sq_clause = ""
     sq_params: tuple = ()
@@ -173,15 +175,24 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
         """
         sq_params = (batch_id, search_query)
 
+    if strict:
+        # Mode strict: only entities with strict_match=true (exact NAF prefix).
+        naf_where = """AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+          AND co.strict_match = true
+          AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
+    else:
+        # Wide mode (default): include rescue methods + clique siblings.
+        naf_where = """AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
+          AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
+
     return await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s')}
         SELECT {_EXPORT_SELECT}
         FROM (SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s) sa
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
-          AND (co.naf_status IS DISTINCT FROM 'mismatch' OR (co.link_method IN ('chain', 'gemini_judge', 'siret_address_naf') OR co.rescued_by = 'inpi_validated'))
-          AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
+        WHERE {naf_where}
           {sq_clause}
         ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
