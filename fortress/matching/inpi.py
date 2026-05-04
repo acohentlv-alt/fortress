@@ -37,10 +37,10 @@ _RATE_DELAY = 0.5  # ~2 req/s — the API claims 7/s but enforces stricter per-I
 # A2c retry ladder for rate-limited A2-fallback INPI lookups only.
 # Opt-in via search_by_name(retry_on_rate_limit=True) — default False for all
 # other call sites (Step 0, Step 5, officer fetch, admin UI).
-# Total worst-case additional wait per A2 entity: 2 + 5 + 15 = 22s.
-_A2_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0, 15.0)
+# Total worst-case additional wait per A2 entity: 2 + 5 = 7s.
+_A2_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
 
-# Set to True by search_by_name() when retry_on_rate_limit=True AND all three
+# Set to True by search_by_name() when retry_on_rate_limit=True AND both
 # retries returned 429. The A2 caller reads and clears this immediately after
 # its await. Single-threaded async, single caller — no race concern. Any other
 # call site that opts into retry_on_rate_limit must follow the same read-clear
@@ -109,7 +109,7 @@ async def _fire_inpi_get(url: str) -> tuple[int, dict | None]:
 
     Held under _INPI_GLOBAL_LOCK for the request + 0.5s rate gate ONLY. Callers
     that retry on 429 must do the retry sleep OUTSIDE this helper so the lock
-    is released between attempts — otherwise a 22s worst-case retry blocks
+    is released between attempts — otherwise a 7s worst-case retry blocks
     every other worker's INPI calls.
 
     Returns (status_code, json_payload). Payload is None if status != 200 or
@@ -144,8 +144,8 @@ async def search_by_name(
         dept: Department code (e.g. '66') — used if cp is None.
         cp: Postal code (e.g. '66300') — preferred over dept if provided.
         retry_on_rate_limit: If True (default since Bug C fix, Apr 28), retry
-            up to 3 times on HTTP 429 using the _A2_RETRY_DELAYS ladder
-            (2s / 5s / 15s) with the lock released during sleeps. After all
+            up to 2 times on HTTP 429 using the _A2_RETRY_DELAYS ladder
+            (2s / 5s) with the lock released during sleeps. After all
             retries exhaust, sets the module-level _LAST_A2_RATE_LIMIT_EXHAUSTED
             flag to True so the A2 caller can dual-emit telemetry. Pass False
             from any future call site that explicitly wants fail-fast.
@@ -235,7 +235,7 @@ async def fetch_dirigeants(
         (dirigeants_list, company_data_dict). Empty containers if API fails or
         rate-limit retries exhaust.
 
-    Bug C fix (Apr 28): on 429, retries 3× with 2s/5s/15s backoff (was 1× with
+    Bug C fix (Apr 28): on 429, retries 2× with 2s/5s backoff (was 1× with
     3s). Lock released during retry sleeps.
     """
     own_client = curl_client is None

@@ -3034,9 +3034,9 @@ async def run(batch_id: str) -> None:
                                             from fortress.matching.inpi import search_by_name as _a2_search
                                             _a2_dept_prefix = (maps_cp or "")[:2]
                                             _a2_cp = maps_cp if _a2_dept_prefix in _DENSE_URBAN_DEPTS else None
-                                            # A2c: opt into 429 retry ladder (2s / 5s / 15s).
+                                            # A2c: opt into 429 retry ladder (2s / 5s).
                                             # A2 is a last-resort lever — we've already invested
-                                            # crawl + regex work on this entity, so 22s worst-case
+                                            # crawl + regex work on this entity, so 7s worst-case
                                             # wait to rescue a transient rate-limit is worth it.
                                             # Step 0 and Step 5 keep fail-fast behavior by default.
                                             _a2_hit = await _a2_search(
@@ -3227,7 +3227,7 @@ async def run(batch_id: str) -> None:
                                                     "discovery.a2_inpi_rate_limited",
                                                     maps_name=maps_name,
                                                     legal_name=_legal_name,
-                                                    retries_attempted=3,  # matches len(inpi._A2_RETRY_DELAYS); hardcoded to avoid cross-module import
+                                                    retries_attempted=2,  # matches len(inpi._A2_RETRY_DELAYS); hardcoded to avoid cross-module import
                                                 )
                                             log.info(
                                                 "discovery.a2_inpi_no_hit",
