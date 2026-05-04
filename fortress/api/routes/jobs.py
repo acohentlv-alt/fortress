@@ -1104,7 +1104,8 @@ async def get_job_queries(batch_id: str, request: Request):
         ws_params = ()
 
     job = await fetch_one(
-        f"""SELECT queries_json, current_query, time_cap_per_query_min, time_cap_total_min,
+        f"""SELECT queries_json, current_query, current_widening_json,
+                   time_cap_per_query_min, time_cap_total_min,
                    search_queries, status
             FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}""",
         (batch_id,) + ws_params,
@@ -1138,21 +1139,38 @@ async def get_job_queries(batch_id: str, request: Request):
     # Live count for running query — only when batch is active and has a current_query
     running_payload = None
     if is_running and current_query and current_query not in done_set:
-        # Count distinct qualified entities tagged with this query in batch_log.
-        # Mirrors the post-query "new_companies" definition (qualified entities
-        # whose audit row carries this search_query value).
         cnt_row = await fetch_one(
             """SELECT COUNT(DISTINCT siren) AS n
                FROM batch_log
                WHERE batch_id = %s AND search_query = %s
                  AND siren NOT LIKE 'FILTERED_%%'
-                 AND siren NOT LIKE 'DEDUP_%%'""",
+                 AND siren NOT LIKE 'DEDUP_%%'
+                 AND siren NOT LIKE 'WIDEN_%%'""",
             (batch_id, current_query),
         )
         running_payload = {
             "query": current_query,
             "live_count": int((cnt_row or {}).get("n") or 0),
+            "is_expansion": False,
+            "primary_query": None,
+            "widening_type": None,
+            "value": None,
         }
+
+        # If a widening is in flight, override expansion fields from the
+        # authoritative current_widening_json column. No heuristic, no race.
+        wid_blob = job.get("current_widening_json")
+        if wid_blob:
+            if isinstance(wid_blob, str):
+                try:
+                    wid_blob = _json.loads(wid_blob)
+                except Exception:
+                    wid_blob = None
+            if isinstance(wid_blob, dict):
+                running_payload["is_expansion"] = True
+                running_payload["primary_query"] = wid_blob.get("primary_query")
+                running_payload["widening_type"] = wid_blob.get("widening_type")
+                running_payload["value"] = wid_blob.get("value")
 
     # Queued: planned minus done minus running (preserve original order)
     queued: list[str] = []

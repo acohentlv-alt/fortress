@@ -5007,6 +5007,16 @@ async def run(batch_id: str) -> None:
                     _query_geo_capture_count = 0
                     _pre_query_discovered = companies_discovered
                     _query_start = time.monotonic()
+                    # Persist a fresh queries_json checkpoint at primary start so the
+                    # /queries API can render done/running/queued correctly even if
+                    # the worker dies mid-primary before any per-iteration write.
+                    try:
+                        await _update_job_safe(
+                            conn_holder, batch_id,
+                            queries_json=json.dumps(_query_stats),
+                        )
+                    except Exception as _ck_exc:
+                        log.debug("discovery.queries_checkpoint_failed", error=str(_ck_exc))
                     _first_card_seen_at[0] = None   # W — reset for new query (var defined near _persist_result)
 
                     # Z — compute hard deadline before any await
@@ -5211,6 +5221,26 @@ async def run(batch_id: str) -> None:
                                 # Build widened query — sector word + city/postal code
                                 _widened_query = f"{_sector_word} {_widen_value}".strip() if _sector_word else _widen_value
 
+                                # Update live indicator + authoritative in-flight column so the
+                                # monitor shows "Élargissement en cours pour <primary> : <value>"
+                                # while this widening runs.
+                                _current_search_query = _widened_query
+                                try:
+                                    _wid_blob = json.dumps({
+                                        "primary_query": search_query,
+                                        "widening_type": _widen_type,
+                                        "value": _widen_value,
+                                        "widened_query": _widened_query,
+                                        "started_at": datetime.now(timezone.utc).isoformat(),
+                                    })
+                                    await _update_job_safe(
+                                        conn_holder, batch_id,
+                                        current_query=_widened_query,
+                                        current_widening_json=_wid_blob,
+                                    )
+                                except Exception as _w_set_exc:
+                                    log.debug("discovery.widening_state_update_failed", error=str(_w_set_exc))
+
                                 # Remaining capacity for this widened search
                                 _w_remaining = max(0, 2000 - companies_discovered)
                                 _w_max_cards = _w_remaining * 3 if _w_remaining > 0 else 0
@@ -5219,16 +5249,78 @@ async def run(batch_id: str) -> None:
                                 _widen_error: str | None = None
                                 _pre_widen_count = companies_discovered
                                 _w_cards_found = 0
-                                try:
-                                    _w_results = await maps_scraper.search_all(
-                                        _widened_query,
-                                        on_result=_persist_result,
-                                        dept_code=_effective_dept,
-                                        max_results=_w_max_cards,
-                                        sector_word=_sector_word,
-                                        should_skip=_should_skip_card,
+                                _w_abort_reason: str | None = None
+
+                                # Compute effective per-widening deadline anchored to PRIMARY start.
+                                # Whichever cap fires first (per-query budget OR total batch budget) wins.
+                                _w_per_query_remaining: float | None = None
+                                if _time_cap_min:
+                                    _w_per_query_remaining = max(
+                                        1.0,
+                                        (_time_cap_min * 60) - (time.monotonic() - _query_start),
                                     )
+                                _w_total_remaining: float | None = None
+                                if _total_cap_sec is not None:
+                                    _w_total_remaining = max(1.0, _total_cap_sec - _total_elapsed_sec())
+
+                                _w_deadline: float | None
+                                _w_reason_on_timeout: str
+                                if _w_per_query_remaining is None and _w_total_remaining is None:
+                                    _w_deadline = None
+                                    _w_reason_on_timeout = "time_cap_reached"
+                                elif _w_per_query_remaining is None:
+                                    _w_deadline = _w_total_remaining
+                                    _w_reason_on_timeout = "total_time_cap_reached"
+                                elif _w_total_remaining is None:
+                                    _w_deadline = _w_per_query_remaining
+                                    _w_reason_on_timeout = "time_cap_reached"
+                                else:
+                                    if _w_total_remaining < _w_per_query_remaining:
+                                        _w_deadline = _w_total_remaining
+                                        _w_reason_on_timeout = "total_time_cap_reached"
+                                    else:
+                                        _w_deadline = _w_per_query_remaining
+                                        _w_reason_on_timeout = "time_cap_reached"
+
+                                _w_search_task: asyncio.Task | None = None
+                                try:
+                                    _w_search_task = asyncio.create_task(
+                                        maps_scraper.search_all(
+                                            _widened_query,
+                                            on_result=_persist_result,
+                                            dept_code=_effective_dept,
+                                            max_results=_w_max_cards,
+                                            sector_word=_sector_word,
+                                            should_skip=_should_skip_card,
+                                        )
+                                    )
+                                    if _w_deadline is None:
+                                        _w_results = await _w_search_task
+                                    else:
+                                        _w_results = await asyncio.wait_for(
+                                            asyncio.shield(_w_search_task), timeout=_w_deadline,
+                                        )
                                     _w_cards_found = len(_w_results)
+                                except asyncio.TimeoutError:
+                                    _w_abort_reason = _w_reason_on_timeout
+                                    _widen_stop_reason = _w_reason_on_timeout
+                                    log.warning(
+                                        "discovery.widening_query_timeout",
+                                        query=_widened_query,
+                                        deadline_sec=round(_w_deadline, 1) if _w_deadline else None,
+                                        reason=_w_abort_reason,
+                                    )
+                                    if _w_search_task is not None and not _w_search_task.done():
+                                        _w_search_task.cancel()
+                                        try:
+                                            await _w_search_task
+                                        except (asyncio.CancelledError, Exception):
+                                            pass
+                                    try:
+                                        await asyncio.wait_for(_entity_queue.join(), timeout=30.0)
+                                    except asyncio.TimeoutError:
+                                        log.warning("discovery.widening_drain_timeout", query=_widened_query)
+                                    _w_cards_found = 0
                                 except Exception as _w_exc:
                                     log.warning("discovery.widening_query_failed", query=_widened_query, error=str(_w_exc))
                                     _w_cards_found = 0
@@ -5266,6 +5358,7 @@ async def run(batch_id: str) -> None:
                                     "primary_cumulative_yield_after": _cumulative_after,
                                     "duration_sec": round(time.monotonic() - _widen_query_start, 1),
                                     "error": _widen_error,
+                                    "abort_reason": _w_abort_reason,
                                 })
 
                                 # Audit row in batch_log
@@ -5296,6 +5389,22 @@ async def run(batch_id: str) -> None:
                                 except Exception as _audit_exc:
                                     log.debug("discovery.widening_audit_failed", error=str(_audit_exc))
 
+                                # Per-iteration checkpoint so /queries can render this widening
+                                # in the done list immediately, and so a later crash leaves a
+                                # truthful trail in queries_json.
+                                try:
+                                    await _update_job_safe(
+                                        conn_holder, batch_id,
+                                        queries_json=json.dumps(_query_stats),
+                                    )
+                                except Exception as _ck_exc:
+                                    log.debug("discovery.widening_checkpoint_failed", error=str(_ck_exc))
+
+                                # If this iteration aborted on a cap, break the widening loop
+                                # immediately — don't sleep/move to next candidate.
+                                if _w_abort_reason in ("time_cap_reached", "total_time_cap_reached"):
+                                    break
+
                                 await asyncio.sleep(settings.cp_widening_inter_query_sleep_sec)
 
                             # End of widening loop
@@ -5316,6 +5425,17 @@ async def run(batch_id: str) -> None:
                                 "stop_reason": _widen_stop_reason,
                                 "total_widened": _widened_count,
                             }
+
+                            # Clear in-flight widening state — back to "primary" view in monitor.
+                            try:
+                                await _update_job_safe(
+                                    conn_holder, batch_id,
+                                    current_widening_json=None,
+                                    current_query=search_query,
+                                )
+                            except Exception as _clr_exc:
+                                log.debug("discovery.widening_state_clear_failed", error=str(_clr_exc))
+
                             if _widen_stop_reason == "total_time_cap_reached":
                                 break  # break OUTER `for q_idx in enumerate(search_queries, 1):` loop
 
@@ -5491,6 +5611,7 @@ async def run(batch_id: str) -> None:
                             companies_qualified=qualified,
                             shortfall_reason=shortfall_msg,
                             current_query=None,
+                            current_widening_json=None,
                             queries_json=json.dumps(_query_stats),
                             triage_black=triage_counts["black"],
                             triage_green=triage_counts["green"],
@@ -5554,7 +5675,7 @@ async def run(batch_id: str) -> None:
                 traceback=_traceback.format_exc(),
             )
             try:
-                await _update_job_safe(conn_holder, batch_id, status="failed")
+                await _update_job_safe(conn_holder, batch_id, status="failed", current_widening_json=None)
             except Exception:
                 pass
             raise

@@ -152,15 +152,33 @@ export function renderQueriesPanel(queries, opts = {}) {
     }
 
     if (running && running.query) {
-        lines.push(`
-            <div class="qp-row qp-row--running" style="margin-bottom:var(--space-sm)">
-                <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-secondary); border:1px solid var(--warning, #f0ad4e)">
-                    <span class="qp-state-icon qp-state-icon--running" aria-label="${t('monitor.queriesStateRunning')}">🔴</span>
-                    <strong style="font-size:var(--font-sm)">${escapeHtml(running.query)}</strong>
-                    <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">${t('monitor.queriesRunningLive', { count: running.live_count != null ? running.live_count : 0 })}</span>
+        const liveText = t('monitor.queriesRunningLive', { count: running.live_count != null ? running.live_count : 0 });
+        if (running.is_expansion && running.primary_query) {
+            // Widening in flight — render at level-3 depth (visually nested under the parent primary).
+            // Indent matches existing branch leaves: padding-left:var(--space-lg) + `└─` glyph.
+            const expansionLabel = t('monitor.queriesExpansionRunning', { primary: running.primary_query });
+            lines.push(`
+                <div class="qp-row qp-row--running" style="padding-left:var(--space-lg); margin-bottom:var(--space-sm)">
+                    <div style="display:flex; align-items:center; gap:6px; padding:3px 0; font-size:var(--font-xs); color:var(--text-secondary)">
+                        <span style="color:var(--text-muted)">└─</span>
+                        <span class="qp-state-icon qp-state-icon--running" aria-label="${t('monitor.queriesStateRunning')}">🔴</span>
+                        <span>${escapeHtml(expansionLabel)} ${escapeHtml(running.value || '')}</span>
+                        <span style="color:var(--text-muted); margin-left:auto">${liveText}</span>
+                    </div>
                 </div>
-            </div>
-        `);
+            `);
+        } else {
+            // Primary running — existing flat row, unchanged behavior.
+            lines.push(`
+                <div class="qp-row qp-row--running" style="margin-bottom:var(--space-sm)">
+                    <div style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); border-radius:var(--radius-sm); background:var(--bg-secondary); border:1px solid var(--warning, #f0ad4e)">
+                        <span class="qp-state-icon qp-state-icon--running" aria-label="${t('monitor.queriesStateRunning')}">🔴</span>
+                        <strong style="font-size:var(--font-sm)">${escapeHtml(running.query)}</strong>
+                        <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">${liveText}</span>
+                    </div>
+                </div>
+            `);
+        }
     }
 
     for (const q of queued) {
