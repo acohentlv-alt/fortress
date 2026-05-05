@@ -2685,6 +2685,7 @@ async def run(batch_id: str) -> None:
                 _sector_word: str = ""  # Sector word for relevance filtering
                 _query_stats: list[dict] = []  # Tracks per-query results for queries_json
                 _widening_summary: dict[str, dict] = {}  # Per-primary widening telemetry
+                _depts_widened: set[str] = set()  # Depts whose auto-widening already fired in this batch
 
                 # Pre-compute sector word for relevance filter (strip dept code from first query)
                 if search_queries and dept_filter and re.match(r"^\d{2,3}$", dept_filter):
@@ -2700,6 +2701,17 @@ async def run(batch_id: str) -> None:
                             _query_stats = list(json.loads(_prior_queries_json))
                         else:
                             _query_stats = list(_prior_queries_json)
+                        # Rebuild dept-widened set from prior expansions BEFORE stripping
+                        # them. Mirrors line 4969's `or dept_filter` fallback so primaries
+                        # like "AGEN" (no parseable dept) still mark their dept on resume.
+                        for _prior in _query_stats:
+                            if _prior.get("is_expansion") and _prior.get("primary_query"):
+                                _prior_dept = (
+                                    _parse_dept_hint_from_query(_prior["primary_query"])
+                                    or dept_filter
+                                )
+                                if _prior_dept:
+                                    _depts_widened.add(_prior_dept)
                         # Delta 1: drop expansion entries so rerun-expansion doesn't duplicate
                         _query_stats = [s for s in _query_stats if not s.get("is_expansion")]
                     except Exception:
@@ -5177,12 +5189,23 @@ async def run(batch_id: str) -> None:
                         "duration_sec": round(time.monotonic() - _query_start, 1),
                     })
 
+                    # Option Y: when user disabled auto-widening on this primary via city
+                    # picker, treat its dept as "covered" — subsequent primaries in the same
+                    # dept also skip auto-widening (consistent with user's manual-control intent).
+                    if (
+                        settings.cp_widening_enabled
+                        and _effective_dept
+                        and (search_query or "").strip() in _no_widen_set
+                    ):
+                        _depts_widened.add(_effective_dept)
+
                     if (
                         settings.cp_widening_enabled
                         and _effective_dept
                         and not _shutdown
                         and companies_discovered < 2000
                         and (search_query or "").strip() not in _no_widen_set  # NEW: skip widening for primaries with manual city picks
+                        and _effective_dept not in _depts_widened  # NEW: skip if dept already widened
                     ):
                         # Check cancel flag before starting widening
                         _widen_cancelled = False
@@ -5267,6 +5290,30 @@ async def run(batch_id: str) -> None:
                                 ):
                                     _widen_stop_reason = "threshold_met_dry_streak"
                                     break
+
+                                # Skip widening into primary's own city/postal code.
+                                # Example: primary "EXPLOITATIONS ARBORICOLES VILLENEUVE-SUR-LOT" should
+                                # not widen into city "Villeneuve-sur-Lot" — pure self-overlap.
+                                # Word-boundary match avoids false positives like "AGEN" matching "PAGEN".
+                                _norm_query = re.sub(r"[\s\-]+", " ", (search_query or "").upper()).strip()
+                                _norm_value = re.sub(r"[\s\-]+", " ", _widen_value.upper()).strip()
+                                if _norm_value and re.search(
+                                    r"\b" + re.escape(_norm_value) + r"\b", _norm_query
+                                ):
+                                    _query_stats.append({
+                                        "query": f"{_sector_word} {_widen_value}".strip() if _sector_word else _widen_value,
+                                        "value": _widen_value,
+                                        "widened_query": f"{_sector_word} {_widen_value}".strip() if _sector_word else _widen_value,
+                                        "primary_query": search_query,
+                                        "widening_type": _widen_type,
+                                        "expansion_reason": "skipped_self_overlap",
+                                        "is_expansion": True,
+                                        "skipped": True,
+                                        "cards_found": 0,
+                                        "new_companies": 0,
+                                        "duration_sec": 0.0,
+                                    })
+                                    continue
 
                                 # Build widened query — sector word + city/postal code
                                 _widened_query = f"{_sector_word} {_widen_value}".strip() if _sector_word else _widen_value
@@ -5475,6 +5522,8 @@ async def run(batch_id: str) -> None:
                                 "stop_reason": _widen_stop_reason,
                                 "total_widened": _widened_count,
                             }
+                            # Mark this dept as widened — subsequent primaries in same dept skip auto-widening
+                            _depts_widened.add(_effective_dept)
 
                             # Clear in-flight widening state — back to "primary" view in monitor.
                             try:
