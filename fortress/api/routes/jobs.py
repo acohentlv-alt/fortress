@@ -121,20 +121,16 @@ async def list_jobs(request: Request):
 @router.delete("/{batch_id}")
 async def delete_job(batch_id: str, request: Request):
     """Soft-delete a batch. Removes batch_tags but preserves company/contact data.
-    Admin can only delete NULL-workspace batches. Head can only delete their workspace batches.
-    Regular users get 403.
+    Admin can delete any batch in any workspace. Head and regular users can only
+    delete batches in their own workspace.
     """
     user = getattr(request.state, 'user', None)
     if not user:
         return JSONResponse(status_code=401, content={"error": "Authentification requise"})
 
-    # Regular users cannot delete
-    if user.role not in ('admin', 'head'):
-        return JSONResponse(status_code=403, content={"error": "Accès refusé"})
-
     # Determine workspace scope for this user
     if user.is_admin:
-        ws_scope = "AND workspace_id IS NULL"
+        ws_scope = ""
         ws_params: tuple = ()
     else:
         ws_scope = "AND workspace_id = %s"

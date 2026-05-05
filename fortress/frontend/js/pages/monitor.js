@@ -73,7 +73,7 @@ export async function renderMonitor(container, batchId) {
 
 async function renderMonitorList(container) {
     const user = getCachedUser();
-    const canDelete = user?.role === 'admin' || user?.role === 'head';
+    const canDelete = !!user;
 
     const jobs = await getJobs();
     const jobsList = Array.isArray(jobs) ? jobs : [];
@@ -242,6 +242,7 @@ async function renderJobMonitor(container, batchId) {
                 <div id="mon-queue-info" style="display:none"></div>
             </div>
             <div style="display:flex; align-items:center; gap:var(--space-sm)">
+                <button id="mon-delete-btn" class="btn-delete-job" data-batch-id="${escapeHtml(batchId)}" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.4em;padding:4px 8px;border-radius:4px;line-height:1" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>
                 <button id="mon-cancel-btn" class="btn btn-secondary" style="color:var(--danger); display:none" title="${t('monitor.stopBtnTitle')}">${t('monitor.stopBtn')}</button>
                 <a href="#/job/${encodeURIComponent(batchId)}" class="btn btn-secondary">${t('monitor.fullDetail')}</a>
             </div>
@@ -363,6 +364,7 @@ async function renderJobMonitor(container, batchId) {
     let lastScrapedCount = 0;
     let failedPolls = 0;
     let previousValues = { scraped: -1, failed: -1, replaced: -1, pct: -1 };
+    let isRunning = false;
 
     // Durée ticker state — freezes when batch ends (completed/failed/interrupted/cancelled)
     let jobStartMs = null;           // set from job.created_at on first successful poll
@@ -412,6 +414,43 @@ async function renderJobMonitor(container, batchId) {
                     }
                 },
             });
+        });
+    }
+
+    // ── Delete button handler ────────────────────────────────────────────
+    $.deleteBtn = document.getElementById('mon-delete-btn');
+    if ($.deleteBtn) {
+        $.deleteBtn.addEventListener('click', async () => {
+            const titleNow = ($.title?.textContent || batchId).trim();
+            const explainError = (result) => {
+                if (!result) return 'Erreur lors de la suppression.';
+                if (result._status === 401) return 'Session expirée — reconnectez-vous.';
+                if (result._status === 403) return 'Accès refusé.';
+                if (result._status === 404) return 'Batch introuvable (déjà supprimé ?).';
+                if (result._status === 409) return result.error || 'Arrêtez le batch en cours d\'abord.';
+                return result.error || 'Erreur lors de la suppression.';
+            };
+            const confirmed = await showConfirmModal({
+                title: isRunning ? 'Annuler et supprimer' : 'Supprimer ce batch',
+                body: isRunning
+                    ? `Le batch « ${titleNow} » est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
+                    : `Supprimer définitivement le batch « ${titleNow} » ? Cette action est irréversible.`,
+            });
+            if (!confirmed) return;
+            try {
+                if (isRunning) {
+                    try { await cancelJob(batchId); } catch { /* swallow — proceed to delete */ }
+                }
+                const result = await deleteJob(batchId);
+                if (result && result._ok !== false) {
+                    showToast(`Batch « ${titleNow} » supprimé.`, 'success');
+                    window.location.hash = '#/monitor';
+                } else {
+                    showToast(explainError(result), 'error');
+                }
+            } catch (err) {
+                showToast('Erreur lors de la suppression du batch.', 'error');
+            }
         });
     }
 
@@ -473,7 +512,7 @@ async function renderJobMonitor(container, batchId) {
         // evaluated, how many passed the quality filter). Divide-by-zero guarded
         // by null pct when scraped == 0 (Maps still searching).
         const qualRate = scraped > 0 ? Math.round((qualified / scraped) * 100) : null;
-        const isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
+        isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
         const isUpload = job.mode === 'upload';
 
         // ── Breadcrumb + Title ──────────────────────────────────
