@@ -471,6 +471,7 @@ export async function renderJob(container, batchId) {
     const batchSize = job.batch_size || job.total_companies || 1;
     const scraped = job.companies_scraped || 0;
     const qualified = job.companies_qualified || 0;
+    const entityCount = job.link_stats?.total || scraped || qualified || batchSize;
     const q = quality || {};
 
     container.innerHTML = `
@@ -503,7 +504,7 @@ export async function renderJob(container, batchId) {
                 ${renderGauge(q.siret_pct || q.social_pct || 0, t('job.gaugeSocial'))}
             </div>
             <div style="text-align:center; font-size:var(--font-sm); color:var(--text-muted); margin-top:var(--space-lg)">
-                ${t('job.companiesCount', { count: scraped || qualified || batchSize, plural: (scraped || qualified || batchSize) > 1 ? 's' : '' })}
+                ${t('job.companiesCount', { count: entityCount, plural: entityCount > 1 ? 's' : '' })}
             </div>
         </div>
 
@@ -636,7 +637,7 @@ export async function renderJob(container, batchId) {
                 body: `
                     <p><strong>Batch :</strong> ${escapeHtml(job.batch_name)}</p>
                     <p><strong>${t('job.createdOn')} :</strong> ${formatDateTime(job.created_at)}</p>
-                    <p><strong>${scraped}</strong> entreprises collectées</p>
+                    <p><strong>${entityCount}</strong> entreprises collectées</p>
                     <p style="color:var(--danger)">⚠️ <strong>${t('job.confirmDeleteWithInfo')}</strong></p>
                     <p style="color:var(--text-muted)">${t('job.confirmDeleteKeep')}</p>
                 `,

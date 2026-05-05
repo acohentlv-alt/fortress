@@ -132,7 +132,7 @@ async function renderMonitorList(container) {
                             <div class="job-card-name">${escapeHtml(j.batch_name)}</div>
                             <div class="job-card-meta">
                                 <span>${formatDateTime(j.updated_at)}</span>
-                                <span>${j.companies_scraped || 0} ${t('monitor.companies')}</span>
+                                <span>${j.batch_unique_companies || 0} ${t('monitor.companies')}</span>
                                 ${(j.exhaustive && !j.exhaustive_default) ? `<span class="chip-exhaustive">${t('monitor.exhaustive')}</span>` : ''}
                             </div>
                         </div>

@@ -40,7 +40,14 @@ async def list_jobs(request: Request):
             sj.mode,
             sj.workspace_id,
             sj.shortfall_reason,
-            sj.current_query
+            sj.current_query,
+            COALESCE((
+                SELECT COUNT(DISTINCT bt.siren)
+                FROM batch_tags bt
+                JOIN companies co ON co.siren = bt.siren
+                WHERE bt.batch_id = sj.batch_id
+                  AND (NOT COALESCE(sj.strict_naf, FALSE) OR co.strict_match = true)
+            ), 0) AS batch_unique_companies
         FROM batch_data sj
         WHERE sj.status != 'deleted'
         {ws_filter}
