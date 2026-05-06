@@ -184,17 +184,43 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id
+            _test_ws = _settings.test_workspace_ids
 
-            # ── Global batch guard — cap concurrent batches to 1 across all workspaces ──
-            # Render Standard plan = 2 GiB RAM. Two concurrent batches (2× Chromium)
-            # overflow the container. Guard is intentionally workspace-agnostic.
-            guard_cur = await conn.execute(
-                """SELECT 1 FROM batch_data
-                   WHERE status IN ('queued', 'in_progress')
-                   AND updated_at > NOW() - INTERVAL '15 minutes'
-                   LIMIT 1"""
-            )
-            blocking = await guard_cur.fetchone()
+            # ── Spawner-aware concurrency cap ─────────────────────────────────
+            # Test workspace spawns bypass the cap entirely (test workspaces are
+            # local-by-convention, no Render OOM risk).
+            #
+            # Production spawns (admin NULL + production workspaces like ws1) ALWAYS
+            # see the full cap, INCLUDING any test-workspace batches. Conservative
+            # defense: if a test batch ever runs on Render despite the boot guard,
+            # the cap still fires for the next production spawn, preventing the
+            # 2 GiB OOM kill.
+            #
+            # TRADE-OFF (intentional): when Alan's local QA batch is in flight on
+            # Neon, Cindy's ws1 spawn on Render gets 409 for up to 15 min (the
+            # updated_at window). This is identical to pre-v2 behavior; v3 restores
+            # it after v2 inadvertently broke production cap. Alternative considered
+            # (exclude test batches regardless of spawner) is what v2 did and caused
+            # TEST 1.6 OOM risk — rejected.
+            _spawner_is_test = workspace_id is not None and workspace_id in _test_ws
+
+            if _spawner_is_test:
+                blocking = None
+            else:
+                guard_cur = await conn.execute(
+                    """SELECT 1 FROM batch_data
+                       WHERE status IN ('queued', 'in_progress')
+                       AND updated_at > NOW() - INTERVAL '15 minutes'
+                       LIMIT 1"""
+                )
+                blocking = await guard_cur.fetchone()
+
+            # Test spawners hit `blocking = None`. Both downstream guards short-circuit:
+            #   L210 (`if blocking and not body.queue:`)  — no 409
+            #   L220 (`if blocking and body.queue:`)      — no queue-depth check
+            # Test spawns proceed directly to the INSERT INTO batch_data at L245.
+            # DO NOT restructure the if/elif chain. body.queue is ignored for test
+            # spawners (they parallel-spawn, never queue).
             if blocking and not body.queue:
                 return JSONResponse(
                     status_code=409,

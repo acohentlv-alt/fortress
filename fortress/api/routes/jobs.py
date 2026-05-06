@@ -384,33 +384,41 @@ async def resume_job(batch_id: str, request: Request):
                 },
             )
 
-        # Same-workspace batch guard (15 min, excluding self)
-        if row_workspace_id is not None:
-            guard_cur = await conn.execute(
-                """SELECT 1 FROM batch_data
-                   WHERE workspace_id = %s
-                     AND status IN ('queued', 'in_progress')
-                     AND batch_id != %s
-                     AND updated_at > NOW() - INTERVAL '15 minutes'
-                   LIMIT 1""",
-                (row_workspace_id, batch_id),
-            )
-        else:
-            guard_cur = await conn.execute(
-                """SELECT 1 FROM batch_data
-                   WHERE workspace_id IS NULL
-                     AND status IN ('queued', 'in_progress')
-                     AND batch_id != %s
-                     AND updated_at > NOW() - INTERVAL '15 minutes'
-                   LIMIT 1""",
-                (batch_id,),
-            )
-        blocking = await guard_cur.fetchone()
-        if blocking:
-            return JSONResponse(
-                status_code=409,
-                content={"error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine."},
-            )
+        # Same-workspace batch guard (15 min, excluding self).
+        # Test workspaces bypass to allow parallel QA cycles.
+        from fortress.config.settings import settings as _settings_jobs
+        _skip_resume_guard = (
+            row_workspace_id is not None
+            and row_workspace_id in _settings_jobs.test_workspace_ids
+        )
+
+        if not _skip_resume_guard:
+            if row_workspace_id is not None:
+                guard_cur = await conn.execute(
+                    """SELECT 1 FROM batch_data
+                       WHERE workspace_id = %s
+                         AND status IN ('queued', 'in_progress')
+                         AND batch_id != %s
+                         AND updated_at > NOW() - INTERVAL '15 minutes'
+                       LIMIT 1""",
+                    (row_workspace_id, batch_id),
+                )
+            else:
+                guard_cur = await conn.execute(
+                    """SELECT 1 FROM batch_data
+                       WHERE workspace_id IS NULL
+                         AND status IN ('queued', 'in_progress')
+                         AND batch_id != %s
+                         AND updated_at > NOW() - INTERVAL '15 minutes'
+                       LIMIT 1""",
+                    (batch_id,),
+                )
+            blocking = await guard_cur.fetchone()
+            if blocking:
+                return JSONResponse(
+                    status_code=409,
+                    content={"error": "Un batch est déjà en cours dans cet espace de travail. Veuillez attendre qu'il se termine."},
+                )
 
         await conn.execute(
             """UPDATE batch_data

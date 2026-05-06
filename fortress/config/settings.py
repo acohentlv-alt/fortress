@@ -1,8 +1,10 @@
 """Fortress configuration — loaded from .env + defaults."""
 
 from pathlib import Path
+from typing import Annotated
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 import os
@@ -124,6 +126,30 @@ class Settings(BaseSettings):
     lambda_endpoints: list[str] = []
     lambda_monthly_budget: int = 800_000
     lambda_rotation_every: int = 5
+
+    # Test workspaces — exempt from global batch concurrency cap and per-workspace
+    # advisory locks so multiple QA agents can run batches in parallel.
+    # Default empty list = kill switch (original cap behavior preserved).
+    # Set TEST_WORKSPACE_IDS=174,175,176 in local .env. NEVER set on Render —
+    # boot guard in main.py refuses HTTPS contexts.
+    test_workspace_ids: Annotated[list[int], NoDecode] = []
+
+    @field_validator('test_workspace_ids', mode='before')
+    @classmethod
+    def _parse_test_workspace_ids(cls, v):
+        """Accept comma-separated env strings ('174,175,176') in addition to
+        JSON arrays ('[174,175,176]'). NoDecode annotation above disables
+        pydantic-settings' EnvSettingsSource pre-decode so this validator
+        actually runs on the raw env string. Empty string -> []."""
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith('['):
+                import json
+                return json.loads(s)
+            return [int(x.strip()) for x in s.split(',') if x.strip()]
+        return v
 
     # Multi-worker — identifies this machine in batch_data.worker_id
     worker_id: str = ""

@@ -56,6 +56,23 @@ async def lifespan(app: FastAPI):
             "FATAL: SESSION_SECRET is still the public default value. "
             "Set SESSION_SECRET env var to a 32-byte random value on Render before booting."
         )
+
+    # Test workspace bypass — must NEVER be set on Render production.
+    # If FRONTEND_URL starts with https:// (i.e. secure_cookies is True), the
+    # presence of TEST_WORKSPACE_IDS would disable Render's 2 GiB OOM safety.
+    if settings.secure_cookies and settings.test_workspace_ids:
+        raise RuntimeError(
+            f"FATAL: TEST_WORKSPACE_IDS={settings.test_workspace_ids} on "
+            "production. This bypasses Render's 2 GiB OOM safety. "
+            "Unset TEST_WORKSPACE_IDS to boot."
+        )
+
+    if settings.test_workspace_ids:
+        logger.info(
+            f"⚠ Test workspaces bypass concurrency cap + advisory locks: "
+            f"{settings.test_workspace_ids}"
+        )
+
     await init_pool()
     db = pool_status()
     if db["connected"]:
