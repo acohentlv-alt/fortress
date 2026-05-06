@@ -165,8 +165,14 @@ export async function getJob(batchId) {
     return await request(`/jobs/${encodeURIComponent(batchId)}`);
 }
 
-export async function deleteJob(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}`, { method: 'DELETE' });
+export async function deleteJob(batchId, options = {}) {
+    const { confirmName } = options;
+    const init = { method: 'DELETE' };
+    if (confirmName) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify({ confirm_name: confirmName });
+    }
+    return await request(`/jobs/${encodeURIComponent(batchId)}`, init);
 }
 
 export async function cancelJob(batchId) {

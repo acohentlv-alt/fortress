@@ -2,7 +2,7 @@
  * Job Page — Drill-down into a specific job
  */
 
-import { getJob, getJobCompanies, getJobQuality, getJobSummary, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich, resumeJob } from '../api.js';
+import { getJob, getJobCompanies, getJobQuality, getJobSummary, getExportUrl, deleteJob, untagCompany, enrichCompany, startDeepEnrich, resumeJob, getCachedUser } from '../api.js';
 import { renderGauge, companyCard, renderPagination, breadcrumb, statusBadge, formatDateTime, escapeHtml, showConfirmModal, showToast } from '../components.js';
 import { GlobalSelection } from '../state.js';
 import { t } from '../i18n.js';
@@ -632,24 +632,38 @@ export async function renderJob(container, batchId) {
     const deleteBtn = document.getElementById('btn-delete-job');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', () => {
+            const currentUser = getCachedUser();
+            const isCrossWorkspace = (
+                currentUser?.role === 'admin'
+                && job.workspace_id != null
+                && job.workspace_id !== currentUser.workspace_id
+            );
             showConfirmModal({
-                title: t('job.confirmDelete'),
-                body: `
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.title') : t('job.confirmDelete'),
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceDelete.prompt', { name: escapeHtml(job.batch_name) })}</p>`
+                    : `
                     <p><strong>Batch :</strong> ${escapeHtml(job.batch_name)}</p>
                     <p><strong>${t('job.createdOn')} :</strong> ${formatDateTime(job.created_at)}</p>
                     <p><strong>${entityCount}</strong> entreprises collectées</p>
                     <p style="color:var(--danger)">⚠️ <strong>${t('job.confirmDeleteWithInfo')}</strong></p>
                     <p style="color:var(--text-muted)">${t('job.confirmDeleteKeep')}</p>
                 `,
-                confirmLabel: t('job.deleteConfirmPermanent'),
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.submitLabel') : t('job.deleteConfirmPermanent'),
                 danger: true,
+                requiredText: isCrossWorkspace ? job.batch_name : null,
                 onConfirm: async () => {
-                    const result = await deleteJob(batchId);
+                    const result = isCrossWorkspace
+                        ? await deleteJob(batchId, { confirmName: job.batch_name })
+                        : await deleteJob(batchId);
                     if (result._ok !== false) {
                         showToast(t('job.deleteSuccess', { contacts: result.deleted_contacts || 0, sirens: result.sirens_affected || 0 }), 'success');
                         window.location.hash = '#/';
                     } else {
-                        showToast(result.error || t('job.deleteError'), 'error');
+                        const msg = result._status === 422
+                            ? (result.error || 'Confirmation requise.')
+                            : (result.error || t('job.deleteError'));
+                        showToast(msg, 'error');
                     }
                 },
             });

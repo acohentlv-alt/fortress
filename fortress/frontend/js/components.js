@@ -570,7 +570,7 @@ export function renderProgressRing(pct, size = 120, strokeWidth = 6, label = 'Pr
  *                 `true` on confirm, `false` on cancel/Escape/backdrop.
  *                 Cancel button always renders as "Annuler" (French; OK for v1).
  */
-export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, checkboxLabel = null, onConfirm }) {
+export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', danger = false, checkboxLabel = null, requiredText = null, onConfirm }) {
     // Remove any existing modal
     const existing = document.getElementById('confirm-modal-overlay');
     if (existing) existing.remove();
@@ -582,13 +582,24 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
         </div>
     ` : '';
 
+    const requiredInputId = 'modal-required-input';
+    const requiredHtml = requiredText ? `
+        <div style="margin-top:var(--space-md)">
+            <input type="text" id="${requiredInputId}"
+                   placeholder="${escapeHtml(requiredText)}"
+                   autocomplete="off"
+                   spellcheck="false"
+                   style="width:100%; padding:var(--space-sm); border:1px solid var(--border-default); border-radius:var(--radius); background:var(--bg-input, var(--bg-elevated)); color:var(--text-primary); font-family:var(--font-mono, monospace); font-size:var(--font-sm)">
+        </div>
+    ` : '';
+
     const overlay = document.createElement('div');
     overlay.id = 'confirm-modal-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
         <div class="modal-content">
             <h3 class="modal-title">${title}</h3>
-            <div class="modal-body">${body}${checkboxHtml}</div>
+            <div class="modal-body">${body}${checkboxHtml}${requiredHtml}</div>
             <div class="modal-actions">
                 <button id="modal-cancel" class="btn btn-secondary">Annuler</button>
                 <button id="modal-confirm" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${confirmLabel}</button>
@@ -597,6 +608,25 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
     `;
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    // Required-text gate: confirm button disabled until input matches requiredText exactly
+    let confirmEnabled = !requiredText;  // if no requiredText, button is enabled by default
+    const _confirmBtn = document.getElementById('modal-confirm');
+    if (requiredText) {
+        _confirmBtn.disabled = true;
+        _confirmBtn.style.opacity = '0.5';
+        _confirmBtn.style.cursor = 'not-allowed';
+        const input = document.getElementById(requiredInputId);
+        input.addEventListener('input', () => {
+            const matches = input.value === requiredText;
+            confirmEnabled = matches;
+            _confirmBtn.disabled = !matches;
+            _confirmBtn.style.opacity = matches ? '1' : '0.5';
+            _confirmBtn.style.cursor = matches ? 'pointer' : 'not-allowed';
+        });
+        // Auto-focus the input on render so users don't have to click into it
+        requestAnimationFrame(() => input.focus());
+    }
 
     // Promise-mode: capture resolver, return Promise instead of undefined.
     let _promiseResolve = null;
@@ -628,6 +658,7 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirmer', dang
 
     // Confirm button: callback path (legacy) OR resolve(true) (promise path)
     document.getElementById('modal-confirm').addEventListener('click', async () => {
+        if (!confirmEnabled) return;  // gate while typed-text doesn't match
         const btn = document.getElementById('modal-confirm');
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span> …';

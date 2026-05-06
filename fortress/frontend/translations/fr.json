@@ -576,7 +576,13 @@
     "queriesBreakdown_one": "{{primary}} par recherche directe, {{widen}} via {{count}} élargissement",
     "queriesBreakdown_other": "{{primary}} par recherche directe, {{widen}} via {{count}} élargissements",
     "queriesExpansionRunning": "Élargissement en cours pour {{primary}} :",
-    "queriesPrimaryWithExpansions": "{{total}} total (dont {{expansion}} par élargissement)"
+    "queriesPrimaryWithExpansions": "{{total}} total (dont {{expansion}} par élargissement)",
+    "crossWorkspaceDelete": {
+      "title": "⚠ Suppression cross-workspace",
+      "prompt": "Vous êtes sur le point de supprimer un batch d'un autre workspace. Pour confirmer, saisissez exactement le nom du batch :<br><br><strong>{{name}}</strong>",
+      "placeholder": "Saisissez le nom du batch",
+      "submitLabel": "Supprimer définitivement"
+    }
   },
   "job": {
     "title": "Détail du batch",

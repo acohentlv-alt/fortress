@@ -570,7 +570,13 @@
     "queriesBreakdown_one": "{{primary}} from primary search, {{widen}} via {{count}} expansion",
     "queriesBreakdown_other": "{{primary}} from primary search, {{widen}} via {{count}} expansions",
     "queriesExpansionRunning": "Expansion in progress for {{primary}}:",
-    "queriesPrimaryWithExpansions": "{{total}} total (incl. {{expansion}} via expansion)"
+    "queriesPrimaryWithExpansions": "{{total}} total (incl. {{expansion}} via expansion)",
+    "crossWorkspaceDelete": {
+      "title": "⚠ Cross-workspace deletion",
+      "prompt": "You are about to delete a batch from another workspace. To confirm, type the batch name exactly:<br><br><strong>{{name}}</strong>",
+      "placeholder": "Type the batch name",
+      "submitLabel": "Delete permanently"
+    }
   },
   "job": {
     "title": "Batch details",

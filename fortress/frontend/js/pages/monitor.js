@@ -113,7 +113,7 @@ async function renderMonitorList(container) {
                                         ? `<span class="activity-pulse" title="${t('monitor.running')}"></span>`
                                         : `<span style="color:var(--success);font-size:1.1em">✓</span>`}
                                 </div>
-                                ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-running="true" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
+                                ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-workspace-id="${j.workspace_id == null ? '' : j.workspace_id}" data-running="true" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -138,7 +138,7 @@ async function renderMonitorList(container) {
                         </div>
                         <div style="display:flex;align-items:center;gap:var(--space-sm)">
                             ${statusBadge(j.status)}
-                            ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-running="false" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
+                            ${canDelete ? `<button class="btn-delete-job" data-batch-id="${escapeHtml(j.batch_id)}" data-batch-name="${escapeHtml(j.batch_name)}" data-workspace-id="${j.workspace_id == null ? '' : j.workspace_id}" data-running="false" title="Supprimer ce batch" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-muted)'">×</button>` : ''}
                         </div>
                     </div>
                 `).join('')}
@@ -166,6 +166,14 @@ async function renderMonitorList(container) {
         const batchId = btn.dataset.batchId;
         const batchName = btn.dataset.batchName;
         const isRunning = btn.dataset.running === 'true';
+        const wsAttr = btn.dataset.workspaceId;
+        const targetWsId = (wsAttr === '' || wsAttr === undefined) ? null : Number(wsAttr);
+        const currentUser = getCachedUser();
+        const isCrossWorkspace = (
+            currentUser?.role === 'admin'
+            && targetWsId != null
+            && targetWsId !== currentUser.workspace_id  // admin.workspace_id is null
+        );
 
         // Surface the real API failure reason in the toast instead of a
         // generic "Erreur lors de la suppression". The previous text hid
@@ -176,24 +184,31 @@ async function renderMonitorList(container) {
             if (result._status === 403) return 'Accès refusé.';
             if (result._status === 404) return 'Batch introuvable (déjà supprimé ?).';
             if (result._status === 409) return result.error || 'Arrêtez le batch en cours d\'abord.';
+            if (result._status === 422) return result.error || 'Confirmation requise.';
             return result.error || 'Erreur lors de la suppression.';
         };
 
         if (isRunning) {
             showConfirmModal({
-                title: 'Supprimer ce batch en cours ?',
-                body: `
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.title') : 'Supprimer ce batch en cours ?',
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceDelete.prompt', { name: escapeHtml(batchName) })}</p>
+                       <p style="color:var(--warning)">Ce batch est encore en cours. Il sera d'abord annulé, puis supprimé.</p>`
+                    : `
                     <p><strong>Batch :</strong> ${escapeHtml(batchName)}</p>
                     <p style="color:var(--warning)">Ce batch est encore en cours. Il sera d'abord annulé, puis supprimé.</p>
                     <p style="color:var(--danger)">Toutes les données collectées seront supprimées.</p>
                 `,
-                confirmLabel: 'Annuler et supprimer',
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.submitLabel') : 'Annuler et supprimer',
                 danger: true,
+                requiredText: isCrossWorkspace ? batchName : null,
                 onConfirm: async () => {
                     try {
                         await cancelJob(batchId);
                     } catch { /* ignore cancel errors — proceed to delete */ }
-                    const result = await deleteJob(batchId);
+                    const result = isCrossWorkspace
+                        ? await deleteJob(batchId, { confirmName: batchName })
+                        : await deleteJob(batchId);
                     if (result && result._ok !== false) {
                         showToast(`Batch « ${batchName} » supprimé.`, 'success');
                         await renderMonitorList(container);
@@ -204,15 +219,20 @@ async function renderMonitorList(container) {
             });
         } else {
             showConfirmModal({
-                title: 'Supprimer ce batch ?',
-                body: `
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.title') : 'Supprimer ce batch ?',
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceDelete.prompt', { name: escapeHtml(batchName) })}</p>`
+                    : `
                     <p><strong>Batch :</strong> ${escapeHtml(batchName)}</p>
                     <p style="color:var(--danger)">Les entités MAPS orphelines et leurs données associées seront supprimées.</p>
                 `,
-                confirmLabel: 'Supprimer',
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.submitLabel') : 'Supprimer',
                 danger: true,
+                requiredText: isCrossWorkspace ? batchName : null,
                 onConfirm: async () => {
-                    const result = await deleteJob(batchId);
+                    const result = isCrossWorkspace
+                        ? await deleteJob(batchId, { confirmName: batchName })
+                        : await deleteJob(batchId);
                     if (result && result._ok !== false) {
                         showToast(`Batch « ${batchName} » supprimé.`, 'success');
                         await renderMonitorList(container);
@@ -365,6 +385,7 @@ async function renderJobMonitor(container, batchId) {
     let failedPolls = 0;
     let previousValues = { scraped: -1, failed: -1, replaced: -1, pct: -1 };
     let isRunning = false;
+    let jobWorkspaceId = null;
 
     // Durée ticker state — freezes when batch ends (completed/failed/interrupted/cancelled)
     let jobStartMs = null;           // set from job.created_at on first successful poll
@@ -422,26 +443,42 @@ async function renderJobMonitor(container, batchId) {
     if ($.deleteBtn) {
         $.deleteBtn.addEventListener('click', async () => {
             const titleNow = ($.title?.textContent || batchId).trim();
+            // Read latest poll value for cross-workspace determination
+            const currentUser = getCachedUser();
+            const isCrossWorkspace = (
+                currentUser?.role === 'admin'
+                && jobWorkspaceId != null
+                && jobWorkspaceId !== currentUser.workspace_id
+            );
             const explainError = (result) => {
                 if (!result) return 'Erreur lors de la suppression.';
                 if (result._status === 401) return 'Session expirée — reconnectez-vous.';
                 if (result._status === 403) return 'Accès refusé.';
                 if (result._status === 404) return 'Batch introuvable (déjà supprimé ?).';
                 if (result._status === 409) return result.error || 'Arrêtez le batch en cours d\'abord.';
+                if (result._status === 422) return result.error || 'Confirmation requise.';
                 return result.error || 'Erreur lors de la suppression.';
             };
+            // Promise-mode: requiredText short-circuit prevents premature resolve
             const confirmed = await showConfirmModal({
-                title: isRunning ? 'Annuler et supprimer' : 'Supprimer ce batch',
-                body: isRunning
-                    ? `Le batch « ${titleNow} » est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
-                    : `Supprimer définitivement le batch « ${titleNow} » ? Cette action est irréversible.`,
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.title') : (isRunning ? 'Annuler et supprimer' : 'Supprimer ce batch'),
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceDelete.prompt', { name: escapeHtml(titleNow) })}</p>`
+                    : (isRunning
+                        ? `Le batch « ${escapeHtml(titleNow)} » est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
+                        : `Supprimer définitivement le batch « ${escapeHtml(titleNow)} » ? Cette action est irréversible.`),
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.submitLabel') : undefined,
+                danger: true,
+                requiredText: isCrossWorkspace ? titleNow : null,
             });
             if (!confirmed) return;
             try {
                 if (isRunning) {
                     try { await cancelJob(batchId); } catch { /* swallow — proceed to delete */ }
                 }
-                const result = await deleteJob(batchId);
+                const result = isCrossWorkspace
+                    ? await deleteJob(batchId, { confirmName: titleNow })
+                    : await deleteJob(batchId);
                 if (result && result._ok !== false) {
                     showToast(`Batch « ${titleNow} » supprimé.`, 'success');
                     window.location.hash = '#/monitor';
@@ -513,6 +550,7 @@ async function renderJobMonitor(container, batchId) {
         // by null pct when scraped == 0 (Maps still searching).
         const qualRate = scraped > 0 ? Math.round((qualified / scraped) * 100) : null;
         isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
+        jobWorkspaceId = job.workspace_id == null ? null : job.workspace_id;
         const isUpload = job.mode === 'upload';
 
         // ── Breadcrumb + Title ──────────────────────────────────

@@ -942,6 +942,7 @@ function _renderBatchCardFlat(b) {
                             data-delete-id="${escapeHtml(batchId)}"
                             data-delete-name="${escapeHtml(batchName)}"
                             data-running="${isRunning ? '1' : '0'}"
+                            data-workspace-id="${b.workspace_id == null ? '' : b.workspace_id}"
                             onclick="event.stopPropagation()"
                             title="Supprimer ce batch"
                             style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1.1em;padding:4px 6px;border-radius:4px;line-height:1;flex-shrink:0"
@@ -959,18 +960,32 @@ function _wireBatchCardDeleteButtons(view, rootContainer) {
             const batchId = btn.dataset.deleteId;
             const batchName = btn.dataset.deleteName || batchId;
             const isRunning = btn.dataset.running === '1';
+            const wsAttr = btn.dataset.workspaceId;
+            const targetWsId = (wsAttr === '' || wsAttr === undefined) ? null : Number(wsAttr);
+            const currentUser = getCachedUser();
+            const isCrossWorkspace = (
+                currentUser?.role === 'admin'
+                && targetWsId != null
+                && targetWsId !== currentUser.workspace_id
+            );
 
             const onConfirm = async () => {
                 try {
                     if (isRunning) {
                         try { await cancelJob(batchId); } catch { /* proceed */ }
                     }
-                    const result = await deleteJob(batchId);
+                    const result = isCrossWorkspace
+                        ? await deleteJob(batchId, { confirmName: batchName })
+                        : await deleteJob(batchId);
                     if (result && result._ok !== false) {
                         showToast(`Batch « ${batchName} » supprimé.`, 'success');
                         renderDashboard(rootContainer);
                     } else {
-                        showToast(extractApiError(result), 'error');
+                        // Show 422 message clearly
+                        const msg = result?._status === 422
+                            ? (result.error || 'Confirmation requise.')
+                            : extractApiError(result);
+                        showToast(msg, 'error');
                     }
                 } catch (err) {
                     showToast('Erreur lors de la suppression du batch.', 'error');
@@ -978,12 +993,15 @@ function _wireBatchCardDeleteButtons(view, rootContainer) {
             };
 
             showConfirmModal({
-                title: 'Supprimer ce batch',
-                body: isRunning
-                    ? `Le batch <strong>${escapeHtml(batchName)}</strong> est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
-                    : `Supprimer définitivement le batch <strong>${escapeHtml(batchName)}</strong> ? Cette action est irréversible.`,
-                confirmLabel: t('dashboard.deleteConfirm'),
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.title') : 'Supprimer ce batch',
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceDelete.prompt', { name: escapeHtml(batchName) })}</p>`
+                    : (isRunning
+                        ? `Le batch <strong>${escapeHtml(batchName)}</strong> est en cours. Il sera annulé puis supprimé. Cette action est irréversible.`
+                        : `Supprimer définitivement le batch <strong>${escapeHtml(batchName)}</strong> ? Cette action est irréversible.`),
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceDelete.submitLabel') : t('dashboard.deleteConfirm'),
                 danger: true,
+                requiredText: isCrossWorkspace ? batchName : null,
                 onConfirm,
             });
         });

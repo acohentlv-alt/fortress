@@ -155,6 +155,33 @@ async def delete_job(batch_id: str, request: Request):
             # Could be not found OR belongs to a different workspace
             return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
 
+        # ── Cross-workspace typed-confirmation gate ──────────────────────────
+        # Admin's workspace_id is None; non-admin's is the batch owner's id.
+        # Guard fires only when an admin targets a batch whose workspace_id
+        # is non-NULL AND differs from admin's own (always None for admin).
+        # Mental model: NULL workspace_id == admin's own batch == simple confirm;
+        # any non-NULL workspace_id == cross-workspace == typed confirm.
+        target_ws_id = row[2]
+        target_batch_name = row[1]
+        if (
+            user.is_admin
+            and target_ws_id is not None
+            and target_ws_id != user.workspace_id  # admin.workspace_id is None
+        ):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            confirm_name = (body.get("confirm_name") or "").strip() if isinstance(body, dict) else ""
+            if confirm_name != (target_batch_name or "").strip():
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "error": "Confirmation requise — saisissez le nom exact du batch.",
+                        "expected_name": target_batch_name,
+                    },
+                )
+
         raw_status = row[0]
         idle_seconds = row[3] or 0
         is_stale = idle_seconds > 600
@@ -500,6 +527,7 @@ async def get_job(batch_id: str, request: Request):
             COALESCE(sj.replaced_count, 0) AS replaced_count,
             COALESCE(sj.companies_qualified, 0) AS companies_qualified,
             sj.mode,
+            sj.workspace_id,
             sj.shortfall_reason,
             sj.current_query,
             COALESCE(sj.strict_naf, FALSE) AS strict_naf,

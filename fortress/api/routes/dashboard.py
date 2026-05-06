@@ -168,7 +168,7 @@ async def get_stats_by_job(request: Request):
     all_batches = await fetch_all(f"""
         SELECT
             UPPER(sj.batch_name) AS group_key,
-            sj.batch_id, sj.batch_name,
+            sj.batch_id, sj.batch_name, sj.workspace_id,
             sj.status AS status,
             sj.batch_number, sj.companies_scraped, sj.companies_failed,
             sj.total_companies,
