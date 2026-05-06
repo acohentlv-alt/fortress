@@ -36,3 +36,23 @@ def test_non_strict_unchanged_via_clique():
     assert _compute_naf_status("55.10Z", ["55.30Z"], None, strict=False) == "verified"
     # Default arg (no strict param) also works identically.
     assert _compute_naf_status("55.10Z", ["55.30Z"], None) == "verified"
+
+
+def test_strict_sibling_under_leaf_picker():
+    """Strict mode: 10.71D in 10.71C clique → mismatch (boulangerie)."""
+    assert _compute_naf_status("10.71D", ["10.71C"], None, strict=True) == "mismatch"
+
+
+def test_strict_cross_sector_clique():
+    """Strict mode: 47.24Z in 10.71C cross-sector clique → mismatch."""
+    assert _compute_naf_status("47.24Z", ["10.71C"], None, strict=True) == "mismatch"
+
+
+def test_strict_intra_sector_restau_clique():
+    """Strict mode: 56.10A in 56.10C restauration clique → mismatch."""
+    assert _compute_naf_status("56.10A", ["56.10C"], None, strict=True) == "mismatch"
+
+
+def test_strict_arboriculture_clique():
+    """Strict mode: 01.24Z in 01.13Z arboriculture clique → mismatch (Cindy's 53% sector regression guard)."""
+    assert _compute_naf_status("01.24Z", ["01.13Z"], None, strict=True) == "mismatch"

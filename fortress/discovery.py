@@ -3728,7 +3728,7 @@ async def run(batch_id: str) -> None:
                                 )
                                 sirene_naf_row = await naf_cur.fetchone()
                                 matched_naf = (sirene_naf_row[0] if sirene_naf_row else None) or ""
-                                naf_status = _compute_naf_status(matched_naf, picked_nafs, naf_division_whitelist)
+                                naf_status = _compute_naf_status(matched_naf, picked_nafs, naf_division_whitelist, strict=strict_naf)
 
                             # Phase A auto-confirm gate: multi-signal approach
                             link_signals = None
@@ -4216,6 +4216,7 @@ async def run(batch_id: str) -> None:
                                                             if picked_nafs:
                                                                 _swap_status = _compute_naf_status(
                                                                     _swap_naf, picked_nafs, naf_division_whitelist,
+                                                                    strict=strict_naf,
                                                                 )
                                                                 if naf_division_whitelist is not None:
                                                                     _swap_strict_match = any(_swap_naf.startswith(d) for d in naf_division_whitelist)
@@ -4407,6 +4408,7 @@ async def run(batch_id: str) -> None:
                                                             if picked_nafs:
                                                                 _rescue_status = _compute_naf_status(
                                                                     _rescue_naf, picked_nafs, naf_division_whitelist,
+                                                                    strict=strict_naf,
                                                                 )
                                                                 if naf_division_whitelist is not None:
                                                                     _rescue_strict_match = any(_rescue_naf.startswith(d) for d in naf_division_whitelist)
