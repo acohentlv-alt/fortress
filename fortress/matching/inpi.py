@@ -98,6 +98,17 @@ def parse_company_fields(hit: dict) -> dict[str, Any]:
             siege_data["adresse"] = siege["adresse"]
         if siege.get("liste_enseignes"):
             siege_data["enseignes"] = siege["liste_enseignes"]
+        # Phase 4 fallback: legal name when liste_enseignes empty.
+        # nom_complet (formal full) > nom_raison_sociale (legal corp) >
+        # siege.denomination_usuelle (defensive tertiary; may yield no hits
+        # in practice since INPI doesn't always populate this field).
+        _denom = (
+            hit.get("nom_complet")
+            or hit.get("nom_raison_sociale")
+            or siege.get("denomination_usuelle")
+        )
+        if _denom:
+            siege_data["denomination"] = _denom
         if siege_data:
             result["_siege"] = siege_data
 

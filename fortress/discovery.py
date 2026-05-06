@@ -5215,17 +5215,37 @@ async def run(batch_id: str) -> None:
                                         _name_match_score(maps_name, e) >= 0.8
                                         for e in _inpi_enseignes if e
                                     )
+                                # Phase 4 fallback: when liste_enseignes was empty, fall back to legal name
+                                # Tighter threshold (0.85) to compensate for legal-form noise (SARL/EURL/SAS).
+                                # _name_match_score subset rule (line 406+) handles legal-form tokens correctly.
+                                if not _enseigne_match and maps_name:
+                                    _inpi_denom = re_company_data["_siege"].get("denomination") or ""
+                                    if _inpi_denom and _name_match_score(maps_name, _inpi_denom) >= 0.85:
+                                        _enseigne_match = True
 
+                                # Always record the inspection result, even when not promoting.
+                                _enseigne_method = (
+                                    "liste_enseignes" if _inpi_enseignes else
+                                    "denomination" if (re_company_data["_siege"].get("denomination")) else
+                                    "none"
+                                )
+                                await conn.execute(
+                                    """UPDATE companies
+                                       SET link_signals = COALESCE(link_signals, '{}'::jsonb)
+                                                          || jsonb_build_object('inpi_corroboration',
+                                                              jsonb_build_object(
+                                                                  'address_match', %s::boolean,
+                                                                  'enseigne_match', %s::boolean,
+                                                                  'enseigne_source', %s::text))
+                                       WHERE siren = %s""",
+                                    (_addr_match, _enseigne_match, _enseigne_method, siren),
+                                )
                                 if _addr_match and _enseigne_match:
                                     _target = _pending_link["siren"]
                                     await conn.execute(
                                         """UPDATE companies
                                            SET link_confidence = 'confirmed',
-                                               rescued_by = 'inpi_validated',
-                                               link_signals = COALESCE(link_signals, '{}'::jsonb)
-                                                              || jsonb_build_object('inpi_corroboration',
-                                                                  jsonb_build_object('address_match', true,
-                                                                                     'enseigne_match', true))
+                                               rescued_by = 'inpi_validated'
                                            WHERE siren = %s""",
                                         (siren,),
                                     )
@@ -5233,12 +5253,13 @@ async def run(batch_id: str) -> None:
                                     await log_audit(
                                         conn, batch_id=batch_id, siren=siren,
                                         action="auto_linked_inpi_validated", result="success",
-                                        detail=f"Maps↔INPI corroboration: address_match=true, enseigne_match=true (method={_pending_link['method']})",
+                                        detail=f"Maps↔INPI corroboration: address_match=true, enseigne_match=true (method={_pending_link['method']}, enseigne_source={_enseigne_method})",
                                         workspace_id=batch_workspace_id,
                                     )
                                     log.info("discovery.inpi_validated_rescue",
                                              maps_name=maps_name, siren=_target,
-                                             original_method=_pending_link["method"])
+                                             original_method=_pending_link["method"],
+                                             enseigne_source=_enseigne_method)
 
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
