@@ -5196,16 +5196,18 @@ async def run(batch_id: str) -> None:
                             )
                             _row = await _row_cursor.fetchone()
                             if _row and _row[0] == "pending" and _row[1] == "mismatch":
-                                from fortress.matching.entities import normalize_street_key
+                                from fortress.matching.entities import (
+                                    normalize_address, _extract_street_key, normalize_street_key,
+                                )
                                 _inpi_addr = re_company_data["_siege"].get("adresse") or ""
                                 _inpi_enseignes = re_company_data["_siege"].get("enseignes") or []
 
                                 _addr_match = False
                                 if _inpi_addr and maps_address:
-                                    _addr_match = (
-                                        normalize_street_key(_inpi_addr.lower()) ==
-                                        normalize_street_key(maps_address.lower())
-                                    )
+                                    _maps_key = normalize_street_key(_extract_street_key(normalize_address(maps_address)))
+                                    _inpi_key = normalize_street_key(_extract_street_key(normalize_address(_inpi_addr)))
+                                    if _maps_key and _inpi_key and len(_maps_key) >= 5:
+                                        _addr_match = (_maps_key == _inpi_key)
 
                                 _enseigne_match = False
                                 if _inpi_enseignes and maps_name:
