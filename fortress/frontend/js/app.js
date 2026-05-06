@@ -346,10 +346,15 @@ function _subscribeWorkspaceNotifications(user) {
                 if (msg.type === 'batch_complete') {
                     const { playCompletionSound, showCompletionBanner } = await import('./components.js');
                     playCompletionSound();
+                    // Strict mode: prefer strict_count (filtered to entities visible on job page).
+                    // Falls back to count if strict_count is null (wide batch or pre-fix payload).
+                    const displayCount = (msg.strict_naf && msg.strict_count != null)
+                        ? msg.strict_count
+                        : msg.count;
                     showCompletionBanner({
                         batchId: msg.batch_id,
                         batchName: msg.batch_name,
-                        count: msg.count,
+                        count: displayCount,
                     });
                 }
             } catch (_) {}

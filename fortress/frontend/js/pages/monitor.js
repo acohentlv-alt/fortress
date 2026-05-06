@@ -542,7 +542,11 @@ async function renderJobMonitor(container, batchId) {
         tickDuration();
 
         const scraped = job.companies_scraped || 0;
-        const qualified = job.companies_qualified || 0;
+        // Strict mode: link_stats.total is strict-filtered (see jobs.py:619).
+        // Wide mode keeps the legacy raw counter so wide batches behave unchanged.
+        const qualified = job.strict_naf
+            ? (job.link_stats?.total || 0)
+            : (job.companies_qualified || 0);
         const failed = job.companies_failed || 0;
         const replaced = job.replaced_count || 0;
         // Ring now shows qualification rate: qualified / scraped (of Maps results

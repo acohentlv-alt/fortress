@@ -1112,7 +1112,9 @@ function renderBySector(jobs, rootContainer) {
         if (!sector) continue;
         if (!sectors[sector]) sectors[sector] = { name: sector, batches: [], totalCompanies: 0 };
         sectors[sector].batches.push(j);
-        sectors[sector].totalCompanies += (j.unique_companies || j.companies_qualified || j.companies_scraped || 0);
+        // batch_unique_companies is strict-filtered (see /api/jobs query at jobs.py:44-50).
+        // companies_qualified is the raw counter — kept as final fallback for back-compat.
+        sectors[sector].totalCompanies += (j.batch_unique_companies || j.companies_qualified || j.companies_scraped || 0);
     }
 
     // Sort by total scraped (most data first)

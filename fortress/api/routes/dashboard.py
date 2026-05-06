@@ -1167,14 +1167,21 @@ async def get_stats_by_sector(request: Request):
     rows = await fetch_all(f"""
         WITH {merged_contacts_cte('SELECT DISTINCT qt2.siren FROM batch_tags qt2' + (' WHERE qt2.workspace_id = %s' if scope_params else ''))},
         sector_data AS (
-            SELECT
+            -- Strict-mode filter: a SIREN found via a wide batch always counts.
+            -- A SIREN found ONLY via strict batches counts only if strict_match=true.
+            -- Joining batch_data + companies makes the (batch_id, siren) pair the gate;
+            -- the outer DISTINCT collapses duplicates across batches.
+            SELECT DISTINCT
                 qt.siren,
                 UPPER(SPLIT_PART(qt.batch_name, ' ', 1)) AS normalized_sector,
                 SPLIT_PART(qt.batch_name, ' ', 2) AS normalized_dept,
                 mc.phone, mc.email, mc.website
             FROM batch_tags qt
+            JOIN batch_data sj ON sj.batch_id = qt.batch_id
+            JOIN companies co ON co.siren = qt.siren
             LEFT JOIN merged_contacts mc ON mc.siren = qt.siren
-            {scope_clause}
+            WHERE (NOT COALESCE(sj.strict_naf, FALSE) OR co.strict_match = true)
+              {('AND ' + scope_clause.replace('WHERE ', '')) if scope_params else ''}
         )
         SELECT
             normalized_sector AS sector,

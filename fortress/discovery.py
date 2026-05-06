@@ -3426,7 +3426,11 @@ async def run(batch_id: str) -> None:
                     #   D1b threshold tuning. Verdict is still purely informational.
                     # Patch B (April 21): also observe zero-candidate rows with no Step 0
                     #   rejection — a trigram pool will be seeded at call site.
-                    if settings.gemini_enabled and settings.gemini_api_key:
+                    # Skip in strict mode: every Gemini action (rescue at line 4356, swap at
+                    # line 4154) is `not strict_naf`-gated, so building the eligibility set
+                    # is pure cost. Quarantine (line 4272) is ungated, but a strict-rejected
+                    # entity is hidden anyway — quarantining it is wasted work.
+                    if settings.gemini_enabled and settings.gemini_api_key and not strict_naf:
                         if candidate is None and _step0_rejected_for_this:
                             _shadow_judge_needed.add((maps_name, maps_address or ""))
                         elif candidate is not None:
@@ -3701,6 +3705,12 @@ async def run(batch_id: str) -> None:
                             except Exception as e:
                                 log.debug("discovery.geom_insert_failed",
                                           siren=siren, error=str(e))
+
+                        # Bind defensively so _strict_match is safe even when _pending_link
+                        # is None (i.e., MAPS-only entity). The INPI gate at line 4631 uses
+                        # short-circuit AND, so _strict_match is never evaluated for MAPS-only
+                        # entities — but this init is safer for future readers.
+                        _strict_match: bool | None = None
 
                         # Default link state: pending. Auto-confirm logic (Phase A):
                         # - Strong method + NAF verified → always auto-confirm
@@ -4630,7 +4640,17 @@ async def run(batch_id: str) -> None:
 
                     # INPI: for high-confidence matches (address, website SIREN, phone+postal)
                     # Fuzzy name matches wait for user confirmation before INPI call.
-                    _inpi_officers_fires = bool(_pending_link and _pending_link["method"] in _STRONG_METHODS)
+                    # Strict-mode skip: when strict_naf=true and the matched NAF didn't
+                    # strictly prefix-match a picker, the entity will be hidden from Cindy
+                    # — fetching its officers is pure waste. _strict_match is bound at
+                    # discovery.py:3892 inside the `if _pending_link:` block (line 3710).
+                    # Short-circuit eval here means _strict_match is never read when
+                    # _pending_link is None — no UnboundLocalError risk.
+                    _inpi_officers_fires = bool(
+                        _pending_link
+                        and _pending_link["method"] in _STRONG_METHODS
+                        and (not strict_naf or _strict_match is True)
+                    )
                     re_company_data: dict = {}  # populated by fetch_dirigeants when fires; checked by Phase 4 rescue
                     if _inpi_officers_fires:
                         try:
@@ -5791,6 +5811,26 @@ async def run(batch_id: str) -> None:
 
                 # ── Workspace notification on batch complete ──────────────
                 if batch_workspace_id is not None and final_status == "completed":
+                    # Strict-mode tally: when strict_naf=true, the toast must show the
+                    # strict-filtered count to match the job page hero/tiles. We re-query
+                    # batch_tags ⨝ companies WHERE strict_match=true. Best-effort — on
+                    # failure, fall back to companies_discovered (legacy behavior).
+                    _strict_count: int | None = None
+                    if strict_naf:
+                        try:
+                            async with pool.connection() as _sc_conn:
+                                _sc_cur = await _sc_conn.execute(
+                                    """SELECT COUNT(DISTINCT bt.siren)
+                                       FROM batch_tags bt
+                                       JOIN companies co ON co.siren = bt.siren
+                                       WHERE bt.batch_id = %s
+                                         AND co.strict_match = true""",
+                                    (batch_id,),
+                                )
+                                _sc_row = await _sc_cur.fetchone()
+                                _strict_count = int(_sc_row[0] or 0) if _sc_row else 0
+                        except Exception:
+                            _strict_count = None
                     try:
                         import os as _os, httpx as _httpx
                         _port = int(_os.environ.get("PORT", "8080"))
@@ -5802,6 +5842,8 @@ async def run(batch_id: str) -> None:
                                     "batch_id": batch_id,
                                     "batch_name": batch_name,
                                     "count": companies_discovered,
+                                    "strict_count": _strict_count,
+                                    "strict_naf": bool(strict_naf),
                                 },
                             )
                     except Exception:

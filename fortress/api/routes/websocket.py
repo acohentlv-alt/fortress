@@ -154,6 +154,8 @@ class NotifyBatchCompleteBody(BaseModel):
     batch_id: str
     batch_name: str
     count: int
+    strict_count: int | None = None
+    strict_naf: bool = False
 
 
 @router.post("/api/internal/notify-batch-complete")
@@ -172,6 +174,8 @@ async def notify_batch_complete(body: NotifyBatchCompleteBody, request: Request)
             "batch_id": body.batch_id,
             "batch_name": body.batch_name,
             "count": body.count,
+            "strict_count": body.strict_count,
+            "strict_naf": body.strict_naf,
         },
     )
     return {"ok": True}

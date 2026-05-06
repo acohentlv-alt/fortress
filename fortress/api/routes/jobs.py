@@ -609,15 +609,19 @@ async def get_job(batch_id: str, request: Request):
     # must filter to co.strict_match=true so counts/tiles reflect the visible entities only.
     _strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
 
-    # Also get departments this job touches
-    depts = await fetch_all("""
+    # Also get departments this job touches.
+    # Note: f-string required to apply _strict_filter; use batch_id (not batch_name) so
+    # the filter scopes to this specific batch — the existing query keyed on batch_name
+    # which would inflate department counts across same-name batches.
+    depts = await fetch_all(f"""
         SELECT DISTINCT co.departement, COUNT(DISTINCT co.siren) AS company_count
         FROM batch_tags qt
         JOIN companies co ON co.siren = qt.siren
-        WHERE qt.batch_name = %s AND co.departement IS NOT NULL
+        WHERE qt.batch_id = %s AND co.departement IS NOT NULL
+        {_strict_filter}
         GROUP BY co.departement
         ORDER BY co.departement
-    """, (job["batch_name"],))
+    """, (batch_id,))
 
     pending_row = await fetch_one(f"""
         SELECT COUNT(DISTINCT co.siren) AS pending_links
@@ -852,7 +856,8 @@ async def get_job_summary(batch_id: str, request: Request):
     job = await fetch_one(
         f"""SELECT batch_size, total_companies, companies_scraped, companies_qualified,
                    companies_failed, triage_black, triage_green, triage_yellow, triage_red,
-                   shortfall_reason
+                   shortfall_reason,
+                   COALESCE(strict_naf, FALSE) AS strict_naf
             FROM batch_data sj
             WHERE sj.batch_id = %s {ws_filter}""",
         (batch_id,) + ws_params,
@@ -876,7 +881,20 @@ async def get_job_summary(batch_id: str, request: Request):
 
     target = job.get("batch_size") or job.get("total_companies") or 0
     found = job.get("companies_scraped") or 0
-    qualified = job.get("companies_qualified") or 0
+    # Strict-mode override: when strict_naf=true, the job page chip "✉️ X contactables"
+    # must show only entities visible on the job page (strict_match=true). Otherwise
+    # it shows raw companies_qualified which includes strict-rejected matches.
+    if job.get("strict_naf"):
+        _qrow = await fetch_one(
+            """SELECT COUNT(DISTINCT bt.siren) AS n
+               FROM batch_tags bt
+               JOIN companies co ON co.siren = bt.siren
+               WHERE bt.batch_id = %s AND co.strict_match = true""",
+            (batch_id,),
+        )
+        qualified = (_qrow or {}).get("n") or 0
+    else:
+        qualified = job.get("companies_qualified") or 0
     failed = job.get("companies_failed") or 0
     black = job.get("triage_black") or 0
     green = job.get("triage_green") or 0
