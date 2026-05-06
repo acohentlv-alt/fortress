@@ -51,8 +51,17 @@ function nafStatusBadge(status, ctx) {
     if (status === 'mismatch' && ctx) {
         const { link_confidence, link_method, link_signals } = ctx;
 
-        // Case 1: confirmed + strong method + link_signals present → rich tooltip with signal list
-        if (link_confidence === 'confirmed' && _STRONG_METHODS.has(link_method) && link_signals) {
+        // Case 1: rich tooltip with signal list. Triggers when EITHER:
+        //   (a) confirmed + strong method + link_signals — the original rescued case
+        //   (b) pending + strong method + link_signals.inpi_corroboration — the Phase 4
+        //       enseigne fallback case where the rescue inspection ran but didn't promote.
+        //       Without (b), pending rows with diagnostic inpi_corroboration data hit the
+        //       terse Case 2 tooltip, hiding the rescue's partial-match findings from Cindy.
+        const _hasInpiCorroboration = link_signals
+            && link_signals.inpi_corroboration
+            && typeof link_signals.inpi_corroboration === 'object';
+        if ((link_confidence === 'confirmed' && _STRONG_METHODS.has(link_method) && link_signals)
+            || (link_confidence === 'pending' && _STRONG_METHODS.has(link_method) && _hasInpiCorroboration)) {
             const signalKeys = {
                 siren_website_match: 'company.signalSirenWebsite',
                 phone_match:         'company.signalPhone',
