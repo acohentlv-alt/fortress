@@ -66,7 +66,10 @@ async def _run(
             )
             sys.exit(1)
 
-    conn = await psycopg.AsyncConnection.connect(db_url)
+    # autocommit=True ensures each `conn.transaction()` block commits on clean exit.
+    # Without this, conn.transaction() creates only a SAVEPOINT inside an implicit
+    # outer transaction that's never committed → all changes roll back at conn.close().
+    conn = await psycopg.AsyncConnection.connect(db_url, autocommit=True)
 
     try:
         # Fetch candidates: pending + gemini_shadow_yes + confidence >= 0.9
@@ -243,7 +246,7 @@ async def _run(
                             )
                             await conn.execute(
                                 """INSERT INTO batch_log
-                                       (batch_id, siren, action, result, detail, workspace_id, created_at)
+                                       (batch_id, siren, action, result, detail, workspace_id, timestamp)
                                    VALUES (%s, %s, %s, %s, %s, %s, NOW())""",
                                 (
                                     batch_id, siren,
