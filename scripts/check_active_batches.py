@@ -38,6 +38,7 @@ def main() -> int:
             SELECT batch_id, batch_name, status, workspace_id, created_at
             FROM batch_data
             WHERE status IN ('queued', 'in_progress', 'triage')
+              AND workspace_id = 1
             ORDER BY workspace_id, created_at DESC
         """)
         rows = cur.fetchall()
@@ -51,7 +52,8 @@ def main() -> int:
     for batch_id, name, status, ws, created in rows:
         print(f"  ws={ws} status={status:<12} created={str(created)[:19]}", file=sys.stderr)
         print(f"     {batch_id} — {name}", file=sys.stderr)
-    print("\nPushing now will trigger a Render redeploy that KILLS these batches.", file=sys.stderr)
+    print("\nPushing now will trigger a Render redeploy.", file=sys.stderr)
+    print("Render-worker batches will be killed; local-uvicorn batches survive.", file=sys.stderr)
     return 1
 
 
