@@ -127,6 +127,40 @@ class Settings(BaseSettings):
     lambda_monthly_budget: int = 800_000
     lambda_rotation_every: int = 5
 
+    # Gemini Phase 2 promotion gate (May 6) — tiered signal-strength classifier
+    # layered on top of the rescue path. When True: pending rows AND maps_only rows
+    # can be promoted to confirmed (with possible SIREN swap) when Gemini agrees
+    # with sufficient signal corroboration. Default OFF (kill switch — Alan flips ON
+    # in Render env after validation simulation).
+    #
+    # Single confidence threshold per Alan May 6 decision: tier rules already do
+    # the work via signal-strength classification; the threshold is just "is Gemini
+    # confident enough at all to even consider promoting."
+    gemini_promote_enabled: bool = False
+    gemini_promote_min_confidence: float = 0.9
+
+    # Workspace allowlist — belt-and-suspenders gate. Promote NEVER fires unless
+    # batch_workspace_id is in this list, even when gemini_promote_enabled=True.
+    # Default empty list = kill switch (no workspace gets promoted).
+    # Set GEMINI_PROMOTE_WORKSPACE_IDS=174 in Render env after validation.
+    # NEVER include 1 (Cindy) without explicit Alan auth.
+    gemini_promote_workspace_ids: Annotated[list[int], NoDecode] = []
+
+    @field_validator('gemini_promote_workspace_ids', mode='before')
+    @classmethod
+    def _parse_gemini_promote_workspace_ids(cls, v):
+        """Same parser as test_workspace_ids — accept comma-separated env strings
+        ('174,175') in addition to JSON arrays ('[174,175]'). Empty string -> []."""
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith('['):
+                import json
+                return json.loads(s)
+            return [int(x.strip()) for x in s.split(',') if x.strip()]
+        return v
+
     # Test workspaces — exempt from global batch concurrency cap and per-workspace
     # advisory locks so multiple QA agents can run batches in parallel.
     # Default empty list = kill switch (original cap behavior preserved).

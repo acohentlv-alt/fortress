@@ -365,7 +365,9 @@
     "signalSirenWebsite": "SIREN extrait du site",
     "signalPhone": "Téléphone identique",
     "signalAddress": "Adresse identique",
-    "signalEnseigne": "Enseigne identique"
+    "signalEnseigne": "Enseigne identique",
+    "badgeInpiValidated": "✓ Validé par INPI",
+    "badgeGeminiPromoted": "✦ Promu par Gemini"
   },
   "contacts": {
     "title": "Contacts",

@@ -585,6 +585,187 @@ def _naf_section_matches(sirene_naf: str | None, picked_nafs: list[str]) -> bool
     return any(get_section_for_code(p) == sirene_section for p in picked_nafs)
 
 
+def _promote_classify_signals(
+    *,
+    method: str,
+    link_signals: dict | None,
+    maps_dept: str | None,
+    target_dept: str | None,
+    matched_naf: str | None,
+    picked_nafs: list[str],
+) -> tuple[str, list[str], list[str]]:
+    """Classify a (method, link_signals) bundle into a promotion tier.
+
+    Returns (tier, agreeing_signals, blockers):
+      tier: 'tier1' | 'tier2' | 'tier3' | 'block'
+      agreeing_signals: list of signal names that fired ('siren_website',
+                       'address_exact', 'enseigne', 'phone', 'naf_section',
+                       'dept', etc.) — used for the audit detail.
+      blockers: optional structural disqualifiers that force 'block'.
+
+    Tier 2 dept disagreement rationale (Alan May 6 decision):
+      Tier 2 promotes when section_ok OR dept_ok. Department alone is too
+      noisy in France — auto-entrepreneurs and chains operate cross-dept,
+      and the MAT'ELAGAGE pattern (single-person business with name/address
+      across two depts) would consistently false-FAIL. Section letter alone
+      is enough corroboration when the method is strong (inpi/enseigne/phone)
+      and Gemini's confidence floor passed.
+    """
+    agreeing: list[str] = []
+    blockers: list[str] = []
+    sig = link_signals or {}
+
+    # Tier 1 — stand-alone deterministic signals
+    if method == "siren_website" or sig.get("siren_website_match") is True:
+        agreeing.append("siren_website")
+        return "tier1", agreeing, blockers
+    if method in ("siret_address_naf", "chain", "gemini_judge"):
+        # Already validated by their own gates upstream.
+        agreeing.append(f"method={method}")
+        return "tier1", agreeing, blockers
+    if sig.get("address_match") is True:
+        agreeing.append("address_exact")
+        # NOTE: byte-equal-after-normalize per _verify_signals(), NOT geo-proximity.
+        # Cindy's "close ≠ same" rule (Peyrat: 1591 vs 1655) is enforced by
+        # _extract_street_key (street name + number); different numbers
+        # won't be address_match=True.
+        return "tier1", agreeing, blockers
+
+    # Tier 2 — strong methods needing dept-or-section agreement
+    section_ok = (
+        not picked_nafs
+        or _naf_section_matches(matched_naf, picked_nafs)
+    )
+    dept_ok = bool(maps_dept and target_dept and maps_dept == target_dept)
+    strong_methods = {"inpi", "enseigne", "phone"}
+    if method in strong_methods:
+        agreeing.append(method)
+        if sig.get("enseigne_match") is True and "enseigne" not in agreeing:
+            agreeing.append("enseigne")
+        if sig.get("phone_match") is True and "phone" not in agreeing:
+            agreeing.append("phone")
+        if section_ok:
+            agreeing.append("naf_section")
+        if dept_ok:
+            agreeing.append("dept")
+        if section_ok or dept_ok:
+            return "tier2", agreeing, blockers
+        # Strong method but no dept and no section → block.
+        blockers.append("strong_method_no_dept_no_section")
+        return "block", agreeing, blockers
+
+    # Tier 3 — weak methods needing ≥1 Tier-1/Tier-2 corroborating signal
+    weak_methods = {"surname", "fuzzy_name", "enseigne_weak", "phone_weak", "geo_proximity"}
+    if method in weak_methods:
+        # Look for ANY upper-tier signal to corroborate. Note: enseigne_match
+        # and phone_match here serve as CORROBORATION for Tier 3, not as a
+        # promotion to Tier 2 (Tier 2 entry requires the *method* itself to
+        # be strong, not just a signal firing).
+        if sig.get("siren_website_match") is True:
+            agreeing.append("siren_website")
+        if sig.get("address_match") is True:
+            agreeing.append("address_exact")
+        if sig.get("enseigne_match") is True:
+            agreeing.append("enseigne")
+        if sig.get("phone_match") is True:
+            agreeing.append("phone")
+        if section_ok and picked_nafs:
+            agreeing.append("naf_section")
+        if dept_ok:
+            agreeing.append("dept")
+        if not agreeing:
+            blockers.append("tier3_no_corroboration")
+            return "block", agreeing, blockers
+        return "tier3", agreeing, blockers
+
+    # Default — block if no path matches.
+    blockers.append("unknown_method")
+    return "block", agreeing, blockers
+
+
+# Cindy "close ≠ same address" rule (May 6 case Peyrat: 1591 vs 1655 Chem. Peyrat).
+# Block promotion when Gemini's reasoning self-admits proximity-style address
+# agreement AND the only Tier-1 signal claimed is address_exact. Defensible
+# because Gemini's own text confesses the address isn't byte-equal.
+#
+# Phrases deduped to avoid substring overlap (e.g. "close to" supersedes "close").
+_GEMINI_PROXIMITY_PHRASES = (
+    "close to",
+    "proximity",
+    "geographic proximity",
+    "approximately",
+    "same road",
+    "same street",
+    "address variation",
+)
+
+
+def _gemini_reasoning_admits_close(reasoning: str | None) -> bool:
+    """Heuristic: lowercase substring scan for proximity-style phrases."""
+    if not reasoning:
+        return False
+    r = reasoning.lower()
+    return any(p in r for p in _GEMINI_PROXIMITY_PHRASES)
+
+
+# Stop-tokens for surname extraction — French legal forms + branded plurals.
+# Filtered out before picking the first surviving long token as the surname.
+# Fail-safe: if no token survives the filter, return 0 (the gate proceeds
+# without a surname-ambiguity downgrade — better than false-blocking).
+_SURNAME_STOP_TOKENS = frozenset({
+    "les", "des", "aux", "una", "une",
+    "ferme", "fermes", "vergers", "verger",
+    "exploitation", "exploitations",
+    "scea", "gaec", "earl", "sci", "sarl",
+    "sas", "sasu", "eurl", "snc", "sca",
+    "boulangerie", "patisserie", "boucherie",
+    "transports", "transport",
+})
+
+
+async def _surname_ambiguity_count(
+    conn,
+    sirene_denomination: str | None,
+    code_postal: str | None,
+) -> int:
+    """Count active SIRENE rows in same commune sharing a surname token.
+
+    Returns count of distinct SIRENs with same code_postal AND ≥1 token
+    overlap in denomination. Returns 0 when surname token can't be
+    extracted (all tokens are stop-words) OR when CP is missing.
+
+    Heuristic favors fail-safe: if no surviving token, return 0 rather
+    than raise — the gate proceeds without a surname disambiguation
+    downgrade. The intent is to catch obvious 'PEYRAT' / 'NOISETIERS'
+    family-name collisions, not to be exhaustive.
+
+    Uses idx_companies_denomination_trgm (gin_trgm_ops on raw column,
+    case-sensitive — SIRENE denominations are uppercase per ingestion,
+    so the LIKE pattern is uppercased).
+    """
+    if not sirene_denomination or not code_postal:
+        return 0
+    raw_tokens = _normalize_name(sirene_denomination).split()
+    long_tokens = [t for t in raw_tokens if len(t) >= 4 and t.lower() not in _SURNAME_STOP_TOKENS]
+    if not long_tokens:
+        return 0
+    surname = long_tokens[0]  # heuristic: first surviving long token
+    surname_upper = surname.upper()
+    try:
+        cur = await conn.execute(
+            """SELECT COUNT(DISTINCT siren) FROM companies
+                WHERE code_postal = %s
+                  AND statut = 'A'
+                  AND siren NOT LIKE 'MAPS%%'
+                  AND denomination LIKE %s""",
+            (code_postal, f"%{surname_upper}%"),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row and row[0] else 0
+    except Exception:
+        return 0
+
+
 # =========================================================================
 # Name-tier thresholds — APPLIES ONLY TO STEP 5's inpi_fuzzy_agree GATE.
 #
@@ -4154,6 +4335,7 @@ async def run(batch_id: str) -> None:
 
                                         # ── D1b Hybrid: act on Gemini verdict ──
                                         if settings.gemini_d1b_hybrid_enabled:
+                                            _promotion_acted = False  # Phase 2 promotion gate flag (May 6)
                                             # ── Swap path (NEW) ──
                                             # Fire when: currently auto-confirmed, Gemini says match
                                             # but to a DIFFERENT SIREN than the one we just confirmed,
@@ -4356,6 +4538,262 @@ async def run(batch_id: str) -> None:
                                                         workspace_id=batch_workspace_id,
                                                     )
 
+                                            # ── Promotion path (NEW — Phase 2, May 6) ──
+                                            # Fires when: not auto-confirmed (pending or maps_only),
+                                            #   _v == "match" with picked_siren, not strict_naf,
+                                            #   gemini_promote_enabled, AND batch_workspace_id is in
+                                            #   gemini_promote_workspace_ids allowlist (belt-and-suspenders).
+                                            # Classifies into tier1/tier2/tier3 with structured signals.
+                                            # On promote: swaps linked_siren to _vpicked, sets confirmed,
+                                            # records rescued_by='gemini_promoted', writes
+                                            # auto_linked_gemini_promoted audit with link_signals.gemini_promotion
+                                            # (including pre-promote snapshot for safe rollback).
+                                            elif (
+                                                settings.gemini_promote_enabled
+                                                and batch_workspace_id in settings.gemini_promote_workspace_ids
+                                                and _v == "match"
+                                                and not strict_naf
+                                                and _vpicked is not None
+                                                and not _just_auto_confirmed
+                                                and _vconf >= settings.gemini_promote_min_confidence
+                                            ):
+                                                _original_cascade_siren = _pending_link["siren"] if _pending_link else None
+                                                _original_method = _pending_link["method"] if _pending_link else None
+                                                _picked_changed = (
+                                                    _original_cascade_siren is not None
+                                                    and _vpicked != _original_cascade_siren
+                                                )
+
+                                                # (a) Hosting-SIREN guardrail
+                                                from fortress.matching.contacts import _HOSTING_SIRENS
+                                                if _vpicked in _HOSTING_SIRENS:
+                                                    await log_audit(
+                                                        conn, batch_id=batch_id, siren=siren,
+                                                        action="gemini_promote_rejected_hosting",
+                                                        result="skipped",
+                                                        detail=json.dumps({
+                                                            "picked_siren": _vpicked,
+                                                            "gemini_confidence": _vconf,
+                                                        }, ensure_ascii=False),
+                                                        workspace_id=batch_workspace_id,
+                                                    )
+                                                    _promotion_acted = True
+                                                else:
+                                                    # (b) Fetch target SIRENE row + signals
+                                                    _prom_cur = await conn.execute(
+                                                        """SELECT siren, denomination, enseigne, adresse, ville,
+                                                                  naf_code, code_postal, departement
+                                                             FROM companies
+                                                            WHERE siren = %s AND statut = 'A' AND siren NOT LIKE 'MAPS%%'
+                                                            LIMIT 1""",
+                                                        (_vpicked,),
+                                                    )
+                                                    _prom_row = await _prom_cur.fetchone()
+                                                    if not _prom_row:
+                                                        await log_audit(
+                                                            conn, batch_id=batch_id, siren=siren,
+                                                            action="gemini_promote_rejected_inactive",
+                                                            result="skipped",
+                                                            detail=json.dumps({"picked_siren": _vpicked},
+                                                                              ensure_ascii=False),
+                                                            workspace_id=batch_workspace_id,
+                                                        )
+                                                        _promotion_acted = True
+                                                    else:
+                                                        _prom_naf = _prom_row[5] or ""
+                                                        _prom_cp = _prom_row[6] or ""
+                                                        _prom_dept = _prom_row[7] or ""
+                                                        _maps_dept = (maps_cp[:2] if maps_cp else (_company_dept or _effective_dept or ""))
+
+                                                        # (c) Re-verify signals against the picked SIREN
+                                                        _prom_signals, _prom_sirene_cp = await _verify_signals(
+                                                            conn, _vpicked, maps_name, maps_phone, maps_address, extracted_siren
+                                                        )
+
+                                                        # (d) Classify signal strength
+                                                        _tier, _agreeing, _blockers = _promote_classify_signals(
+                                                            method=_original_method or "fuzzy_name",
+                                                            link_signals=_prom_signals,
+                                                            maps_dept=_maps_dept,
+                                                            target_dept=_prom_dept,
+                                                            matched_naf=_prom_naf,
+                                                            picked_nafs=picked_nafs,
+                                                        )
+
+                                                        # (e) Cindy "close ≠ same" disqualifier
+                                                        _reasoning = _verdict.get("reasoning") or ""
+                                                        _close_admitted = _gemini_reasoning_admits_close(_reasoning)
+                                                        _close_address_only = (
+                                                            _close_admitted
+                                                            and _agreeing == ["address_exact"]
+                                                        )
+
+                                                        # (f) Family-name ambiguity disqualifier
+                                                        _surname_count = await _surname_ambiguity_count(
+                                                            conn,
+                                                            _prom_row[1] or "",
+                                                            _prom_cp,
+                                                        )
+                                                        _surname_ambiguous = _surname_count >= 2
+
+                                                        # (g) Decision
+                                                        _decision = "block"
+                                                        _decision_reason: list[str] = []
+                                                        if _tier == "block":
+                                                            _decision = "hold_pending"
+                                                            _decision_reason.append(f"tier_classify={_tier}")
+                                                            _decision_reason.extend(_blockers)
+                                                        elif _close_address_only:
+                                                            _decision = "hold_pending"
+                                                            _decision_reason.append("close_not_same_address")
+                                                        elif _surname_ambiguous:
+                                                            _decision = "hold_pending"
+                                                            _decision_reason.append(f"surname_ambiguous_count={_surname_count}")
+                                                        else:
+                                                            _decision = "promote"
+
+                                                        if _decision == "promote":
+                                                            # (h) Snapshot OLD reference data BEFORE _copy_sirene_reference_data
+                                                            #     so rollback can restore. Field list mirrors
+                                                            #     _copy_sirene_reference_data's UPDATE columns.
+                                                            _snap_cur = await conn.execute(
+                                                                """SELECT siret_siege, naf_code, naf_libelle,
+                                                                          forme_juridique, date_creation,
+                                                                          tranche_effectif, naf_status, strict_match
+                                                                     FROM companies WHERE siren = %s""",
+                                                                (siren,),
+                                                            )
+                                                            _snap_row = await _snap_cur.fetchone()
+                                                            _snapshot = {
+                                                                "siret_siege": _snap_row[0] if _snap_row else None,
+                                                                "naf_code": _snap_row[1] if _snap_row else None,
+                                                                "naf_libelle": _snap_row[2] if _snap_row else None,
+                                                                "forme_juridique": _snap_row[3] if _snap_row else None,
+                                                                "date_creation": _snap_row[4].isoformat() if _snap_row and _snap_row[4] else None,
+                                                                "tranche_effectif": _snap_row[5] if _snap_row else None,
+                                                                "naf_status": _snap_row[6] if _snap_row else None,
+                                                                "strict_match": _snap_row[7] if _snap_row else None,
+                                                            }
+
+                                                            async with conn.transaction():
+                                                                # Clear pre-existing copy + naf_status; we'll recompute
+                                                                await conn.execute(
+                                                                    """UPDATE companies
+                                                                          SET siret_siege = NULL, naf_code = NULL,
+                                                                              naf_libelle = NULL, forme_juridique = NULL,
+                                                                              date_creation = NULL, tranche_effectif = NULL,
+                                                                              naf_status = NULL
+                                                                        WHERE siren = %s""",
+                                                                    (siren,),
+                                                                )
+                                                                # Apply new SIREN's reference data
+                                                                await _copy_sirene_reference_data(conn, siren, _vpicked)
+
+                                                                # Recompute naf_status + strict_match (per 4266a58 — pass strict=strict_naf)
+                                                                _prom_status = None
+                                                                _prom_strict_match: bool | None = None
+                                                                if picked_nafs:
+                                                                    _prom_status = _compute_naf_status(
+                                                                        _prom_naf, picked_nafs, naf_division_whitelist,
+                                                                        strict=strict_naf,
+                                                                    )
+                                                                    if naf_division_whitelist is not None:
+                                                                        _prom_strict_match = any(_prom_naf.startswith(d) for d in naf_division_whitelist)
+                                                                    else:
+                                                                        _prom_strict_match = any(_prom_naf.startswith(p) for p in picked_nafs)
+                                                                else:
+                                                                    _prom_strict_match = True  # no picker → trivially strict (matches existing convention)
+
+                                                                # Build link_signals JSON with Phase 2 promotion metadata + snapshot
+                                                                _prom_link_signals = dict(_prom_signals) if _prom_signals else {}
+                                                                _prom_link_signals["gemini_promotion"] = {
+                                                                    "tier": _tier,
+                                                                    "confidence": _vconf,
+                                                                    "signals_used": _agreeing,
+                                                                    "picked_siren_changed": _picked_changed,
+                                                                    "original_cascade_siren": _original_cascade_siren,
+                                                                    "original_method": _original_method,
+                                                                    "gemini_picked_siren": _vpicked,
+                                                                    "reasoning": _reasoning[:200],
+                                                                    "snapshot": _snapshot,
+                                                                }
+
+                                                                # Update link state + signals + rescued_by + naf_status + strict_match
+                                                                await conn.execute(
+                                                                    """UPDATE companies
+                                                                          SET linked_siren = %s,
+                                                                              link_confidence = 'confirmed',
+                                                                              link_method = 'gemini_judge',
+                                                                              link_signals = %s,
+                                                                              naf_status = %s,
+                                                                              strict_match = %s,
+                                                                              rescued_by = 'gemini_promoted'
+                                                                        WHERE siren = %s""",
+                                                                    (_vpicked,
+                                                                     json.dumps(_prom_link_signals),
+                                                                     _prom_status,
+                                                                     _prom_strict_match,
+                                                                     siren),
+                                                                )
+
+                                                                # Audit row
+                                                                await log_audit(
+                                                                    conn, batch_id=batch_id, siren=siren,
+                                                                    action="auto_linked_gemini_promoted",
+                                                                    result="success",
+                                                                    detail=json.dumps({
+                                                                        "tier": _tier,
+                                                                        "gemini_confidence": _vconf,
+                                                                        "signals_used": _agreeing,
+                                                                        "picked_siren_changed": _picked_changed,
+                                                                        "original_cascade_siren": _original_cascade_siren,
+                                                                        "original_method": _original_method,
+                                                                        "gemini_picked_siren": _vpicked,
+                                                                        "naf_status": _prom_status,
+                                                                        "gemini_reasoning": _reasoning[:200],
+                                                                    }, ensure_ascii=False),
+                                                                    workspace_id=batch_workspace_id,
+                                                                )
+
+                                                            # Mutate _pending_link so officer-fetch gate fires
+                                                            _pending_link = {
+                                                                "siren": _vpicked,
+                                                                "denomination": _prom_row[1] or "",
+                                                                "enseigne": _prom_row[2] or "",
+                                                                "adresse": _prom_row[3] or "",
+                                                                "ville": _prom_row[4] or "",
+                                                                "method": "gemini_judge",
+                                                                "score": _vconf,
+                                                            }
+                                                            log.info("discovery.gemini_promoted",
+                                                                     maps_name=maps_name, maps_siren=siren,
+                                                                     promoted_siren=_vpicked,
+                                                                     original_cascade_siren=_original_cascade_siren,
+                                                                     tier=_tier, confidence=_vconf,
+                                                                     signals=_agreeing)
+                                                            _promotion_acted = True
+                                                        else:
+                                                            # hold_pending — no DB write, audit only
+                                                            await log_audit(
+                                                                conn, batch_id=batch_id, siren=siren,
+                                                                action="gemini_promote_held_pending",
+                                                                result="skipped",
+                                                                detail=json.dumps({
+                                                                    "tier": _tier,
+                                                                    "gemini_confidence": _vconf,
+                                                                    "signals_used": _agreeing,
+                                                                    "blockers": _decision_reason,
+                                                                    "gemini_picked_siren": _vpicked,
+                                                                    "original_cascade_siren": _original_cascade_siren,
+                                                                    "gemini_reasoning": _reasoning[:200],
+                                                                }, ensure_ascii=False),
+                                                                workspace_id=batch_workspace_id,
+                                                            )
+                                                            log.info("discovery.gemini_promote_held",
+                                                                     maps_name=maps_name, maps_siren=siren,
+                                                                     tier=_tier, blockers=_decision_reason)
+                                                            _promotion_acted = True
+
                                             # ── Rescue path ──
                                             # Fire when: no auto-confirm happened (weak candidate or maps_only),
                                             #            Gemini said match at high confidence with a picked_siren,
@@ -4368,6 +4806,7 @@ async def run(batch_id: str) -> None:
                                                 and _vconf >= settings.gemini_d1b_rescue_threshold
                                                 and _vpicked is not None
                                                 and not _just_auto_confirmed  # currently pending or maps_only
+                                                and not _promotion_acted      # NEW — promotion path takes precedence when enabled+actioned
                                             ):
                                                 from fortress.matching.contacts import _HOSTING_SIRENS
                                                 if _vpicked in _HOSTING_SIRENS:
