@@ -578,6 +578,18 @@
       "prompt": "You are about to delete a batch from another workspace. To confirm, type the batch name exactly:<br><br><strong>{{name}}</strong>",
       "placeholder": "Type the batch name",
       "submitLabel": "Delete permanently"
+    },
+    "crossWorkspaceCancel": {
+      "title": "⚠ Cross-workspace cancellation",
+      "prompt": "You are about to cancel a batch from another workspace. To confirm, type the batch name exactly:<br><br><strong>{{name}}</strong>",
+      "placeholder": "Type the batch name",
+      "submitLabel": "Cancel permanently"
+    },
+    "crossWorkspaceResume": {
+      "title": "⚠ Cross-workspace resume",
+      "prompt": "You are about to resume a batch from another workspace. To confirm, type the batch name exactly:<br><br><strong>{{name}}</strong>",
+      "placeholder": "Type the batch name",
+      "submitLabel": "Resume permanently"
     }
   },
   "job": {

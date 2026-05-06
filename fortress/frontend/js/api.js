@@ -175,12 +175,24 @@ export async function deleteJob(batchId, options = {}) {
     return await request(`/jobs/${encodeURIComponent(batchId)}`, init);
 }
 
-export async function cancelJob(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}/cancel`, { method: 'POST' });
+export async function cancelJob(batchId, options = {}) {
+    const { confirmName } = options;
+    const init = { method: 'POST' };
+    if (confirmName) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify({ confirm_name: confirmName });
+    }
+    return await request(`/jobs/${encodeURIComponent(batchId)}/cancel`, init);
 }
 
-export async function resumeJob(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}/resume`, { method: 'POST' });
+export async function resumeJob(batchId, options = {}) {
+    const { confirmName } = options;
+    const init = { method: 'POST' };
+    if (confirmName) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify({ confirm_name: confirmName });
+    }
+    return await request(`/jobs/${encodeURIComponent(batchId)}/resume`, init);
 }
 
 

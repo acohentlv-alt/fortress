@@ -584,6 +584,18 @@
       "prompt": "Vous êtes sur le point de supprimer un batch d'un autre workspace. Pour confirmer, saisissez exactement le nom du batch :<br><br><strong>{{name}}</strong>",
       "placeholder": "Saisissez le nom du batch",
       "submitLabel": "Supprimer définitivement"
+    },
+    "crossWorkspaceCancel": {
+      "title": "⚠ Annulation cross-workspace",
+      "prompt": "Vous êtes sur le point d'annuler un batch d'un autre workspace. Pour confirmer, saisissez exactement le nom du batch :<br><br><strong>{{name}}</strong>",
+      "placeholder": "Saisissez le nom du batch",
+      "submitLabel": "Annuler définitivement"
+    },
+    "crossWorkspaceResume": {
+      "title": "⚠ Reprise cross-workspace",
+      "prompt": "Vous êtes sur le point de reprendre un batch d'un autre workspace. Pour confirmer, saisissez exactement le nom du batch :<br><br><strong>{{name}}</strong>",
+      "placeholder": "Saisissez le nom du batch",
+      "submitLabel": "Reprendre définitivement"
     }
   },
   "job": {

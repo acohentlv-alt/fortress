@@ -315,16 +315,42 @@ async def cancel_job(batch_id: str, request: Request):
 
     async with get_conn() as conn:
         row = await (await conn.execute(
-            f"SELECT status FROM batch_data WHERE batch_id = %s {ws_scope}",
+            f"SELECT status, batch_name, workspace_id FROM batch_data WHERE batch_id = %s {ws_scope}",
             (batch_id,) + ws_params,
         )).fetchone()
 
         if not row:
             return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
-        if row[0] not in ("in_progress", "queued", "triage", "new"):
+
+        # ── Cross-workspace typed-confirmation gate ──────────────────────────
+        # Mirror of delete_job (jobs.py:158-183): admin's workspace_id is None;
+        # any non-NULL target ws is "cross-workspace" → require typed name.
+        target_status = row[0]
+        target_batch_name = row[1]
+        target_ws_id = row[2]
+        if (
+            user.is_admin
+            and target_ws_id is not None
+            and target_ws_id != user.workspace_id  # admin.workspace_id is None
+        ):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            confirm_name = (body.get("confirm_name") or "").strip() if isinstance(body, dict) else ""
+            if confirm_name != (target_batch_name or "").strip():
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "error": "Confirmation requise — saisissez le nom exact du batch.",
+                        "expected_name": target_batch_name,
+                    },
+                )
+
+        if target_status not in ("in_progress", "queued", "triage", "new"):
             return JSONResponse(status_code=409, content={
                 "error": "Le batch n'est pas en cours",
-                "current_status": row[0],
+                "current_status": target_status,
             })
 
         await conn.execute(
@@ -386,6 +412,30 @@ async def resume_job(batch_id: str, request: Request):
         batch_name = row[2]
         batch_size_row = row[3] or 0
         companies_scraped_row = row[4] or 0
+
+        # ── Cross-workspace typed-confirmation gate ──────────────────────────
+        # Mirror of delete_job (jobs.py:158-183) and cancel_job (this PR):
+        # admin's workspace_id is None; any non-NULL target ws is "cross-
+        # workspace" → require typed name. The SELECT FOR UPDATE row lock
+        # above is released by psycopg on JSONResponse return (rollback).
+        if (
+            user.is_admin
+            and row_workspace_id is not None
+            and row_workspace_id != user.workspace_id  # admin.workspace_id is None
+        ):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            confirm_name = (body.get("confirm_name") or "").strip() if isinstance(body, dict) else ""
+            if confirm_name != (batch_name or "").strip():
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "error": "Confirmation requise — saisissez le nom exact du batch.",
+                        "expected_name": batch_name,
+                    },
+                )
 
         # Size-cap guard: a batch that already reached its target has nothing
         # left to resume even if the watchdog marked it interrupted. Return

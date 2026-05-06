@@ -728,18 +728,45 @@ export async function renderJob(container, batchId) {
     const resumeBtn = document.getElementById('btn-resume');
     if (resumeBtn) {
         resumeBtn.addEventListener('click', async () => {
-            resumeBtn.disabled = true;
-            const originalLabel = resumeBtn.textContent;
-            resumeBtn.textContent = t('job.resumeLaunching');
-            const result = await resumeJob(batchId);
-            if (result && result._ok !== false) {
-                showToast(t('job.resumeSuccess'), 'success');
-                window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
+            const currentUser = getCachedUser();
+            const isCrossWorkspace = (
+                currentUser?.role === 'admin'
+                && job.workspace_id != null
+                && job.workspace_id !== currentUser.workspace_id
+            );
+
+            const performResume = async () => {
+                resumeBtn.disabled = true;
+                const originalLabel = resumeBtn.textContent;
+                resumeBtn.textContent = t('job.resumeLaunching');
+                const result = isCrossWorkspace
+                    ? await resumeJob(batchId, { confirmName: job.batch_name })
+                    : await resumeJob(batchId);
+                if (result && result._ok !== false) {
+                    showToast(t('job.resumeSuccess'), 'success');
+                    window.location.hash = `#/monitor/${encodeURIComponent(batchId)}`;
+                } else {
+                    resumeBtn.disabled = false;
+                    resumeBtn.textContent = originalLabel;
+                    const status = result?._status;
+                    const msg = status === 422
+                        ? (result.error || 'Confirmation requise.')
+                        : ((result && (result.error || result.detail)) || t('job.resumeError'));
+                    showToast(msg, 'error');
+                }
+            };
+
+            if (isCrossWorkspace) {
+                showConfirmModal({
+                    title: t('monitor.crossWorkspaceResume.title'),
+                    body: `<p>${t('monitor.crossWorkspaceResume.prompt', { name: escapeHtml(job.batch_name) })}</p>`,
+                    confirmLabel: t('monitor.crossWorkspaceResume.submitLabel'),
+                    danger: true,
+                    requiredText: job.batch_name,
+                    onConfirm: performResume,
+                });
             } else {
-                resumeBtn.disabled = false;
-                resumeBtn.textContent = originalLabel;
-                const msg = (result && (result.error || result.detail)) || t('job.resumeError');
-                showToast(msg, 'error');
+                await performResume();
             }
         });
     }

@@ -204,7 +204,11 @@ async function renderMonitorList(container) {
                 requiredText: isCrossWorkspace ? batchName : null,
                 onConfirm: async () => {
                     try {
-                        await cancelJob(batchId);
+                        if (isCrossWorkspace) {
+                            await cancelJob(batchId, { confirmName: batchName });
+                        } else {
+                            await cancelJob(batchId);
+                        }
                     } catch { /* ignore cancel errors — proceed to delete */ }
                     const result = isCrossWorkspace
                         ? await deleteJob(batchId, { confirmName: batchName })
@@ -416,22 +420,43 @@ async function renderJobMonitor(container, batchId) {
     if ($.cancelBtn) {
         $.cancelBtn.addEventListener('click', () => {
             const scraped = previousValues.scraped > 0 ? previousValues.scraped : 0;
+            const titleNow = ($.title?.textContent || batchId).trim();
+            const currentUser = getCachedUser();
+            const isCrossWorkspace = (
+                currentUser?.role === 'admin'
+                && jobWorkspaceId != null
+                && jobWorkspaceId !== currentUser.workspace_id
+            );
+            const explainError = (result) => {
+                if (!result) return t('monitor.stopError');
+                if (result._status === 401) return 'Session expirée — reconnectez-vous.';
+                if (result._status === 403) return 'Accès refusé.';
+                if (result._status === 404) return 'Batch introuvable.';
+                if (result._status === 409) return result.error || t('monitor.stopError');
+                if (result._status === 422) return result.error || 'Confirmation requise.';
+                return result.error || t('monitor.stopError');
+            };
             showConfirmModal({
-                title: t('monitor.stopConfirmTitle'),
-                body: `
-                    <p><strong>${t('monitor.stopConfirmBatch')}</strong> ${escapeHtml($.title.textContent)}</p>
-                    <p><strong>${t('monitor.stopConfirmCollected')}</strong> ${scraped} ${t('monitor.companies')}</p>
-                    <p style="color:var(--success)">${t('monitor.stopConfirmKept', { count: scraped })}</p>
-                    <p style="color:var(--warning)">${t('monitor.stopConfirmStopsSearching')}</p>
-                `,
-                confirmLabel: t('monitor.stopConfirmBtn'),
+                title: isCrossWorkspace ? t('monitor.crossWorkspaceCancel.title') : t('monitor.stopConfirmTitle'),
+                body: isCrossWorkspace
+                    ? `<p>${t('monitor.crossWorkspaceCancel.prompt', { name: escapeHtml(titleNow) })}</p>`
+                    : `
+                        <p><strong>${t('monitor.stopConfirmBatch')}</strong> ${escapeHtml(titleNow)}</p>
+                        <p><strong>${t('monitor.stopConfirmCollected')}</strong> ${scraped} ${t('monitor.companies')}</p>
+                        <p style="color:var(--success)">${t('monitor.stopConfirmKept', { count: scraped })}</p>
+                        <p style="color:var(--warning)">${t('monitor.stopConfirmStopsSearching')}</p>
+                    `,
+                confirmLabel: isCrossWorkspace ? t('monitor.crossWorkspaceCancel.submitLabel') : t('monitor.stopConfirmBtn'),
                 danger: true,
+                requiredText: isCrossWorkspace ? titleNow : null,
                 onConfirm: async () => {
-                    const result = await cancelJob(batchId);
-                    if (result._ok !== false) {
+                    const result = isCrossWorkspace
+                        ? await cancelJob(batchId, { confirmName: titleNow })
+                        : await cancelJob(batchId);
+                    if (result && result._ok !== false) {
                         showToast(t('monitor.stopSuccess'), 'success');
                     } else {
-                        showToast(t('monitor.stopError'), 'error');
+                        showToast(explainError(result), 'error');
                     }
                 },
             });
@@ -474,7 +499,13 @@ async function renderJobMonitor(container, batchId) {
             if (!confirmed) return;
             try {
                 if (isRunning) {
-                    try { await cancelJob(batchId); } catch { /* swallow — proceed to delete */ }
+                    try {
+                        if (isCrossWorkspace) {
+                            await cancelJob(batchId, { confirmName: titleNow });
+                        } else {
+                            await cancelJob(batchId);
+                        }
+                    } catch { /* swallow — proceed to delete */ }
                 }
                 const result = isCrossWorkspace
                     ? await deleteJob(batchId, { confirmName: titleNow })

@@ -972,7 +972,13 @@ function _wireBatchCardDeleteButtons(view, rootContainer) {
             const onConfirm = async () => {
                 try {
                     if (isRunning) {
-                        try { await cancelJob(batchId); } catch { /* proceed */ }
+                        try {
+                            if (isCrossWorkspace) {
+                                await cancelJob(batchId, { confirmName: batchName });
+                            } else {
+                                await cancelJob(batchId);
+                            }
+                        } catch { /* proceed */ }
                     }
                     const result = isCrossWorkspace
                         ? await deleteJob(batchId, { confirmName: batchName })
