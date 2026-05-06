@@ -59,9 +59,25 @@ function nafStatusBadge(status, ctx) {
                 address_match:       'company.signalAddress',
                 enseigne_match:      'company.signalEnseigne',
             };
-            const agreed = Object.entries(link_signals)
-                .filter(([, v]) => v === true)
-                .map(([k]) => `<li>${t(signalKeys[k] || k)}</li>`)
+            // Collect true signals from top-level link_signals AND nested inpi_corroboration.
+            // Phase 4 INPI rescue (rescued_by='inpi_validated') stores its corroborating
+            // address+enseigne match in link_signals.inpi_corroboration.{address_match,
+            // enseigne_match}. Top-level address_match is typically false for HQ-vs-storefront
+            // mismatches, so without this nested iteration the tooltip would only show
+            // enseigne signals — hiding the address corroboration that actually justified
+            // the rescue. Set dedupes if both top-level and nested have the same key.
+            const trueSignals = new Set();
+            for (const [k, v] of Object.entries(link_signals)) {
+                if (v === true) trueSignals.add(k);
+            }
+            const corroboration = link_signals.inpi_corroboration;
+            if (corroboration && typeof corroboration === 'object') {
+                for (const [k, v] of Object.entries(corroboration)) {
+                    if (v === true) trueSignals.add(k);
+                }
+            }
+            const agreed = [...trueSignals]
+                .map(k => `<li>${t(signalKeys[k] || k)}</li>`)
                 .join('');
             const signalList = agreed
                 ? `<br><strong>${t('company.signalsAgreed')} :</strong><ul style="margin:4px 0 0 12px; padding:0">${agreed}</ul>`
