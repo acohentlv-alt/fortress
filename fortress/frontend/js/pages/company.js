@@ -606,6 +606,133 @@ async function _loadSuggestedMatchesAsync(container, siren, co, mc) {
     }
 }
 
+// ── Decision chart helpers (Phase 2) ────────────────────────────────────────
+
+// Duration helper — formats ms into "1.2s" / "120ms" / "—"
+function formatDuration(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkConfidence, rescuedBy, nafStatus, totalDurationMs) {
+    // Even if timeline is empty, render the chart skeleton with the synthetic NAF-gate step + final row
+    // when there's something meaningful to show (linkConfidence not null OR nafStatus meaningful)
+    const hasContent = (timeline && timeline.length > 0) || (nafStatus && nafStatus !== 'maps_only') || linkConfidence;
+    if (!hasContent) return '';
+
+    // Synthetic NAF-gate step injected before timeline rows (since naf_status isn't an audit action)
+    const syntheticSteps = [];
+    if (nafStatus && nafStatus !== 'maps_only') {
+        syntheticSteps.push({
+            num: 0,
+            action: `naf_gate_${nafStatus}`,
+            icon: nafStatus === 'verified' ? '✅' : '⚠️',
+            label: t(`companyDetail.decisionChart.step.naf_gate_${nafStatus}`),
+            tooltipKey: `companyDetail.decisionChart.tooltip.naf_gate_${nafStatus}`,
+            detail: pickerNafs && pickerNafs.length ? `picker: ${pickerNafs.join(', ')}` : 'no picker',
+            timestamp: null,
+            duration_ms: null,
+            isSynthetic: true,
+        });
+    }
+
+    // Map real timeline rows to step objects
+    const realSteps = (timeline || []).map((row, idx) => {
+        const action = row.action;
+        const result = row.result;
+        let icon = 'ℹ️';
+        if (action.startsWith('auto_linked_')) icon = '✅';
+        else if (action.startsWith('gemini_shadow_yes')) icon = '✅';
+        else if (action === 'gemini_shadow_no' || action === 'gemini_rescue_rejected_naf') icon = '❌';
+        else if (action === 'gemini_quarantine' || action === 'gemini_frankenstein_protected') icon = '⚠️';
+        else if (action.startsWith('pending_')) icon = '⏳';
+        else if (action.startsWith('a2_')) icon = result === 'success' ? '✅' : 'ℹ️';
+        else if (action === 'rollback_phase3_retroactive') icon = '↩️';
+
+        const stepLabelKey = `companyDetail.decisionChart.step.${action}`;
+        const tooltipKey = `companyDetail.decisionChart.tooltip.${action}`;
+
+        return {
+            num: syntheticSteps.length + idx,
+            action,
+            icon,
+            label: t(stepLabelKey, { num: syntheticSteps.length + idx, detail: row.detail || '' }),
+            tooltipKey,
+            detail: row.detail,
+            timestamp: row.timestamp,
+            duration_ms: row.duration_ms,
+            isSynthetic: false,
+        };
+    });
+
+    const allSteps = [...syntheticSteps, ...realSteps];
+    // Re-number sequential
+    allSteps.forEach((s, i) => { s.num = i; });
+
+    // Final-decision row
+    let finalIcon = '✅';
+    let finalKey = 'companyDetail.decisionChart.final.confirmed';
+    if (linkConfidence === 'pending') { finalIcon = '⏳'; finalKey = 'companyDetail.decisionChart.final.pending'; }
+    else if (linkConfidence === 'rejected') { finalIcon = '❌'; finalKey = 'companyDetail.decisionChart.final.rejected'; }
+    else if (linkConfidence === null && !rescuedBy) { finalIcon = '➖'; finalKey = 'companyDetail.decisionChart.final.unmatched'; }
+
+    // Optional Gemini sub-panel — when rescued_by is gemini_*
+    const geminiPanel = (rescuedBy && rescuedBy.startsWith('gemini')) ? `
+        <div class="gemini-panel">
+            <h5 class="gemini-panel-title">${t('companyDetail.decisionChart.geminiPanel.title')}</h5>
+            <div class="gemini-panel-row">
+                <span class="gemini-panel-label">${t('companyDetail.decisionChart.geminiPanel.method')}</span>
+                <span class="gemini-panel-value">${rescuedBy}</span>
+            </div>
+            ${linkSignals && typeof linkSignals === 'object' ? `
+                <div class="gemini-panel-row">
+                    <span class="gemini-panel-label">${t('companyDetail.decisionChart.geminiPanel.signals')}</span>
+                    <span class="gemini-panel-value">${Object.entries(linkSignals).filter(([k, v]) => v === true).map(([k]) => k).join(', ') || '-'}</span>
+                </div>
+            ` : ''}
+        </div>
+    ` : '';
+
+    // Total elapsed badge in header
+    const elapsed = (totalDurationMs && totalDurationMs > 0)
+        ? ` · ${formatDuration(totalDurationMs)}`
+        : '';
+
+    return `
+        <details class="decision-chart" data-test-id="decision-chart">
+            <summary class="decision-chart-summary">
+                <span class="decision-chart-title">🔍 ${t('companyDetail.decisionChart.title')}</span>
+                <span class="decision-chart-meta">${t('companyDetail.decisionChart.stepCount', { count: allSteps.length })}${elapsed}</span>
+            </summary>
+            <div class="decision-chart-content">
+                ${allSteps.map(s => {
+                    const durationLabel = (s.duration_ms != null && s.duration_ms > 0) ? `<span class="decision-chart-duration">${formatDuration(s.duration_ms)}</span>` : '';
+                    return `
+                        <div class="decision-chart-step" data-step="${s.num}">
+                            <span class="decision-chart-step-icon">${s.icon}</span>
+                            <span class="decision-chart-step-num">${s.num}</span>
+                            <span class="decision-chart-step-label">${s.label}</span>
+                            ${durationLabel}
+                            <span class="decision-chart-step-tooltip-trigger" tabindex="0"
+                                  aria-describedby="decision-tooltip-${s.num}">ⓘ</span>
+                            <div id="decision-tooltip-${s.num}" class="decision-chart-step-tooltip" role="tooltip">
+                                ${t(s.tooltipKey, { detail: s.detail || '' })}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+                <div class="decision-chart-step decision-chart-final">
+                    <span class="decision-chart-step-icon">${finalIcon}</span>
+                    <span class="decision-chart-step-num">→</span>
+                    <span class="decision-chart-step-label">${t(finalKey, { method: linkMethod || '-', rescuedBy: rescuedBy || '-' })}</span>
+                </div>
+                ${geminiPanel}
+            </div>
+        </details>
+    `;
+}
+
 // ── AbortController — cancel stale renders on rapid navigation ───
 let _companyAbortCtrl = null;
 let _currentContacts = [];
@@ -698,6 +825,16 @@ export async function renderCompany(container, siren) {
                     ${data.rescued_by === 'gemini_promoted' ? `<span class="badge badge-info">${t('company.badgeGeminiPromoted')}</span>` : ''}
                     ${co.etat_administratif_inpi === 'F' ? `<span class="badge badge-danger">⚠ Entreprise fermée (RNE)</span>` : ''}
                 </div>
+                ${buildDecisionChart(
+                    data.decision_timeline,
+                    data.picker_nafs,
+                    data.link_signals,
+                    data.link_method,
+                    data.link_confidence,
+                    data.rescued_by,
+                    co.naf_status,
+                    data.total_duration_ms
+                )}
             </div>
             <div class="company-detail-actions">
                 ${enrichmentPanelHTML()}

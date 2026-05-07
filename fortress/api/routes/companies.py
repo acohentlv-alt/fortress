@@ -1417,6 +1417,97 @@ async def _get_company_impl(siren: str, request=None):
     # ── Build unified alerts list ─────────────────────────────
     alerts = _build_alerts(company, merged, contacts)
 
+    # ── Decision timeline (Phase 2) ───────────────────────────
+    # Find originating batch + parse NAF picker (canonical: naf_codes list, legacy: naf_code scalar)
+    picker_nafs: list[str] = []
+    picker_row = await fetch_one(
+        """SELECT bd.filters_json
+           FROM batch_tags bt
+           JOIN batch_data bd ON bd.batch_id = bt.batch_id
+           WHERE bt.siren = %s
+           ORDER BY bd.created_at DESC
+           LIMIT 1""",
+        (siren,),
+    )
+    if picker_row and picker_row.get("filters_json"):
+        raw = picker_row["filters_json"]
+        try:
+            filters = json.loads(raw) if isinstance(raw, str) else raw
+            raw_list = filters.get("naf_codes")
+            if isinstance(raw_list, list):
+                picker_nafs = [str(c).strip() for c in raw_list if c and str(c).strip()]
+            else:
+                legacy = (filters.get("naf_code") or "").strip()
+                if legacy:
+                    picker_nafs = [legacy]
+        except Exception:
+            picker_nafs = []
+
+    TIMELINE_ACTIONS = (
+        # Cascade auto-confirms
+        'auto_linked_verified', 'auto_linked_expanded', 'auto_linked_mismatch_accepted',
+        'auto_linked_strong', 'auto_linked_strong_no_filter',
+        'auto_linked_inpi_agree', 'auto_linked_chain', 'auto_linked_mentions_legales',
+        'auto_linked_municipal', 'auto_linked_individual_match',
+        'auto_linked_cp_name_disamb', 'auto_linked_geo_proximity',
+        'auto_linked_siret_address_naf', 'auto_linked_inpi_validated',
+        # Gemini paths
+        'auto_linked_gemini_promoted', 'auto_linked_gemini_promoted_retroactive',
+        'auto_linked_gemini_rescue', 'auto_linked_gemini_swap',
+        'gemini_shadow_yes', 'gemini_shadow_no', 'gemini_shadow_ambiguous',
+        'gemini_shadow_no_candidates',
+        'gemini_quarantine', 'gemini_rescue_rejected_naf',
+        'gemini_promote_held_pending', 'gemini_frankenstein_protected',
+        # Pending paths (signals disagreement -> held for manual review)
+        'pending_cp_name_disamb', 'pending_no_filter_signal_disagree',
+        # A2 mentions-legales
+        'a2_match_confirmed', 'a2_rejected', 'a2_extract_returned_none',
+        # Query widening (informational)
+        'auto_widened',
+        # Rollbacks (rare but useful for transparency)
+        'rollback_phase3_retroactive',
+    )
+
+    # Audit rows can be keyed by EITHER the MAPS ID (for entities discovered via Maps) OR the
+    # real SIREN (for entities matched directly). Query both to ensure we capture the full
+    # timeline — `auto_linked_*` rows are typically logged under MAPS ID, while some pre-Maps
+    # entities have rows under their canonical SIREN.
+    lookup_sirens = [siren]
+    if company.get("linked_siren") and company["linked_siren"] != siren:
+        lookup_sirens.append(company["linked_siren"])
+
+    # Build placeholders -- psycopg-safe IN parameterization for both action and siren
+    action_placeholders = ','.join(['%s'] * len(TIMELINE_ACTIONS))
+    siren_placeholders = ','.join(['%s'] * len(lookup_sirens))
+
+    timeline_rows = await fetch_all(
+        f"""SELECT action, result, detail, timestamp, duration_ms, batch_id, id
+            FROM batch_log
+            WHERE siren IN ({siren_placeholders}) AND action IN ({action_placeholders})
+            ORDER BY timestamp ASC, id ASC""",
+        (*lookup_sirens, *TIMELINE_ACTIONS),
+    )
+
+    decision_timeline = [
+        {
+            "action": r["action"],
+            "result": r["result"],
+            "detail": (r["detail"] or "")[:300],
+            "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
+            "duration_ms": r["duration_ms"],
+            "batch_id": r["batch_id"],
+        }
+        for r in (timeline_rows or [])
+    ]
+
+    # Total elapsed time across the timeline (first to last step)
+    total_duration_ms = None
+    if timeline_rows and len(timeline_rows) >= 2:
+        first_ts = timeline_rows[0]["timestamp"]
+        last_ts = timeline_rows[-1]["timestamp"]
+        if first_ts and last_ts:
+            total_duration_ms = int((last_ts - first_ts).total_seconds() * 1000)
+
     return {
         "company": company,
         "contacts": contacts,
@@ -1441,6 +1532,9 @@ async def _get_company_impl(siren: str, request=None):
         "data_conflicts": merged.get("data_conflicts", []),
         "siren_match": merged.get("siren_match"),
         "alerts": alerts,
+        "picker_nafs": picker_nafs,
+        "decision_timeline": decision_timeline,
+        "total_duration_ms": total_duration_ms,
     }
 
 
