@@ -112,6 +112,10 @@ export async function renderNewBatch(container) {
                             placeholder="${t('newBatch.promptPlaceholder')}"
                             autocomplete="off">
                     </div>
+                    <div id="naf-variants-row" style="display:none; margin-top:var(--space-sm)">
+                        <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafVariantsLabel')}</span>
+                        <div class="gemini-chips" id="naf-variants-chips" style="margin-top:var(--space-xs)"></div>
+                    </div>
                     <div id="additional-queries"></div>
                     <div class="city-picker-panel" id="city-picker-panel" style="display:none">
                       <div class="city-picker-header">
@@ -127,9 +131,6 @@ export async function renderNewBatch(container) {
                       <div class="city-picker-actions">
                         <button type="button" id="city-picker-expand" class="btn btn-secondary city-picker-expand">
                           ${t('newBatch.cityPicker.expandPrefix')} <span id="city-picker-more">0</span> ${t('newBatch.cityPicker.expandSuffix')}
-                        </button>
-                        <button type="button" id="city-picker-select-topN" class="btn btn-secondary city-picker-action">
-                          <span id="city-picker-select-label">${t('newBatch.cityPicker.selectFirstN').replace('{{n}}', '10')}</span>
                         </button>
                         <button type="button" id="city-picker-clear" class="btn btn-secondary city-picker-action">
                           ${t('newBatch.cityPicker.clearAll')}
@@ -164,6 +165,11 @@ export async function renderNewBatch(container) {
                         <div class="naf-picker-dropdown" id="naf-picker-dropdown"></div>
                         <div class="naf-picker-error" id="naf-picker-error" role="alert" aria-live="polite" style="display:none"></div>
                     </div>
+                </div>
+
+                <div id="naf-siblings-row" style="display:none; margin-top:var(--space-sm)">
+                    <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafSiblingsLabel')}</span>
+                    <div class="gemini-chips" id="naf-siblings-chips" style="margin-top:var(--space-xs)"></div>
                 </div>
 
                 <div class="strict-mode-block">
@@ -225,16 +231,6 @@ export async function renderNewBatch(container) {
 
                 <div id="duration-estimator" style="display:none; text-align:center; color:var(--text-secondary); font-size:var(--font-sm); margin-top:var(--space-sm);">
                     <span id="duration-estimator-text"></span>
-                </div>
-
-                <div id="naf-siblings-row" style="display:none; margin-top:var(--space-sm)">
-                    <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafSiblingsLabel')}</span>
-                    <div class="gemini-chips" id="naf-siblings-chips" style="margin-top:var(--space-xs)"></div>
-                </div>
-
-                <div id="naf-variants-row" style="display:none; margin-top:var(--space-sm)">
-                    <span class="gemini-chips-label" style="font-size:var(--font-sm); color:var(--text-muted)">${t('newBatch.nafVariantsLabel')}</span>
-                    <div class="gemini-chips" id="naf-variants-chips" style="margin-top:var(--space-xs)"></div>
                 </div>
 
                 <div class="duration-hint">
@@ -423,6 +419,74 @@ export async function renderNewBatch(container) {
     const _sectorExpansions = _nafData?.sector_expansions || {};
     // Per-sector Maps query phrasing variants — Lever D (sector_query_variants.py).
     const _sectorQueryVariants = _nafData?.sector_query_variants || {};
+    // Human-readable keyword → NAF prefix list (industry_aliases.py).
+    const _industryAliases = _nafData?.industry_aliases || {};
+    // Manual-pick guard: set to true when user explicitly edits the NAF picker.
+    let _userEditedPicker = false;
+
+    // Helper: resolve a single prefix to its leaf code (or null)
+    function _resolvePrefixToLeaf(prefix) {
+        // Case A: prefix is itself a valid leaf entry (e.g. "10.71C", "55.30Z")
+        if (_nafLabelByCode[prefix]) {
+            return prefix;
+        }
+        // Case B: prefix is a wildcard (division "49" or section letter)
+        // Find first leaf whose code starts with `prefix + "."`
+        const leaf = _allNafEntries.find(e =>
+            e.code.includes('.') && e.code.startsWith(prefix + '.')
+        );
+        return leaf ? leaf.code : null;
+    }
+
+    function _autoPickFromPrimary(primaryQuery) {
+        if (_pickedCodes.length > 0) return;       // Don't overwrite manual picks
+        if (_userEditedPicker) return;             // Don't auto-pick after user edit
+        if (!primaryQuery) return;
+
+        const sectorTokens = extractSectorTokens(primaryQuery).toLowerCase().trim();
+        if (!sectorTokens) return;
+
+        // Exact match first; per-token fallback
+        let prefixes = _industryAliases[sectorTokens];
+        if (!prefixes || !prefixes.length) {
+            for (const tok of sectorTokens.split(/\s+/)) {
+                if (_industryAliases[tok]) {
+                    prefixes = _industryAliases[tok];
+                    break;
+                }
+            }
+        }
+        if (!prefixes || !prefixes.length) return;
+
+        // STEP A — Resolve all prefixes to leaf codes
+        const resolvedCodes = [];
+        for (const prefix of prefixes) {
+            const leaf = _resolvePrefixToLeaf(prefix);
+            if (leaf) resolvedCodes.push(leaf);
+        }
+        const uniqueResolved = [...new Set(resolvedCodes)];
+        if (uniqueResolved.length === 0) return;
+
+        // STEP C — Anchor (prefer one with _sectorExpansions entry);
+        // filter remaining via allSameSectorGroup. Applied BEFORE cap.
+        const anchor = uniqueResolved.find(c => _sectorExpansions[c]) || uniqueResolved[0];
+        const safeToAdd = [anchor];
+        for (const code of uniqueResolved) {
+            if (code === anchor) continue;
+            if (allSameSectorGroup([...safeToAdd, code])) {
+                safeToAdd.push(code);
+            }
+        }
+
+        // STEP B — Cap at 3 codes (applied AFTER anchor filter)
+        const finalCodes = safeToAdd.slice(0, 3);
+
+        // STEP D — Auto-add silently. Don't render naf-picker-error on failure.
+        for (const code of finalCodes) {
+            const result = tryAddCode(code, _nafLabelByCode[code] || code, /*_isAutoPick=*/ true);
+            if (!result.ok) break;
+        }
+    }
 
     function sameSectorGroup(a, b) {
         if (a === b) return true;
@@ -580,7 +644,7 @@ export async function renderNewBatch(container) {
         if (onEl) onEl.style.display = isOn ? '' : 'none';
     }
 
-    function tryAddCode(code, label) {
+    function tryAddCode(code, label, _isAutoPick = false) {
         // Normalize: accept both raw code "10.71C" and label-style "10.71C — Boulangerie"
         const rawCode = code.split('—')[0].trim().toUpperCase();
         if (!rawCode) return { ok: false };
@@ -619,6 +683,9 @@ export async function renderNewBatch(container) {
         _pickedCodesRef.value = [..._pickedCodes];
         scheduleSaveDraft();
         _pickedLabels[rawCode] = label || _nafLabelByCode[rawCode] || rawCode;
+        if (!_isAutoPick) {
+            _userEditedPicker = true;
+        }
         renderChips();
         _updatePickerVisualHint();
         return { ok: true };
@@ -632,6 +699,7 @@ export async function renderNewBatch(container) {
             scheduleSaveDraft();
             delete _pickedLabels[code];
             renderChips();
+            _userEditedPicker = true;
         }
     }
 
@@ -1176,19 +1244,6 @@ export async function renderNewBatch(container) {
             expandBtn.style.display = 'none';
         }
 
-        const selectBtn = document.getElementById('city-picker-select-topN');
-        const selectableCount = Math.min(10, filteredDefault.length);
-        const selectLabel = document.getElementById('city-picker-select-label');
-        if (selectableCount === 0) {
-            selectBtn.style.display = 'none';
-        } else if (selectableCount === 1) {
-            selectBtn.style.display = '';
-            selectLabel.textContent = t('newBatch.cityPicker.selectFirst');
-        } else {
-            selectBtn.style.display = '';
-            selectLabel.textContent = t('newBatch.cityPicker.selectFirstN').replace('{{n}}', selectableCount);
-        }
-
         document.getElementById('city-picker-paris-hint').style.display = (_cityPickerCurrentDept === '75') ? '' : 'none';
 
         document.getElementById('city-picker-panel').style.display = '';
@@ -1224,19 +1279,6 @@ export async function renderNewBatch(container) {
         }
     }
 
-    function onSelectTopN() {
-        const all = _cityPickerCache[_cityPickerCurrentDept] || [];
-        const filteredDefault = getDefaultVisibleCommunes(all);
-        const topN = filteredDefault.slice(0, 10);
-        for (const c of topN) {
-            if (!_cityPickerSelectedCities.has(c.name)) {
-                _cityPickerSelectedCities.add(c.name);
-                addCityRow(c.name);
-            }
-        }
-        renderCityPanel();
-    }
-
     function onClearAll() {
         for (const commune of Array.from(_cityPickerSelectedCities)) {
             removeCityRow(commune);
@@ -1260,13 +1302,14 @@ export async function renderNewBatch(container) {
             primaryInput.addEventListener('input', (e) => {
                 clearTimeout(_cityPickerInputDebounce);
                 _cityPickerInputDebounce = setTimeout(() => {
-                    handlePrimaryQueryChange(e.target.value);
+                    const q = e.target.value;
+                    handlePrimaryQueryChange(q);
+                    _autoPickFromPrimary(q);   // NEW
                 }, 300);
             });
         }
         document.getElementById('city-picker-chips')?.addEventListener('click', onChipClick);
         document.getElementById('city-picker-search')?.addEventListener('input', onSearchInput);
-        document.getElementById('city-picker-select-topN')?.addEventListener('click', onSelectTopN);
         document.getElementById('city-picker-clear')?.addEventListener('click', onClearAll);
         document.getElementById('city-picker-expand')?.addEventListener('click', onExpand);
         document.getElementById('city-picker-discover-all')?.addEventListener('click', onDiscoverAll);

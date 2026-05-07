@@ -812,8 +812,6 @@
       "searchPlaceholder": "Filter communes…",
       "expandPrefix": "Show",
       "expandSuffix": "more communes",
-      "selectFirstN": "Select first {{n}}",
-      "selectFirst": "Select first commune",
       "clearAll": "Deselect all",
       "empty": "No matching communes.",
       "info": "Each commune clicked is added as a separate query. Auto-widening is disabled for primary queries with city picks.",

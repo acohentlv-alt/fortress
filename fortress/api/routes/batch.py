@@ -381,6 +381,7 @@ async def list_naf_codes(request: Request):
 
     from fortress.config.naf_sector_expansion import SECTOR_EXPANSIONS
     from fortress.config.sector_query_variants import SECTOR_QUERY_VARIANTS
+    from fortress.config.industry_aliases import INDUSTRY_ALIASES
 
     return {
         "sections": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_SECTIONS.items()],
@@ -388,6 +389,7 @@ async def list_naf_codes(request: Request):
         "codes": [{"code": code, "label": f"{code} — {label}"} for code, label in NAF_CODES.items()],
         "sector_expansions": {k: sorted(list(v)) for k, v in SECTOR_EXPANSIONS.items()},
         "sector_query_variants": SECTOR_QUERY_VARIANTS,
+        "industry_aliases": INDUSTRY_ALIASES,
     }
 
 

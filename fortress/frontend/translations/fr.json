@@ -841,8 +841,6 @@
       "searchPlaceholder": "Filtrer les communes…",
       "expandPrefix": "Voir les",
       "expandSuffix": "autres communes",
-      "selectFirstN": "Sélectionner les {{n}} premières",
-      "selectFirst": "Sélectionner la première commune",
       "clearAll": "Tout désélectionner",
       "empty": "Aucune commune ne correspond.",
       "info": "Chaque commune cliquée est ajoutée comme requête séparée. L'élargissement automatique est désactivé pour les requêtes principales avec villes.",

@@ -611,6 +611,20 @@
     box-shadow: var(--shadow-glow);
 }
 
+.btn-primary:disabled,
+.btn-primary[disabled] {
+    background: var(--surface-disabled, #2a2f3a);
+    color: var(--text-disabled, #6b7280);
+    border-color: var(--border-disabled, #2a2f3a);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+.btn-primary:disabled:hover,
+.btn-primary[disabled]:hover {
+    background: var(--surface-disabled, #2a2f3a);
+    box-shadow: none;
+}
+
 .btn-secondary {
     background: transparent;
     color: var(--text-secondary);
