@@ -175,22 +175,10 @@ async def run_batch(body: BatchRunRequest, request: Request):
                     batch_number = max_num + 1
                     batch_id = f"{base_id}_BATCH_{batch_number:03d}"
 
-            # Calculate batch_offset for discovery mode — scoped to this workspace
-            # so offset counts only prior batches from the same workspace.
+            # batch_offset is legacy/dead code (deprecated 2026-05-07) —
+            # never read by discovery.py or matching/. Cross-batch dedup at
+            # discovery.py:5314-5341 is the actual workspace-scope dedup.
             batch_offset = 0
-            if body.mode == "discovery":
-                if workspace_id is not None:
-                    count_row = await (await conn.execute(
-                        "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted' AND workspace_id = %s",
-                        (batch_name.upper(), workspace_id),
-                    )).fetchone()
-                else:
-                    count_row = await (await conn.execute(
-                        "SELECT SUM(COALESCE(batch_size, 0)) AS total FROM batch_data WHERE UPPER(batch_name) = %s AND status != 'deleted' AND workspace_id IS NULL",
-                        (batch_name.upper(),),
-                    )).fetchone()
-                if count_row and count_row[0]:
-                    batch_offset = count_row[0]
 
             from fortress.config.settings import settings as _settings
             worker_id = _settings.effective_worker_id

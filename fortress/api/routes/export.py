@@ -35,21 +35,12 @@ _FORME_JURIDIQUE_LABELS = {
 }
 
 
-_LINK_CONFIDENCE_LABELS = {
-    'confirmed': 'Confirmé',
-    'pending': 'En attente',
-}
-
-
 def _fmt(col_key: str, value) -> str:
-    """Format a cell value for export. Converts forme_juridique codes to labels
-    and link_confidence codes to French labels."""
+    """Format a cell value for export. Converts forme_juridique codes to labels."""
     if not value:
         return ""
     if col_key == "forme_juridique":
         return _FORME_JURIDIQUE_LABELS.get(str(value), str(value))
-    if col_key == "link_confidence":
-        return _LINK_CONFIDENCE_LABELS.get(str(value), "")
     return str(value)
 
 _CSV_COLUMNS = [
@@ -77,28 +68,22 @@ _CSV_COLUMNS = [
     ("Note Google", "rating"),
     ("Avis Google", "review_count"),
     ("Notes", "notes"),
-    ("Statut lien", "link_confidence"),  # NEW: Confirmé / En attente / blank
 ]
 
 # SELECT columns used by every export query. Computes the REAL SIREN:
 # - Pure SIRENE entities: use co.siren directly
 # - MAPS entities with confirmed link: use linked_siren (real SIREN)
-# - MAPS entities with pending link: use linked_siren (candidate SIREN, flagged via Statut lien)
 # - MAPS entities without confirmed link: NULL (avoids exporting MAPS00001 as "SIREN")
 #
-# For pending MAPS rows (Apr 29), SIRENE-side reference fields (SIRET, NAF, forme
-# juridique, statut, date création, effectif) are blank because
-# `_copy_sirene_reference_data` only runs on auto-confirm or manual /link approve.
-# To show the entity "as if merged" — so Cindy gets the candidate's full data to
-# verify — we LEFT JOIN companies via `linked_siren` (alias `sirene_ref`) and
-# COALESCE the SIRENE-side fields. Maps-derived fields (denomination, adresse,
-# code_postal, ville) are kept as-is to preserve storefront location accuracy
-# (Frankenstein fix Apr 22).
+# v4: only confirmed rows are exported; pending rows are filtered out before
+# this SELECT runs. COALESCE on SIRENE-side fields is preserved for MAPS
+# confirmed entities where _copy_sirene_reference_data has run.
+# Maps-derived fields (denomination, adresse, code_postal, ville) kept as-is
+# for storefront location accuracy (Frankenstein fix Apr 22).
 _EXPORT_SELECT = """
     CASE
         WHEN co.siren NOT LIKE 'MAPS%%' THEN co.siren
         WHEN co.link_confidence = 'confirmed' THEN co.linked_siren
-        WHEN co.link_confidence = 'pending' THEN co.linked_siren
         ELSE NULL
     END AS effective_siren,
     COALESCE(co.siret_siege, sirene_ref.siret_siege) AS siret_siege,
@@ -117,8 +102,7 @@ _EXPORT_SELECT = """
     mc.address, mc.maps_url,
     mc.social_linkedin, mc.social_facebook, mc.social_twitter,
     mc.rating, mc.review_count,
-    cn.notes,
-    co.link_confidence
+    cn.notes
 """
 
 # JOINs used by every export query.
@@ -145,21 +129,33 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
     candidate-lookup audit rows under each candidate's real SIREN —
     that polluted exports with empty ghost rows.
 
-    Returns confirmed AND pending MAPS rows. Unmatched MAPS (no linked
-    SIREN) are excluded — they have no real SIREN and would pollute the
-    export. Confirmed rows are sorted first, pending rows last, so Cindy
-    can act on confirmed contacts immediately and review pending ones
-    afterwards. Pending rows are flagged via the `Statut lien` column
-    ("En attente") and shaded in XLSX exports.
+    v4: Returns confirmed rows only. Pending matches not exported.
+    Department filter applied when batch has filters_json.department set
+    (FR/ALL/None → skip).
 
     When search_query is set (E4.A), only entities whose batch_log row
     recorded this exact search_query are returned.
     """
+    import json as _json
     job = await fetch_one(
-        "SELECT batch_id FROM batch_data WHERE batch_id = %s", (batch_id,)
+        "SELECT batch_id, filters_json FROM batch_data WHERE batch_id = %s", (batch_id,)
     )
     if not job:
         return []
+
+    # Department filter from batch filters_json (added v4 — aligns export with tile counts)
+    _dept_clause = ""
+    _dept_params: tuple = ()
+    _filters_raw = job.get("filters_json") if isinstance(job, dict) else (job[1] if len(job) > 1 else None)
+    if _filters_raw:
+        try:
+            _filters = _json.loads(_filters_raw) if isinstance(_filters_raw, str) else _filters_raw
+            _dept = (_filters.get("department") or "").strip()
+            if _dept and _dept not in ("FR", "ALL"):
+                _dept_clause = "AND co.departement = %s"
+                _dept_params = (_dept,)
+        except Exception:
+            pass
 
     sq_clause = ""
     sq_params: tuple = ()
@@ -174,9 +170,8 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
         sq_params = (batch_id, search_query)
 
     # Brief 2 v3: unified strict filter. Wide-mode rescues excluded by design.
-    # Hotfix: stripped leading AND — naf_where is consumed via WHERE {naf_where}
-    # so it must be a self-contained predicate, not a continuation.
-    naf_where = """(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+    # v4: confirmed-only export — pending rows no longer exported.
+    naf_where = """(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
       AND co.strict_match = true
       AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')"""
 
@@ -187,10 +182,10 @@ async def _fetch_export_data(batch_id: str, search_query: str | None = None) -> 
         JOIN companies co ON co.siren = sa.siren
         {_EXPORT_JOINS}
         WHERE {naf_where}
+          {_dept_clause}
           {sq_clause}
-        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
-                 co.denomination
-    """, (batch_id, batch_id) + sq_params)
+        ORDER BY co.denomination
+    """, (batch_id, batch_id) + _dept_params + sq_params)
 
 
 # ── MASTER EXPORT (must be declared BEFORE parameterised routes) ──
@@ -213,11 +208,10 @@ async def export_master_csv(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
           AND co.strict_match = true
           AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
-        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
-                 co.denomination
+        ORDER BY co.denomination
     """)
     if not rows:
         return StreamingResponse(
@@ -228,11 +222,9 @@ async def export_master_csv(request: Request):
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    writer.writerow([col[0] for col in _CSV_COLUMNS])
-    for row in rows:
-        writer.writerow([
-            _fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS
-        ])
+    writer.writerow(["N°"] + [label for label, _ in _CSV_COLUMNS])
+    for idx, row in enumerate(rows, start=1):
+        writer.writerow([str(idx)] + [_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
 
     content = buf.getvalue().encode("utf-8-sig")
     return StreamingResponse(
@@ -255,11 +247,10 @@ async def export_master_xlsx(request: Request):
         FROM (SELECT DISTINCT siren FROM batch_tags) qt
         JOIN companies co ON co.siren = qt.siren
         {_EXPORT_JOINS}
-        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+        WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
           AND co.strict_match = true
           AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
-        ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
-                 co.denomination
+        ORDER BY co.denomination
     """)
     return _to_xlsx(rows, "fortress_master.xlsx")
 
@@ -321,17 +312,17 @@ async def export_contacts_filtered_csv(
             params.extend([like, like, like, like, like, dept_q, like, like, like, like, like])
 
     if department:
-        where_parts.append("co.departement = %s")
-        params.append(department.strip())
+        _d = department.strip()
+        if _d and _d not in ("FR", "ALL"):
+            where_parts.append("co.departement = %s")
+            params.append(_d)
 
     if naf_code:
         where_parts.append("co.naf_code LIKE %s")
         params.append(f"{naf_code.strip().upper()}%")
 
-    # Include confirmed AND pending MAPS rows — exclude only fully unmatched MAPS.
-    # Pending rows are flagged via the `Statut lien` column and sorted to the bottom
-    # so Cindy sees confirmed contacts first.
-    where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))")
+    # v4: confirmed-only export — pending rows not exported.
+    where_parts.append("(co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')")
     # Brief 2 v3: unified strict filter — only strict_match=true rows exported.
     where_parts.append("co.strict_match = true")
     # Exclude confirmed-dead companies (etat_administratif_inpi = 'F' means fermée / closed)
@@ -341,7 +332,7 @@ async def export_contacts_filtered_csv(
 
     # Cap at 10k rows — safety net, prevents massive exports.
     # DISTINCT ON uses COALESCE(linked_siren, co.siren) as the dedup key:
-    # - MAPS entities linked to a real SIREN (confirmed OR pending) collapse into one row
+    # - MAPS entities linked to a real SIREN (confirmed) collapse into one row
     # - Unmatched MAPS entities (linked_siren IS NULL) stay as distinct rows (via siren)
     # - Pure SIRENE entities dedup by their own siren
     rows = await fetch_all(f"""
@@ -364,16 +355,15 @@ async def export_contacts_filtered_csv(
         ) cn ON cn.siren = co.siren
         WHERE {where_clause}
         ORDER BY COALESCE(co.linked_siren, co.siren),
-                 (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
                  co.denomination
         LIMIT 10000
     """, tuple(params) if params else None)
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    writer.writerow([col[0] for col in _CSV_COLUMNS])
-    for row in (rows or []):
-        writer.writerow([_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
+    writer.writerow(["N°"] + [label for label, _ in _CSV_COLUMNS])
+    for idx, row in enumerate(rows or [], start=1):
+        writer.writerow([str(idx)] + [_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
 
     content = buf.getvalue().encode("utf-8-sig")
 
@@ -426,11 +416,9 @@ async def export_csv(batch_id: str, request: Request, search_query: str = Query(
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    writer.writerow([col[0] for col in _CSV_COLUMNS])
-    for row in rows:
-        writer.writerow([
-            _fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS
-        ])
+    writer.writerow(["N°"] + [label for label, _ in _CSV_COLUMNS])
+    for idx, row in enumerate(rows, start=1):
+        writer.writerow([str(idx)] + [_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
 
     content = buf.getvalue().encode("utf-8-sig")  # BOM for Excel
     return StreamingResponse(
@@ -453,16 +441,14 @@ async def export_jsonl(batch_id: str, request: Request):
             return JSONResponse(status_code=403, content={"error": "Accès refusé."})
     rows = await _fetch_export_data(batch_id)
     lines = []
-    for row in rows:
-        # Convert date objects to strings
-        clean = {}
+    for idx, row in enumerate(rows, start=1):
+        # Convert date objects to strings; no is the 1-based serial number
+        clean = {"no": idx}
         for k, v in row.items():
             if hasattr(v, "isoformat"):
                 clean[k] = v.isoformat()
             else:
                 clean[k] = v
-        # Brief 2 v3: 2-state export_color for downstream consumers
-        clean["export_color"] = "pending" if row.get("link_confidence") == "pending" else "verified"
         lines.append(json.dumps(clean, cls=_DecimalEncoder, ensure_ascii=False))
 
     content = "\n".join(lines).encode("utf-8")
@@ -520,11 +506,10 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM workspace_sirens ws
             JOIN companies co ON co.siren = ws.siren
             {_EXPORT_JOINS}
-            WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+            WHERE (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
               AND co.strict_match = true
               AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
-            ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
-                     co.denomination
+            ORDER BY co.denomination
         """, (user.workspace_id, body.sirens))
     else:
         rows = await fetch_all(f"""
@@ -533,18 +518,17 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
             FROM companies co
             {_EXPORT_JOINS}
             WHERE co.siren = ANY(%s)
-              AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence IN ('confirmed', 'pending'))
+              AND (co.siren NOT LIKE 'MAPS%%' OR co.link_confidence = 'confirmed')
               AND co.strict_match = true
               AND (co.etat_administratif_inpi IS DISTINCT FROM 'F')
-            ORDER BY (CASE WHEN co.link_confidence = 'pending' THEN 1 ELSE 0 END),
-                     co.denomination
+            ORDER BY co.denomination
         """, (body.sirens, body.sirens))
 
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    writer.writerow([col[0] for col in _CSV_COLUMNS])
-    for row in (rows or []):
-        writer.writerow([_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
+    writer.writerow(["N°"] + [label for label, _ in _CSV_COLUMNS])
+    for idx, row in enumerate(rows or [], start=1):
+        writer.writerow([str(idx)] + [_fmt(col[1], row.get(col[1])) for col in _CSV_COLUMNS])
 
     content = buf.getvalue().encode("utf-8-sig")
     return StreamingResponse(
@@ -559,49 +543,41 @@ async def export_bulk_csv(body: BulkExportRequest, request: Request):
 
 def _to_xlsx(rows: list[dict] | None, filename: str) -> StreamingResponse:
     """Convert rows to an XLSX file and return as StreamingResponse.
-    Pending rows (link_confidence='pending') are filled with soft peach
-    (FFE6CC) so they're visually distinct from confirmed rows."""
+    First column is N° (1-based serial number). Confirmed-only rows (v4)."""
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Export"
 
-    # Header row
+    # Header row — N° first, then data columns
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="1a1a3e", end_color="1a1a3e", fill_type="solid")
-    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
+    cell_no = ws.cell(row=1, column=1, value="N°")
+    cell_no.font = header_font
+    cell_no.fill = header_fill
+    cell_no.alignment = Alignment(horizontal="center")
+    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, start=2):
         cell = ws.cell(row=1, column=col_idx, value=label)
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center")
 
-    # Pending-row fill: soft peach matching the --warning palette in the UI
-    pending_fill = PatternFill(start_color="FFE6CC", end_color="FFE6CC", fill_type="solid")
-    # Brief 2 v3: peach-darker border (FF8C42) for visual contrast on pending rows
-    pending_border = Border(
-        left=Side(border_style="thin", color="FF8C42"),
-        right=Side(border_style="thin", color="FF8C42"),
-        top=Side(border_style="thin", color="FF8C42"),
-        bottom=Side(border_style="thin", color="FF8C42"),
-    )
-
-    # Data rows
-    for row_idx, row in enumerate(rows or [], 2):
-        is_pending = (row.get("link_confidence") == "pending")
-        for col_idx, (_, key) in enumerate(_CSV_COLUMNS, 1):
+    # Data rows — col 1 = 1-based row number, remaining = data
+    for row_idx, row in enumerate(rows or [], start=2):
+        ws.cell(row=row_idx, column=1, value=row_idx - 1)  # 1-based serial
+        for col_idx, (_, key) in enumerate(_CSV_COLUMNS, start=2):
             val = row.get(key)
             if hasattr(val, "isoformat"):
                 val = val.isoformat()
-            cell = ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
-            if is_pending:
-                cell.fill = pending_fill
-                cell.border = pending_border
+            ws.cell(row=row_idx, column=col_idx, value=_fmt(key, val))
 
-    # Auto-width (approximate)
-    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, 1):
-        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max(len(label) + 4, 12)
+    # Auto-width (approximate) — N° column narrow, data columns by label length
+    ws.column_dimensions[get_column_letter(1)].width = 6
+    for col_idx, (label, _) in enumerate(_CSV_COLUMNS, start=2):
+        ws.column_dimensions[get_column_letter(col_idx)].width = max(len(label) + 4, 12)
 
     buf = io.BytesIO()
     wb.save(buf)

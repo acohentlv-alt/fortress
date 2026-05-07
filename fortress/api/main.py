@@ -47,6 +47,28 @@ logger = logging.getLogger("fortress.api")
 # that have been silently dropped in production until now.
 logging.basicConfig(level=logging.INFO, force=True)
 
+# Sweeper double-spawn guard (added 2026-05-07).
+# Prevents amplification when subprocess slow to write status='in_progress'.
+_sweeper_recent_spawns: dict[str, float] = {}
+_SWEEPER_RESPAWN_GUARD_SEC = 600.0  # 10 min — > 300s sweeper cycle
+
+
+def _sweeper_should_spawn(batch_id: str) -> bool:
+    """Return True if no recent spawn for this batch_id; record now if so.
+    Prunes entries older than 2× guard interval to bound memory."""
+    import time as _time
+    _now = _time.monotonic()
+    # Prune-on-insert: drop entries > 2 * GUARD ago
+    _stale_cutoff = _now - (2 * _SWEEPER_RESPAWN_GUARD_SEC)
+    for _k in [k for k, v in _sweeper_recent_spawns.items() if v < _stale_cutoff]:
+        _sweeper_recent_spawns.pop(_k, None)
+    # Guard check
+    _last = _sweeper_recent_spawns.get(batch_id)
+    if _last is not None and (_now - _last) < _SWEEPER_RESPAWN_GUARD_SEC:
+        return False
+    _sweeper_recent_spawns[batch_id] = _now
+    return True
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -602,6 +624,9 @@ async def lifespan(app: FastAPI):
                     _launcher = _Path("/tmp/fortress_launcher.py")
                     if _launcher.exists():
                         _runner_cmd = [_sys.executable, str(_launcher), "runner", _bid]
+                    if not _sweeper_should_spawn(_bid):
+                        logger.info("Catch-up: skip respawn (guard) batch=%s", _bid)
+                        continue
                     try:
                         subprocess.Popen(
                             _runner_cmd,
@@ -658,6 +683,9 @@ async def lifespan(app: FastAPI):
                     _lc = _Path("/tmp/fortress_launcher.py")
                     if _lc.exists():
                         _cmd = [_sys.executable, str(_lc), "runner", _next_bid]
+                    if not _sweeper_should_spawn(_next_bid):
+                        logger.info("🔄 Sweeper: skip respawn (guard) batch=%s", _next_bid)
+                        continue
                     try:
                         _subprocess.Popen(
                             _cmd, cwd=str(_fr),

@@ -2784,7 +2784,7 @@ async def run(batch_id: str) -> None:
             batch_int_id: int = int(row[7])  # INTEGER PK of batch_data row — used for pipeline_timings FK
             _time_cap_min: int | None = row[8] if row[8] is not None else None
             _time_cap_total_min: int | None = row[9] if row[9] is not None else None
-            _batch_created_at: datetime = row[10]
+            _batch_created_at: datetime = row[10]  # legacy: kept for row index alignment with row[11] strict_naf; no longer used after _loop_anchor_utc switch (2026-05-07)
             strict_naf: bool = bool(row[11])  # 12th field — mode strict toggle
             entity_cap_confirmed: int | None = row[12] if row[12] is not None else None  # 13th field — entity cap
 
@@ -5323,6 +5323,12 @@ async def run(batch_id: str) -> None:
                         "SELECT pg_advisory_lock(42424242, %s)", (_maps_lock_key,)
                     )
                     log.info("discovery.advisory_lock_acquired", batch_id=batch_id)
+                    # Anchor for total time-cap (v4 — simplified). Set after
+                    # advisory_lock_acquired so queue-wait time on Render does NOT count
+                    # against the cap. Render 2026-05-06 incident: ws174 BATCH_006/014
+                    # ran 51 min queue-wait → exited at first iteration with 0 entities.
+                    # RESUME BEHAVIOR: each subprocess spawn gets a fresh cap budget.
+                    _loop_anchor_utc = datetime.now(timezone.utc)
                 except Exception as lock_exc:
                     log.error("discovery.advisory_lock_failed", error=str(lock_exc))
                     if lock_conn is not None:
@@ -5528,7 +5534,9 @@ async def run(batch_id: str) -> None:
                 _total_cap_buffer_sec = 30  # mirrors per-query drain buffer
 
                 def _total_elapsed_sec() -> float:
-                    return (datetime.now(timezone.utc) - _batch_created_at).total_seconds()
+                    # Anchor set at line ~5291 after advisory_lock_acquired. Fresh per
+                    # subprocess.
+                    return (datetime.now(timezone.utc) - _loop_anchor_utc).total_seconds()
 
                 # ── Maps Discovery (with inline persistence) ──────────
                 for q_idx, search_query in enumerate(search_queries, 1):
@@ -6232,8 +6240,8 @@ async def run(batch_id: str) -> None:
                     if already_known > 0:
                         shortfall_msg = _abort_prefix + (
                             f"{qualified} nouvelles entités. "
-                            f"{already_known} entreprises de cette zone avaient déjà été découvertes "
-                            f"et ont été exclues."
+                            f"{already_known} entreprises de votre espace de travail avaient déjà été "
+                            f"découvertes et ont été exclues."
                         )
                     else:
                         shortfall_msg = _abort_prefix + (

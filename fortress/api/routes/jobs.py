@@ -641,6 +641,7 @@ async def get_job(batch_id: str, request: Request):
     import json
     filters_raw = job.get("filters_json")
     picked_nafs: list[str] = []
+    _job_dept = ""  # Department filter for tile queries (added 2026-05-07); always in scope
     if filters_raw:
         try:
             filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
@@ -651,6 +652,11 @@ async def get_job(batch_id: str, request: Request):
                 legacy = (filters.get("naf_code") or "").strip()
                 if legacy:
                     picked_nafs = [legacy]
+            # Department filter for tile queries (added 2026-05-07).
+            # Aligns dashboard tile counts with export filters.
+            _job_dept = (filters.get("department") or "").strip() if filters else ""
+            if _job_dept and _job_dept in ("FR", "ALL"):
+                _job_dept = ""
         except Exception:
             pass
     job["picked_nafs"] = picked_nafs
@@ -692,6 +698,11 @@ async def get_job(batch_id: str, request: Request):
     # must filter to co.strict_match=true so counts/tiles reflect the visible entities only.
     _strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
 
+    # Department filter for tile queries (added 2026-05-07).
+    # Aligns tile counts with export filters when batch has a department scope.
+    _dept_filter_sql = "AND co.departement = %s" if _job_dept else ""
+    _dept_params: tuple = (_job_dept,) if _job_dept else ()
+
     # Also get departments this job touches.
     # Note: f-string required to apply _strict_filter; use batch_id (not batch_name) so
     # the filter scopes to this specific batch — the existing query keyed on batch_name
@@ -702,9 +713,10 @@ async def get_job(batch_id: str, request: Request):
         JOIN companies co ON co.siren = qt.siren
         WHERE qt.batch_id = %s AND co.departement IS NOT NULL
         {_strict_filter}
+        {_dept_filter_sql}
         GROUP BY co.departement
         ORDER BY co.departement
-    """, (batch_id,))
+    """, (batch_id, *_dept_params))
 
     pending_row = await fetch_one(f"""
         SELECT COUNT(DISTINCT co.siren) AS pending_links
@@ -712,7 +724,8 @@ async def get_job(batch_id: str, request: Request):
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s AND co.link_confidence = 'pending'
         {_strict_filter}
-    """, (batch_id,))
+        {_dept_filter_sql}
+    """, (batch_id, *_dept_params))
     pending_links = (pending_row or {}).get("pending_links", 0)
 
     # Link stats — the two rates that map to the 99% north star goal:
@@ -732,8 +745,9 @@ async def get_job(batch_id: str, request: Request):
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
         {_strict_filter}
+        {_dept_filter_sql}
         GROUP BY state, method
-    """, (batch_id,))
+    """, (batch_id, *_dept_params))
     link_stats = {
         "confirmed": 0, "pending": 0, "unlinked": 0,
         "total": 0, "naf_verified": 0, "naf_evaluated": 0,
@@ -785,7 +799,8 @@ async def get_job(batch_id: str, request: Request):
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
         {_strict_filter}
-    """, (batch_id,))
+        {_dept_filter_sql}
+    """, (batch_id, *_dept_params))
     if naf_row:
         link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
         link_stats["naf_mismatch"] = int(naf_row.get("mismatch") or 0)
@@ -822,6 +837,7 @@ async def get_job(batch_id: str, request: Request):
             WHERE bl.batch_id = %s
               AND co.naf_status = 'verified'
               {_strict_filter}
+              {_dept_filter_sql}
               AND bl.action IN (
                   'auto_linked_verified',
                   'auto_linked_geo_proximity',
@@ -841,13 +857,14 @@ async def get_job(batch_id: str, request: Request):
             WHERE bl.batch_id = %s
               AND co.naf_status = 'verified'
               {_strict_filter}
+              {_dept_filter_sql}
               AND bl.action = 'auto_linked_expanded'
               AND bl.siren NOT IN (SELECT siren FROM exact_sirens)
         )
         SELECT
             (SELECT COUNT(*) FROM exact_sirens)   AS exact_count,
             (SELECT COUNT(*) FROM related_sirens) AS related_count
-    """, (batch_id, batch_id))
+    """, (batch_id, *_dept_params, batch_id, *_dept_params))
     link_stats["naf_exact"] = int((naf_split or {}).get("exact_count") or 0)
     link_stats["naf_related"] = int((naf_split or {}).get("related_count") or 0)
 
@@ -865,9 +882,10 @@ async def get_job(batch_id: str, request: Request):
           AND NOT (co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL)
           AND (co.link_confidence IS NULL OR co.link_confidence != 'pending')
           {_strict_filter}
+          {_dept_filter_sql}
         GROUP BY co.naf_code
         ORDER BY n DESC
-    """, (batch_id,))
+    """, (batch_id, *_dept_params))
 
     link_stats["by_naf"] = [
         {
