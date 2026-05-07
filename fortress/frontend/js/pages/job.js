@@ -102,6 +102,10 @@ function buildScoreboardCard(job, linkStats, summary) {
                 </div>
             </div>
             <div style="display:flex; gap:var(--space-sm); flex-wrap:wrap">
+                ${(job.status === 'completed' || job.status === 'in_progress' || job.status === 'interrupted' || job.status === 'cancelled' || job.status === 'failed') ? `
+                    <button id="btn-rapport" class="btn btn-secondary rapport-btn" type="button" title="${t('job.rapportButton')}">
+                        📋 ${t('job.rapportButton')}
+                    </button>` : ''}
                 <div style="position:relative">
                     <button id="btn-download-dropdown" class="btn btn-primary" title="${t('job.download')}">${t('job.download')}</button>
                 </div>
@@ -236,8 +240,13 @@ function buildScoreboardCard(job, linkStats, summary) {
     // Header label for Secteur card
     const sectorCardLabel = hasPicked ? t('job.scoreboardSectorMatch') : t('job.scoreboardSectorDominant');
 
-    // Subtext for Identifiées card
-    const identifiedSubtext = t('job.scoreboardSubtextIdentified', { confirmed, total });
+    // Subtext for Identifiées card (with optional strict/rescued sub-line)
+    const rb = summary?.result_breakdown;
+    const showStrictSplit = rb && (rb.strict_naf_active || (rb.confirmed_rescued ?? 0) > 0);
+    const strictSplitLine = showStrictSplit
+        ? `<div class="hero-card-subline-strict">${t('job.heroStrictRescued', { strict: rb.confirmed_strict, rescued: rb.confirmed_rescued })}</div>`
+        : '';
+    const identifiedSubtext = t('job.scoreboardSubtextIdentified', { confirmed, total }) + strictSplitLine;
 
     // Subtext for Secteur card
     let sectorSubtext = '';
@@ -356,10 +365,32 @@ function buildScoreboardCard(job, linkStats, summary) {
         </div>
     `;
 
+    const sh = summary?.system_health;
+    const anomaliesChip = (sh && sh.total_errors > 0) ? `
+        <span class="anomaly-chip-wrapper" style="position:relative; display:inline-block">
+            <button class="anomaly-chip" data-test-id="anomaly-chip" type="button"
+                aria-haspopup="dialog" aria-expanded="false">
+                ⚠️ ${t('job.chipAnomalies', { count: sh.total_errors })}
+                <span class="anomaly-chip-chevron">▾</span>
+            </button>
+            <div class="anomaly-popover" data-test-id="anomaly-popover" role="dialog" aria-modal="false" hidden>
+                <h4 class="anomaly-popover-title">${t('job.popoverTitle')}</h4>
+                ${Object.entries(sh.categories || {}).map(([key, data]) => `
+                    <div class="anomaly-popover-row">
+                        <span class="anomaly-popover-label">${t('job.systemHealth.cat.' + key)}</span>
+                        <span class="anomaly-popover-count">${data.count}</span>
+                        ${data.samples?.length ? `<span class="anomaly-popover-samples">${t('job.systemHealth.sample')}: ${data.samples.join(', ')}</span>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </span>
+    ` : '';
+
     const chipsHtml = `
         <div style="display:flex; align-items:center; gap:var(--space-2xl); flex-wrap:wrap; padding:var(--space-md) 0; border-top:1px solid var(--border-subtle); border-bottom:1px solid var(--border-subtle); margin-bottom:var(--space-lg)">
             ${contactableChip}
             ${deptChip}
+            ${anomaliesChip}
         </div>
     `;
 
@@ -439,109 +470,29 @@ function buildScoreboardCard(job, linkStats, summary) {
     `;
 }
 
-function buildSystemHealthPanel(summary) {
-    if (!summary || !summary.result_breakdown) return '';
-    const rb = summary.result_breakdown;
+function buildBatchReport(summary, job) {
+    if (!summary) return '';
+    const rb = summary.result_breakdown || {};
     const sh = summary.system_health || { total_errors: 0, categories: {} };
-    const isClean = sh.total_errors === 0;
-
-    const breakdownRows = `
-        <div class="health-row">
-            <span class="health-label">${t('job.systemHealth.discovered')}</span>
-            <span class="health-value">${rb.discovered}</span>
-        </div>
-        <div class="health-row health-row-indent">
-            <span class="health-label">${t('job.systemHealth.confirmed')}</span>
-            <span class="health-value">${rb.confirmed}
-                <span class="health-sub">(${t('job.systemHealth.strictSplit', { strict: rb.confirmed_strict, rescued: rb.confirmed_rescued })})</span>
-            </span>
-        </div>
-        <div class="health-row health-row-indent">
-            <span class="health-label">${t('job.systemHealth.pendingReview')}</span>
-            <span class="health-value">${rb.pending_review}</span>
-        </div>
-        <div class="health-row health-row-indent">
-            <span class="health-label">${t('job.systemHealth.unmatchedMaps')}</span>
-            <span class="health-value">${rb.unmatched_maps}</span>
-        </div>
-        <div class="health-row health-naf-mode">
-            <span class="health-label">${t('job.systemHealth.strictNafMode')}</span>
-            <span class="health-value">${rb.strict_naf_active ? t('common.yes') : t('common.no')}</span>
-        </div>
-    `;
-
-    let failureBlock;
-    if (isClean) {
-        failureBlock = `
-            <div class="health-clean">
-                <span class="health-icon">🟢</span>
-                <span>${t('job.systemHealth.allClean')}</span>
-            </div>
-        `;
-    } else {
-        const failureRows = Object.entries(sh.categories || {}).map(([key, data]) => `
-            <div class="health-row health-warn">
-                <span class="health-label">${t('job.systemHealth.cat.' + key)}</span>
-                <span class="health-value">${data.count}</span>
-                ${data.samples && data.samples.length > 0
-                    ? `<span class="health-sample">(${t('job.systemHealth.sample')}: ${data.samples.join(', ')})</span>`
-                    : ''}
-            </div>
-        `).join('');
-        failureBlock = `
-            <div class="health-warn-header">
-                <span class="health-icon">⚠️</span>
-                <span>${t('job.systemHealth.errorsTotal', { count: sh.total_errors })}</span>
-            </div>
-            ${failureRows}
-            <button class="copy-report-btn" data-test-id="copy-system-report" type="button">
-                📋 ${t('job.systemHealth.copyReport')}
-            </button>
-        `;
-    }
-
-    return `
-        <details class="system-health-panel" data-test-id="system-health-panel" open>
-            <summary class="system-health-summary">
-                <span class="health-title">${t('job.systemHealth.title')}</span>
-                <span class="health-status">${isClean ? '🟢' : '⚠️'}</span>
-            </summary>
-            <div class="system-health-content">
-                <div class="health-section">
-                    <h4 class="health-section-title">${t('job.systemHealth.resultsTitle')}</h4>
-                    ${breakdownRows}
-                </div>
-                <div class="health-section">
-                    <h4 class="health-section-title">${t('job.systemHealth.systemTitle')}</h4>
-                    ${failureBlock}
-                </div>
-            </div>
-        </details>
-    `;
-}
-
-function buildSystemReportText(summary, job) {
-    const rb = summary.result_breakdown;
-    const sh = summary.system_health;
     const lines = [
-        `=== Rapport batch ${job.batch_id || job.batch_name || ''} ===`,
+        `=== ${t('job.rapportButton')} — ${job.batch_name || job.batch_id} ===`,
         `Date: ${new Date().toISOString()}`,
         ``,
-        `Résultats:`,
-        `  Découvertes: ${rb.discovered}`,
-        `  Confirmées: ${rb.confirmed} (strict: ${rb.confirmed_strict}, rescapées: ${rb.confirmed_rescued})`,
-        `  En attente: ${rb.pending_review}`,
-        `  Sans correspondance SIRENE: ${rb.unmatched_maps}`,
-        `  Filtre NAF strict: ${rb.strict_naf_active ? 'oui' : 'non'}`,
+        `${t('job.systemHealth.resultsTitle')}:`,
+        `  ${t('job.systemHealth.discovered')}: ${rb.discovered ?? '-'}`,
+        `  ${t('job.systemHealth.confirmed')}: ${rb.confirmed ?? '-'} (${t('job.heroStrictRescued', { strict: rb.confirmed_strict ?? '-', rescued: rb.confirmed_rescued ?? '-' })})`,
+        `  ${t('job.systemHealth.pendingReview')}: ${rb.pending_review ?? '-'}`,
+        `  ${t('job.systemHealth.unmatchedMaps')}: ${rb.unmatched_maps ?? '-'}`,
+        `  ${t('job.systemHealth.strictNafMode')}: ${rb.strict_naf_active ? t('common.yes') : t('common.no')}`,
         ``,
-        `Anomalies système (${sh.total_errors} total):`,
+        sh.total_errors === 0
+            ? t('job.cleanReport')
+            : `${t('job.popoverTitle')} (${sh.total_errors}):`,
     ];
-    if (sh.total_errors === 0) {
-        lines.push(`  Aucune erreur — batch propre.`);
-    } else {
-        Object.entries(sh.categories || {}).forEach(([key, data]) => {
-            const samples = data.samples && data.samples.length ? ` (ex: ${data.samples.join(', ')})` : '';
-            lines.push(`  ${key}: ${data.count}${samples}`);
+    if (sh.total_errors > 0) {
+        Object.entries(sh.categories).forEach(([key, data]) => {
+            const samples = data.samples?.length ? ` (${t('job.systemHealth.sample')}: ${data.samples.join(', ')})` : '';
+            lines.push(`  ${t('job.systemHealth.cat.' + key)}: ${data.count}${samples}`);
         });
     }
     return lines.join('\n');
@@ -589,8 +540,6 @@ export async function renderJob(container, batchId) {
         ])}
 
         ${buildScoreboardCard(job, job.link_stats, summary)}
-        ${buildSystemHealthPanel(summary)}
-        ${/* PANEL-INSERTION-ANCHOR: new job-page panels insert AFTER system-health, not between scoreboard and system-health. Keeps the bug-report surface adjacent to the scoreboard. */''}
 
         <!-- Recherches effectuées -->
         <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
@@ -689,23 +638,6 @@ export async function renderJob(container, batchId) {
     // Load companies
     await loadCompanies(batchId, 1, 'completude', '', _currentSearchQuery);
 
-    // Copy system report button (État du système panel)
-    const copyBtn = document.querySelector('[data-test-id="copy-system-report"]');
-    if (copyBtn) {
-        copyBtn.addEventListener('click', async () => {
-            const report = buildSystemReportText(summary, job);
-            try {
-                await navigator.clipboard.writeText(report);
-                copyBtn.textContent = '✅ ' + t('job.systemHealth.copied');
-                setTimeout(() => {
-                    copyBtn.innerHTML = '📋 ' + t('job.systemHealth.copyReport');
-                }, 2000);
-            } catch (err) {
-                console.error('clipboard write failed', err);
-            }
-        });
-    }
-
     // Link stats disclosure toggle (Request A)
     const linkStatsBtn = document.getElementById('link-stats-toggle');
     if (linkStatsBtn) {
@@ -716,6 +648,44 @@ export async function renderJob(container, batchId) {
             const visible = detail.style.display !== 'none';
             detail.style.display = visible ? 'none' : 'block';
             if (chevron) chevron.style.transform = visible ? '' : 'rotate(90deg)';
+        });
+    }
+
+    // Rapport button — copies batch report text to clipboard
+    const rapportBtn = document.getElementById('btn-rapport');
+    if (rapportBtn) {
+        rapportBtn.addEventListener('click', async () => {
+            const text = buildBatchReport(summary, job);
+            try {
+                await navigator.clipboard.writeText(text);
+                rapportBtn.textContent = `✅ ${t('job.systemHealth.copied')}`;
+                setTimeout(() => { rapportBtn.innerHTML = `📋 ${t('job.rapportButton')}`; }, 2000);
+            } catch (err) {
+                console.error('clipboard write failed', err);
+            }
+        });
+    }
+
+    // Anomaly chip popover toggle
+    const anomalyChip = document.querySelector('[data-test-id="anomaly-chip"]');
+    const anomalyPopover = document.querySelector('[data-test-id="anomaly-popover"]');
+    if (anomalyChip && anomalyPopover) {
+        anomalyChip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = !anomalyPopover.hasAttribute('hidden');
+            if (isOpen) {
+                anomalyPopover.setAttribute('hidden', '');
+                anomalyChip.setAttribute('aria-expanded', 'false');
+            } else {
+                anomalyPopover.removeAttribute('hidden');
+                anomalyChip.setAttribute('aria-expanded', 'true');
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!anomalyChip.contains(e.target) && !anomalyPopover.contains(e.target)) {
+                anomalyPopover.setAttribute('hidden', '');
+                anomalyChip.setAttribute('aria-expanded', 'false');
+            }
         });
     }
 

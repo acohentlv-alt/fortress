@@ -742,17 +742,12 @@
       "tooltip": "Cette campagne n'inclut que le code NAF exact, sans expansion sectorielle. Les entités hors-cible sont cachées."
     },
     "systemHealth": {
-      "title": "État du système",
       "resultsTitle": "Résultats",
-      "systemTitle": "Anomalies système",
       "discovered": "Entreprises découvertes",
       "confirmed": "Confirmées",
-      "strictSplit": "{{strict}} en NAF strict, {{rescued}} rescapées",
       "pendingReview": "En attente de validation",
       "unmatchedMaps": "Sans correspondance SIRENE (ID MAPS seul)",
       "strictNafMode": "Filtre NAF strict actif",
-      "allClean": "Aucune erreur système — le batch a tourné proprement.",
-      "errorsTotal": "{{count}} anomalies détectées",
       "sample": "ex.",
       "copyReport": "Copier le rapport",
       "copied": "Copié !",
@@ -762,7 +757,12 @@
         "a2_extract_anomaly": "Anomalie d'extraction (mentions légales)",
         "entity_error": "Erreurs entité brutes"
       }
-    }
+    },
+    "chipAnomalies": "{{count}} anomalies",
+    "popoverTitle": "Anomalies système",
+    "rapportButton": "Rapport du batch",
+    "heroStrictRescued": "{{strict}} en NAF strict, {{rescued}} rescapées",
+    "cleanReport": "Aucune anomalie système — batch propre."
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",
