@@ -439,6 +439,114 @@ function buildScoreboardCard(job, linkStats, summary) {
     `;
 }
 
+function buildSystemHealthPanel(summary) {
+    if (!summary || !summary.result_breakdown) return '';
+    const rb = summary.result_breakdown;
+    const sh = summary.system_health || { total_errors: 0, categories: {} };
+    const isClean = sh.total_errors === 0;
+
+    const breakdownRows = `
+        <div class="health-row">
+            <span class="health-label">${t('job.systemHealth.discovered')}</span>
+            <span class="health-value">${rb.discovered}</span>
+        </div>
+        <div class="health-row health-row-indent">
+            <span class="health-label">${t('job.systemHealth.confirmed')}</span>
+            <span class="health-value">${rb.confirmed}
+                <span class="health-sub">(${t('job.systemHealth.strictSplit', { strict: rb.confirmed_strict, rescued: rb.confirmed_rescued })})</span>
+            </span>
+        </div>
+        <div class="health-row health-row-indent">
+            <span class="health-label">${t('job.systemHealth.pendingReview')}</span>
+            <span class="health-value">${rb.pending_review}</span>
+        </div>
+        <div class="health-row health-row-indent">
+            <span class="health-label">${t('job.systemHealth.unmatchedMaps')}</span>
+            <span class="health-value">${rb.unmatched_maps}</span>
+        </div>
+        <div class="health-row health-naf-mode">
+            <span class="health-label">${t('job.systemHealth.strictNafMode')}</span>
+            <span class="health-value">${rb.strict_naf_active ? t('common.yes') : t('common.no')}</span>
+        </div>
+    `;
+
+    let failureBlock;
+    if (isClean) {
+        failureBlock = `
+            <div class="health-clean">
+                <span class="health-icon">🟢</span>
+                <span>${t('job.systemHealth.allClean')}</span>
+            </div>
+        `;
+    } else {
+        const failureRows = Object.entries(sh.categories || {}).map(([key, data]) => `
+            <div class="health-row health-warn">
+                <span class="health-label">${t('job.systemHealth.cat.' + key)}</span>
+                <span class="health-value">${data.count}</span>
+                ${data.samples && data.samples.length > 0
+                    ? `<span class="health-sample">(${t('job.systemHealth.sample')}: ${data.samples.join(', ')})</span>`
+                    : ''}
+            </div>
+        `).join('');
+        failureBlock = `
+            <div class="health-warn-header">
+                <span class="health-icon">⚠️</span>
+                <span>${t('job.systemHealth.errorsTotal', { count: sh.total_errors })}</span>
+            </div>
+            ${failureRows}
+            <button class="copy-report-btn" data-test-id="copy-system-report" type="button">
+                📋 ${t('job.systemHealth.copyReport')}
+            </button>
+        `;
+    }
+
+    return `
+        <details class="system-health-panel" data-test-id="system-health-panel" open>
+            <summary class="system-health-summary">
+                <span class="health-title">${t('job.systemHealth.title')}</span>
+                <span class="health-status">${isClean ? '🟢' : '⚠️'}</span>
+            </summary>
+            <div class="system-health-content">
+                <div class="health-section">
+                    <h4 class="health-section-title">${t('job.systemHealth.resultsTitle')}</h4>
+                    ${breakdownRows}
+                </div>
+                <div class="health-section">
+                    <h4 class="health-section-title">${t('job.systemHealth.systemTitle')}</h4>
+                    ${failureBlock}
+                </div>
+            </div>
+        </details>
+    `;
+}
+
+function buildSystemReportText(summary, job) {
+    const rb = summary.result_breakdown;
+    const sh = summary.system_health;
+    const lines = [
+        `=== Rapport batch ${job.batch_id || job.batch_name || ''} ===`,
+        `Date: ${new Date().toISOString()}`,
+        ``,
+        `Résultats:`,
+        `  Découvertes: ${rb.discovered}`,
+        `  Confirmées: ${rb.confirmed} (strict: ${rb.confirmed_strict}, rescapées: ${rb.confirmed_rescued})`,
+        `  En attente: ${rb.pending_review}`,
+        `  Sans correspondance SIRENE: ${rb.unmatched_maps}`,
+        `  Filtre NAF strict: ${rb.strict_naf_active ? 'oui' : 'non'}`,
+        ``,
+        `Anomalies système (${sh.total_errors} total):`,
+    ];
+    if (sh.total_errors === 0) {
+        lines.push(`  Aucune erreur — batch propre.`);
+    } else {
+        Object.entries(sh.categories || {}).forEach(([key, data]) => {
+            const samples = data.samples && data.samples.length ? ` (ex: ${data.samples.join(', ')})` : '';
+            lines.push(`  ${key}: ${data.count}${samples}`);
+        });
+    }
+    return lines.join('\n');
+}
+
 export async function renderJob(container, batchId) {
     batchId = decodeURIComponent(batchId);
     // E4.A — strip ?q=... from batchId. Router pattern #/job/(.+) captures
@@ -481,6 +589,8 @@ export async function renderJob(container, batchId) {
         ])}
 
         ${buildScoreboardCard(job, job.link_stats, summary)}
+        ${buildSystemHealthPanel(summary)}
+        ${/* PANEL-INSERTION-ANCHOR: new job-page panels insert AFTER system-health, not between scoreboard and system-health. Keeps the bug-report surface adjacent to the scoreboard. */''}
 
         <!-- Recherches effectuées -->
         <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
@@ -578,6 +688,23 @@ export async function renderJob(container, batchId) {
 
     // Load companies
     await loadCompanies(batchId, 1, 'completude', '', _currentSearchQuery);
+
+    // Copy system report button (État du système panel)
+    const copyBtn = document.querySelector('[data-test-id="copy-system-report"]');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            const report = buildSystemReportText(summary, job);
+            try {
+                await navigator.clipboard.writeText(report);
+                copyBtn.textContent = '✅ ' + t('job.systemHealth.copied');
+                setTimeout(() => {
+                    copyBtn.innerHTML = '📋 ' + t('job.systemHealth.copyReport');
+                }, 2000);
+            } catch (err) {
+                console.error('clipboard write failed', err);
+            }
+        });
+    }
 
     // Link stats disclosure toggle (Request A)
     const linkStatsBtn = document.getElementById('link-stats-toggle');

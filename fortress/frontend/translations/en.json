@@ -711,6 +711,28 @@
     "strictMode": {
       "badge": "STRICT MODE",
       "tooltip": "This campaign only includes the exact NAF code, without sector expansion. Off-target entities are hidden."
+    },
+    "systemHealth": {
+      "title": "System status",
+      "resultsTitle": "Results",
+      "systemTitle": "System anomalies",
+      "discovered": "Companies discovered",
+      "confirmed": "Confirmed",
+      "strictSplit": "{{strict}} in strict NAF, {{rescued}} rescued",
+      "pendingReview": "Pending review",
+      "unmatchedMaps": "No SIRENE match (MAPS ID only)",
+      "strictNafMode": "Strict NAF filter active",
+      "allClean": "No system errors — batch ran cleanly.",
+      "errorsTotal": "{{count}} anomalies detected",
+      "sample": "e.g.",
+      "copyReport": "Copy report",
+      "copied": "Copied!",
+      "cat": {
+        "website_unreachable": "Websites unreachable",
+        "maps_no_data": "No Maps data",
+        "a2_extract_anomaly": "Mentions-légales extraction anomaly",
+        "entity_error": "Raw entity errors"
+      }
     }
   },
   "newBatch": {

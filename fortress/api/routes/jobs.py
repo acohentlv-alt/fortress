@@ -929,6 +929,65 @@ async def get_job_summary(batch_id: str, request: Request):
     def _log(action, result):
         return log_counts.get((action, result), 0)
 
+    # Result breakdown — single source of truth for "x/y discovered, z strict, w pending, n unmatched"
+    # Strict-mode-aware: when strict_naf=true, all counts filter co.strict_match=true
+    # (matches existing endpoint's strict-filter contract for `qualified`).
+    strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
+
+    breakdown_rows = await fetch_one(
+        f"""
+        SELECT
+          COUNT(DISTINCT bt.siren) FILTER (WHERE TRUE {strict_filter}) AS discovered,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' {strict_filter}) AS confirmed,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' AND co.strict_match = true) AS confirmed_strict,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' AND co.strict_match = false {strict_filter}) AS confirmed_rescued,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'pending' {strict_filter}) AS pending_review,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.siren LIKE 'MAPS%%' AND co.link_confidence IS NULL {strict_filter}) AS unmatched_maps
+        FROM batch_tags bt
+        JOIN companies co ON co.siren = bt.siren
+        WHERE bt.batch_id = %s
+        """,
+        (batch_id,),
+    )
+
+    # System health — narrow set of TRUE-failure categories.
+    # Excluded by design: a2_no_mentions_page (expected: many small businesses
+    # have no mentions-légales page), website_crawl no_data (successful crawl, no useful
+    # data), gemini_*_skipped/quarantine (intentional rejections, not failures).
+    HEALTH_CATEGORIES = {
+        "website_unreachable": [("website_crawl", "fail")],
+        "maps_no_data": [("maps_lookup", "no_data"), ("maps_lookup", "no_match"), ("maps_lookup", "not_found")],
+        "a2_extract_anomaly": [("a2_extract_returned_none", "fail")],
+        "entity_error": [("entity_error", "fail")],
+    }
+
+    system_health: dict = {"total_errors": 0, "categories": {}}
+    for cat_key, action_results in HEALTH_CATEGORIES.items():
+        cat_count = sum(_log(a, r) for a, r in action_results)
+        system_health["total_errors"] += cat_count
+        if cat_count > 0:
+            # a2_* actions log siren='A2PENDING' placeholder; extract maps_name from detail.
+            # psycopg3 doesn't support row-value `(col1, col2) IN %s` — expand to OR clauses.
+            or_clauses = " OR ".join(["(action = %s AND result = %s)"] * len(action_results))
+            flat_params = [p for ar in action_results for p in ar]
+            sample_rows = await fetch_all(
+                f"""SELECT DISTINCT
+                     CASE
+                       WHEN siren LIKE 'A2%%' OR siren IS NULL THEN
+                         NULLIF(split_part(split_part(detail, 'maps_name=', 2), ' | ', 1), '')
+                       ELSE siren
+                     END AS sample_label
+                   FROM batch_log
+                   WHERE batch_id = %s AND ({or_clauses})
+                   LIMIT 3""",
+                (batch_id, *flat_params),
+            )
+            samples = [r["sample_label"] for r in (sample_rows or []) if r.get("sample_label")]
+            system_health["categories"][cat_key] = {
+                "count": cat_count,
+                "samples": samples,
+            }
+
     target = job.get("batch_size") or job.get("total_companies") or 0
     found = job.get("companies_scraped") or 0
     # Strict-mode override: when strict_naf=true, the job page chip "✉️ X contactables"
@@ -985,6 +1044,16 @@ async def get_job_summary(batch_id: str, request: Request):
         },
         "shortfall_reason": job.get("shortfall_reason"),
         "exhaustive_default": bool((job.get("batch_size") or 0) >= 2000),
+        "result_breakdown": {
+            "discovered": (breakdown_rows or {}).get("discovered") or 0,
+            "confirmed": (breakdown_rows or {}).get("confirmed") or 0,
+            "confirmed_strict": (breakdown_rows or {}).get("confirmed_strict") or 0,
+            "confirmed_rescued": (breakdown_rows or {}).get("confirmed_rescued") or 0,
+            "pending_review": (breakdown_rows or {}).get("pending_review") or 0,
+            "unmatched_maps": (breakdown_rows or {}).get("unmatched_maps") or 0,
+            "strict_naf_active": bool(job.get("strict_naf")),
+        },
+        "system_health": system_health,
     }
 
 
