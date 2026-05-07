@@ -762,7 +762,15 @@
     "popoverTitle": "Anomalies système",
     "rapportButton": "Rapport du batch",
     "heroStrictRescued": "{{strict}} en NAF strict, {{rescued}} rescapées",
-    "cleanReport": "Aucune anomalie système — batch propre."
+    "cleanReport": "Aucune anomalie système — batch propre.",
+    "bulkDiscovery": {
+      "title": "Mode découverte bulk",
+      "dept": "Département",
+      "communesTargeted": "Communes ciblées",
+      "skipped": "Skippées (≥80% couvertes)",
+      "estimation": "Estimation",
+      "actual": "Réel"
+    }
   },
   "newBatch": {
     "headline": "Que cherchez-vous ?",
@@ -805,7 +813,10 @@
     "timeCapLabel": "Temps maximum par requête",
     "timeCapNone": "Illimité",
     "timeCapTotalLabel": "Temps maximum total (batch)",
-    "durationEstimator": "{{n}} requêtes · max ~{{min}} min",
+    "durationEstimator": {
+      "withCap": "{{n}} requêtes · ≈{{est}} min estimé · max {{cap}} min avec votre cap",
+      "noCap": "{{n}} requêtes · ≈{{est}} min estimé"
+    },
     "queueModalTitle": "Un batch est déjà en cours",
     "queueModalBody": "Un autre batch tourne actuellement dans votre espace de travail. Voulez-vous mettre celui-ci en file d'attente ? Il démarrera automatiquement à la fin du batch en cours.",
     "queueModalConfirm": "Mettre en file d'attente",
@@ -831,7 +842,28 @@
       "clearAll": "Tout désélectionner",
       "empty": "Aucune commune ne correspond.",
       "info": "Chaque commune cliquée est ajoutée comme requête séparée. L'élargissement automatique est désactivé pour les requêtes principales avec villes.",
-      "parisHint": "Astuce : cliquez sur PARIS pour cibler la ville entière, ou cliquez sur \"Voir les autres communes\" pour les arrondissements."
+      "parisHint": "Astuce : cliquez sur PARIS pour cibler la ville entière, ou cliquez sur \"Voir les autres communes\" pour les arrondissements.",
+      "discoverAll": "Découvrir tout",
+      "bulkSummary": "Bulk dept {{dept}} · {{communes}} communes · ≈{{entities}} entités · ≈{{minutes}} min",
+      "bulkEdit": "Modifier",
+      "bulkRemove": "Retirer"
+    },
+    "entityCap": {
+      "label": "Cap entités auto-confirmées :",
+      "none": "Aucune"
+    },
+    "discoverAll": {
+      "title": "Couverture du département",
+      "communesWithSirene": "communes contiennent ce secteur (SIRENE)",
+      "alreadyCovered": "déjà couvertes (≥80%)",
+      "recommended": "communes recommandées",
+      "expectedEntities": "nouvelles entités attendues",
+      "estimatedTime": "estimées",
+      "launchBulk": "Lancer en mode bulk",
+      "forceRediscoverLink": "Forcer la re-découverte des {{n}} communes déjà couvertes",
+      "forceConfirmText": "Cela peut consommer du budget Maps pour peu de nouveaux résultats. Continuer ?",
+      "forceConfirmYes": "Confirmer",
+      "empty": "Aucune commune ne correspond à ce filtre dans ce département"
     }
   },
   "upload": {

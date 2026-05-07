@@ -298,7 +298,7 @@ export async function deleteCompanyNote(noteId) {
 }
 
 // ── Batch Execution ──────────────────────────────────────────────
-export async function runBatch({ sector, department, size, mode, city, naf_codes, strategy, search_queries, exhaustive, time_cap_per_query_min, time_cap_total_min, queue, strict_naf, no_widen_queries }) {
+export async function runBatch({ sector, department, size, mode, city, naf_codes, strategy, search_queries, exhaustive, time_cap_per_query_min, time_cap_total_min, queue, strict_naf, no_widen_queries, entity_cap_confirmed, bulk_discovery_meta }) {
     const body = {
         sector,
         department,
@@ -315,6 +315,8 @@ export async function runBatch({ sector, department, size, mode, city, naf_codes
     if (queue === true) body.queue = true;
     if (strict_naf === true) body.strict_naf = true;
     if (no_widen_queries && Array.isArray(no_widen_queries) && no_widen_queries.length > 0) body.no_widen_queries = no_widen_queries;
+    if (entity_cap_confirmed) body.entity_cap_confirmed = entity_cap_confirmed;
+    if (bulk_discovery_meta) body.bulk_discovery_meta = bulk_discovery_meta;
     return await postJSON('/batch/run', body);
 }
 

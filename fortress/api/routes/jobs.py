@@ -10,6 +10,39 @@ from fortress.api.sql_helpers import merged_contacts_cte
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
+@router.get("/timing-baseline")
+async def get_timing_baseline(request: Request):
+    """Return average time per query from recent completed batches, for the duration estimator.
+
+    Workspace-scoped. Falls back to 18 min/query if fewer than 3 samples.
+    """
+    user = getattr(request.state, "user", None)
+    workspace_id = user.workspace_id if user else None
+
+    row = await fetch_one(
+        """
+        SELECT
+            AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 60.0 /
+                GREATEST(1, jsonb_array_length(search_queries))) AS avg_min_per_query,
+            COUNT(*) AS sample_size
+        FROM batch_data
+        WHERE workspace_id = %s
+          AND status = 'completed'
+          AND search_queries IS NOT NULL
+          AND total_companies > 5
+          AND created_at > NOW() - INTERVAL '14 days'
+        """,
+        (workspace_id,),
+    )
+
+    sample_size = int(row["sample_size"] or 0) if row else 0
+    if sample_size < 3:
+        return {"avg_min_per_query": 18.0, "sample_size": 0, "fallback": True}
+
+    avg = float(row["avg_min_per_query"] or 18.0)
+    return {"avg_min_per_query": avg, "sample_size": sample_size, "fallback": False}
+
+
 @router.get("")
 async def list_jobs(request: Request):
     """All jobs with status and progress — scoped by workspace."""

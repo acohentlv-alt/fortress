@@ -32,6 +32,24 @@ function _readQueryParamFromHash() {
 // Replaces buildSummaryCard + buildLinkStatsCard + the Progress card.
 // Contains: header row, batch shape bar + legend, hero metrics, action chips,
 // and disclosure "Voir le détail par méthode".
+function renderBulkDiscoveryPanel(meta, data) {
+    const actualEntities = data.companies_qualified || 0;
+    const targetEntities = meta.expected_entities || 0;
+    const pct = targetEntities ? Math.round(100 * actualEntities / targetEntities) : 0;
+    return `
+        <div class="bulk-discovery-summary">
+            <h3>🌍 ${t('job.bulkDiscovery.title')}</h3>
+            <table>
+                <tr><td>${t('job.bulkDiscovery.dept')}</td><td>${meta.dept || ''} — ${meta.dept_name || ''}</td></tr>
+                <tr><td>${t('job.bulkDiscovery.communesTargeted')}</td><td>${meta.recommended} / ${meta.communes_with_sirene_match}</td></tr>
+                <tr><td>${t('job.bulkDiscovery.skipped')}</td><td>${meta.skipped}</td></tr>
+                <tr><td>${t('job.bulkDiscovery.estimation')}</td><td>${targetEntities} entités · ≈${meta.estimated_minutes} min</td></tr>
+                <tr><td>${t('job.bulkDiscovery.actual')}</td><td>${actualEntities} entités · ${pct}% du target</td></tr>
+            </table>
+        </div>
+    `;
+}
+
 function buildScoreboardCard(job, linkStats, summary) {
     if (!linkStats) return '';
     const confirmed = linkStats.confirmed || 0;
@@ -467,6 +485,14 @@ function buildScoreboardCard(job, linkStats, summary) {
             ${chipsHtml}
             ${disclosureHtml}
         </div>
+        ${(() => {
+            try {
+                const fj = job.filters_json;
+                const parsed = typeof fj === 'string' ? JSON.parse(fj) : fj;
+                const bulkMeta = parsed && parsed.bulk_discovery;
+                return bulkMeta ? renderBulkDiscoveryPanel(bulkMeta, job) : '';
+            } catch (_e) { return ''; }
+        })()}
     `;
 }
 

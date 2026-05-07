@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
             from fortress.api.db import get_conn
             async with get_conn() as conn:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_companies_denomination_trgm
                     ON companies USING gin (denomination gin_trgm_ops)
@@ -179,6 +180,7 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS current_widening_json JSONB")
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS strict_naf BOOLEAN DEFAULT FALSE")
                 await conn.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS strict_match BOOLEAN")
+                await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS entity_cap_confirmed INTEGER")
 
                 # Index for Enrichment History timeline rendering performance
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_log_siren_time ON batch_log (siren, timestamp DESC)")

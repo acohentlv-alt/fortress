@@ -134,6 +134,9 @@ export async function renderNewBatch(container) {
                         <button type="button" id="city-picker-clear" class="btn btn-secondary city-picker-action">
                           ${t('newBatch.cityPicker.clearAll')}
                         </button>
+                        <button type="button" id="city-picker-discover-all" class="btn btn-primary city-picker-action" disabled>
+                          🌍 ${t('newBatch.cityPicker.discoverAll')}
+                        </button>
                       </div>
                       <div class="city-picker-info">
                         <small>${t('newBatch.cityPicker.info')}</small>
@@ -206,6 +209,20 @@ export async function renderNewBatch(container) {
                     </div>
                 </div>
 
+                <div style="text-align: center; margin: var(--space-md) 0;">
+                    <div style="color: var(--text-secondary); font-size: var(--font-sm); margin-bottom: var(--space-sm);">
+                        ${t('newBatch.entityCap.label')}
+                    </div>
+                    <div class="time-cap-pills" id="entity-cap-pills" role="radiogroup">
+                        <button type="button" class="cap-pill active" data-entity-cap="0">${t('newBatch.entityCap.none')}</button>
+                        <button type="button" class="cap-pill" data-entity-cap="50">50</button>
+                        <button type="button" class="cap-pill" data-entity-cap="100">100</button>
+                        <button type="button" class="cap-pill" data-entity-cap="200">200</button>
+                        <button type="button" class="cap-pill" data-entity-cap="500">500</button>
+                        <button type="button" class="cap-pill" data-entity-cap="1000">1000</button>
+                    </div>
+                </div>
+
                 <div id="duration-estimator" style="display:none; text-align:center; color:var(--text-secondary); font-size:var(--font-sm); margin-top:var(--space-sm);">
                     <span id="duration-estimator-text"></span>
                 </div>
@@ -254,6 +271,9 @@ export async function renderNewBatch(container) {
     let _cityPickerSelectedCities = new Set();
     let _cityPickerExpanded = false;
     let _cityPickerInputDebounce = null;
+    // ── Bulk discovery state ──────────────────────────────────────────
+    let _cityPickerBulkSelection = null;
+    // shape: { dept, communes: [], metadata: {recommended, skipped, expected_entities, estimated_minutes, dept_name, communes_with_sirene_match}, forceCovered: bool }
 
     function hideCityPanel() {
         const panel = document.getElementById('city-picker-panel');
@@ -281,6 +301,7 @@ export async function renderNewBatch(container) {
                 queries,
                 naf_codes: [..._pickedCodesRef.value],
                 time_cap_min: _timeCapRef.value,
+                entity_cap: _selectedEntityCap,
             };
             sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
         } catch (_e) { /* private mode or quota */ }
@@ -296,7 +317,19 @@ export async function renderNewBatch(container) {
     // ── Time cap state ────────────────────────────────────────────────
     let _selectedTimeCap = 60;
     let _selectedTotalCap = 0;
+    let _selectedEntityCap = 0;
+    let _timingBaseline = null;
     _timeCapRef.value = _selectedTimeCap;  // E3 init
+
+    async function getTimingBaseline() {
+        if (_timingBaseline) return _timingBaseline;
+        try {
+            const resp = await fetch('/api/jobs/timing-baseline');
+            if (resp.ok) _timingBaseline = await resp.json();
+        } catch (e) { /* ignore — fallback to 18 */ }
+        if (!_timingBaseline) _timingBaseline = { avg_min_per_query: 18, sample_size: 0, fallback: true };
+        return _timingBaseline;
+    }
 
     document.querySelectorAll('#time-cap-pills .cap-pill').forEach(p => {
         p.addEventListener('click', () => {
@@ -315,6 +348,15 @@ export async function renderNewBatch(container) {
             p.classList.add('active');
             _selectedTotalCap = parseInt(p.dataset.capMin, 10);
             _updateDurationEstimator();
+            scheduleSaveDraft();
+        });
+    });
+
+    document.querySelectorAll('#entity-cap-pills .cap-pill').forEach(p => {
+        p.addEventListener('click', () => {
+            document.querySelectorAll('#entity-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+            p.classList.add('active');
+            _selectedEntityCap = parseInt(p.dataset.entityCap, 10);
             scheduleSaveDraft();
         });
     });
@@ -516,6 +558,7 @@ export async function renderNewBatch(container) {
         renderSiblingsRow();
         renderVariantsRow();
         _updateStrictToggle();
+        _updateDiscoverAllButtonState();
     }
 
     function _updateStrictToggle() {
@@ -765,6 +808,7 @@ export async function renderNewBatch(container) {
 
     // ── Inline warnings (per row) ─────────────────────────────────────
     function validateSingleRow(row) {
+        if (row.hasAttribute('data-bulk-source')) return;  // skip bulk summary rows
         const existingWarning = row.nextElementSibling;
         if (existingWarning && existingWarning.classList.contains('gemini-inline-warning')) {
             existingWarning.remove();
@@ -800,20 +844,210 @@ export async function renderNewBatch(container) {
             document.querySelector('.gemini-query-input.primary'),
             ...document.querySelectorAll('#additional-queries .gemini-query-input')
         ].filter(Boolean);
-        const nQueries = inputs.map(i => (i.value || '').trim()).filter(q => q.length > 0).length;
+        let nQueries = inputs.map(i => (i.value || '').trim()).filter(q => q.length > 0).length;
+        if (_cityPickerBulkSelection) nQueries += _cityPickerBulkSelection.communes.length;
+
         const el = document.getElementById('duration-estimator');
         const txt = document.getElementById('duration-estimator-text');
         if (!el || !txt) return;
         if (!nQueries) { el.style.display = 'none'; return; }
+
+        const avgPerQuery = (_timingBaseline && _timingBaseline.avg_min_per_query) ? _timingBaseline.avg_min_per_query : 18;
+        const expectedMin = Math.round(nQueries * avgPerQuery);
+
         const perCap = _selectedTimeCap > 0 ? _selectedTimeCap : null;
         const totalCap = _selectedTotalCap > 0 ? _selectedTotalCap : null;
         let upperMin = null;
         if (perCap && totalCap) upperMin = Math.min(perCap * nQueries, totalCap);
         else if (perCap) upperMin = perCap * nQueries;
         else if (totalCap) upperMin = totalCap;
-        if (upperMin === null) { el.style.display = 'none'; return; }
-        txt.textContent = t('newBatch.durationEstimator', { n: nQueries, min: upperMin });
+
+        if (upperMin) {
+            txt.textContent = t('newBatch.durationEstimator.withCap', { n: nQueries, est: expectedMin, cap: upperMin });
+        } else {
+            txt.textContent = t('newBatch.durationEstimator.noCap', { n: nQueries, est: expectedMin });
+        }
         el.style.display = 'block';
+    }
+
+    // ── Discover-all button state ─────────────────────────────────────
+    function _updateDiscoverAllButtonState() {
+        const btn = document.getElementById('city-picker-discover-all');
+        if (!btn) return;
+        btn.disabled = !_pickedCodesRef.value || _pickedCodesRef.value.length === 0;
+    }
+
+    // ── Discover-all modal close helper ──────────────────────────────
+    function closeDiscoverAllModal() {
+        const existing = document.getElementById('discover-all-modal-overlay');
+        if (existing) existing.remove();
+    }
+
+    // ── confirmBulkSelection ──────────────────────────────────────────
+    function confirmBulkSelection(data, forceCovered) {
+        const communes = forceCovered
+            ? [...data.recommended.map(r => r.commune), ...data.skipped_already_covered.map(s => s.commune)]
+            : data.recommended.map(r => r.commune);
+
+        _cityPickerBulkSelection = {
+            dept: data.dept,
+            communes,
+            metadata: {
+                recommended: data.communes_recommended,
+                skipped: data.communes_already_covered,
+                expected_entities: data.expected_new_entities,
+                estimated_minutes: data.estimated_minutes,
+                dept_name: data.dept_name,
+                communes_with_sirene_match: data.communes_with_sirene_match
+            },
+            forceCovered
+        };
+
+        const panel = document.getElementById('city-picker-panel');
+        if (panel) panel.style.display = 'none';
+
+        renderBulkSummaryRow();
+        closeDiscoverAllModal();
+        _updateDurationEstimator();
+        scheduleSaveDraft();
+    }
+
+    // ── renderBulkSummaryRow ──────────────────────────────────────────
+    function renderBulkSummaryRow() {
+        if (!_cityPickerBulkSelection) return;
+        document.querySelectorAll('#additional-queries [data-bulk-source]').forEach(el => el.remove());
+
+        const meta = _cityPickerBulkSelection.metadata;
+        const div = document.createElement('div');
+        div.className = 'gemini-query-row bulk-summary';
+        div.setAttribute('data-bulk-dept', _cityPickerBulkSelection.dept);
+        div.setAttribute('data-bulk-source', 'true');
+        div.innerHTML = `
+          <span class="bulk-icon">🌍</span>
+          <span class="bulk-label">${t('newBatch.cityPicker.bulkSummary', {
+              dept: _cityPickerBulkSelection.dept,
+              communes: _cityPickerBulkSelection.communes.length,
+              entities: meta.expected_entities,
+              minutes: meta.estimated_minutes
+          })}</span>
+          <button type="button" class="btn-bulk-edit">${t('newBatch.cityPicker.bulkEdit')}</button>
+          <button type="button" class="btn-bulk-remove" aria-label="${t('newBatch.cityPicker.bulkRemove')}">×</button>
+        `;
+        document.getElementById('additional-queries').appendChild(div);
+
+        div.querySelector('.btn-bulk-edit').addEventListener('click', onBulkEdit);
+        div.querySelector('.btn-bulk-remove').addEventListener('click', onBulkRemove);
+    }
+
+    // ── onBulkEdit + onBulkRemove ─────────────────────────────────────
+    async function onBulkEdit() {
+        if (!_cityPickerBulkSelection) return;
+        const params = _pickedCodesRef.value.map(c => `naf_codes=${encodeURIComponent(c)}`).join('&');
+        const resp = await fetch(`/api/departments/${_cityPickerBulkSelection.dept}/coverage?${params}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            renderDiscoverAllModal(data);
+        }
+    }
+
+    function onBulkRemove() {
+        _cityPickerBulkSelection = null;
+        document.querySelectorAll('#additional-queries [data-bulk-source]').forEach(el => el.remove());
+        const panel = document.getElementById('city-picker-panel');
+        if (panel) panel.style.display = '';
+        _updateDurationEstimator();
+        scheduleSaveDraft();
+    }
+
+    // ── renderDiscoverAllModal ────────────────────────────────────────
+    function renderDiscoverAllModal(data) {
+        closeDiscoverAllModal();
+        const overlay = document.createElement('div');
+        overlay.id = 'discover-all-modal-overlay';
+        overlay.className = 'discover-all-modal-overlay';
+        overlay.innerHTML = `
+          <div class="discover-all-modal">
+            <h3>🌍 ${t('newBatch.discoverAll.title')} — ${data.dept} ${data.dept_name || ''}</h3>
+            ${data.communes_with_sirene_match === 0 ? `
+              <p>${t('newBatch.discoverAll.empty')}</p>
+              <div class="discover-all-actions">
+                <button type="button" class="btn btn-secondary" id="discover-all-cancel">${t('common.cancel')}</button>
+              </div>
+            ` : `
+              <div class="discover-all-stats">
+                <div>📊 <strong>${data.communes_with_sirene_match}</strong> ${t('newBatch.discoverAll.communesWithSirene')}</div>
+                <div>✓ <strong>${data.communes_already_covered}</strong> ${t('newBatch.discoverAll.alreadyCovered')}</div>
+                <div>→ <strong>${data.communes_recommended}</strong> ${t('newBatch.discoverAll.recommended')}</div>
+                <div>≈ <strong>${data.expected_new_entities}</strong> ${t('newBatch.discoverAll.expectedEntities')}</div>
+                <div>≈ <strong>${data.estimated_minutes} min</strong> ${t('newBatch.discoverAll.estimatedTime')}</div>
+              </div>
+              <div class="discover-all-actions">
+                <button type="button" class="btn btn-primary" id="discover-all-launch">
+                  ${t('newBatch.discoverAll.launchBulk')} (${data.communes_recommended})
+                </button>
+                <button type="button" class="btn btn-secondary" id="discover-all-cancel">${t('common.cancel')}</button>
+              </div>
+              ${data.communes_already_covered > 0 ? `
+                <div class="discover-all-force-section">
+                  <a href="#" class="discover-all-force-link" id="discover-all-force-link">
+                    ${t('newBatch.discoverAll.forceRediscoverLink', { n: data.communes_already_covered })} ▼
+                  </a>
+                  <div class="discover-all-force-confirm" id="discover-all-force-confirm" style="display:none">
+                    <p>${t('newBatch.discoverAll.forceConfirmText')}</p>
+                    <button type="button" class="btn btn-warning" id="discover-all-force-yes">
+                      ${t('newBatch.discoverAll.forceConfirmYes')}
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="discover-all-force-cancel">
+                      ${t('common.cancel')}
+                    </button>
+                  </div>
+                </div>
+              ` : ''}
+            `}
+          </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        overlay.querySelector('#discover-all-cancel')?.addEventListener('click', closeDiscoverAllModal);
+        overlay.querySelector('#discover-all-launch')?.addEventListener('click', () => confirmBulkSelection(data, false));
+        overlay.querySelector('#discover-all-force-link')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            const fc = overlay.querySelector('#discover-all-force-confirm');
+            if (fc) fc.style.display = '';
+        });
+        overlay.querySelector('#discover-all-force-yes')?.addEventListener('click', () => confirmBulkSelection(data, true));
+        overlay.querySelector('#discover-all-force-cancel')?.addEventListener('click', () => {
+            const fc = overlay.querySelector('#discover-all-force-confirm');
+            if (fc) fc.style.display = 'none';
+        });
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeDiscoverAllModal();
+        });
+    }
+
+    // ── onDiscoverAll ─────────────────────────────────────────────────
+    async function onDiscoverAll() {
+        const btn = document.getElementById('city-picker-discover-all');
+        if (!btn || btn.disabled) return;
+        if (!_cityPickerCurrentDept) return;
+
+        btn.disabled = true;
+        const origLabel = btn.innerHTML;
+        btn.innerHTML = `<span class="liquid-spinner"></span>`;
+        try {
+            const params = _pickedCodesRef.value.map(c => `naf_codes=${encodeURIComponent(c)}`).join('&');
+            const resp = await fetch(`/api/departments/${_cityPickerCurrentDept}/coverage?${params}`);
+            if (!resp.ok) {
+                console.error('coverage fetch failed', resp.status);
+                return;
+            }
+            const data = await resp.json();
+            renderDiscoverAllModal(data);
+        } finally {
+            btn.innerHTML = origLabel;
+            _updateDiscoverAllButtonState();
+        }
     }
 
     // ── Live summary ──────────────────────────────────────────────────
@@ -879,6 +1113,10 @@ export async function renderNewBatch(container) {
         _cityPickerCurrentPrimary = primaryQuery;
         _cityPickerSelectedCities.clear();
         _cityPickerExpanded = false;
+        // Clear any bulk selection when dept changes (G12 side-fix)
+        _cityPickerBulkSelection = null;
+        document.querySelectorAll('#additional-queries [data-city-picker-source]').forEach(el => el.remove());
+        document.querySelectorAll('#additional-queries [data-bulk-source]').forEach(el => el.remove());
 
         if (!_cityPickerCache[dept]) {
             try {
@@ -1031,6 +1269,7 @@ export async function renderNewBatch(container) {
         document.getElementById('city-picker-select-topN')?.addEventListener('click', onSelectTopN);
         document.getElementById('city-picker-clear')?.addEventListener('click', onClearAll);
         document.getElementById('city-picker-expand')?.addEventListener('click', onExpand);
+        document.getElementById('city-picker-discover-all')?.addEventListener('click', onDiscoverAll);
 
         // Initialize state from current primary input value (handles rerun/draft restore)
         if (primaryInput && primaryInput.value.trim()) {
@@ -1061,26 +1300,28 @@ export async function renderNewBatch(container) {
             document.querySelector('.gemini-query-input.primary'),
             ...document.querySelectorAll('#additional-queries .gemini-query-input')
         ].filter(Boolean);
-        const queries = queryInputs
+        let queries = queryInputs
             .map(i => i.value.trim())
             .filter(q => q.length > 0);
 
-        if (queries.length === 0) {
+        if (queries.length === 0 && !_cityPickerBulkSelection) {
             showToast(t('newBatch.errorNoQuery'), 'error');
             return;
         }
 
-        // Safeguard: block if ALL queries are too broad (single word, no location)
-        const warnings = validateQueries(queries);
-        if (warnings.length === queries.length) {
-            showToast(t('newBatch.errorAllBroad'), 'error');
-            return;
+        // Safeguard: block if ALL queries are too broad (single word, no location) — skip for bulk
+        if (!_cityPickerBulkSelection) {
+            const warnings = validateQueries(queries);
+            if (warnings.length === queries.length) {
+                showToast(t('newBatch.errorAllBroad'), 'error');
+                return;
+            }
         }
 
         const btn = document.getElementById('btn-launch-batch');
 
         // Extract sector name from first query (first word)
-        const firstQuery = queries[0];
+        const firstQuery = queries[0] || '';
         const sector = firstQuery.split(/\s+/)[0] || 'RECHERCHE';
 
         // Try to extract department from queries using module-scope parseDeptHint.
@@ -1093,6 +1334,24 @@ export async function renderNewBatch(container) {
         if (!department) department = 'FR';
 
         const _strictToggleEl = document.getElementById('strict-naf-toggle');
+
+        // Refresh tracking from current primary input value
+        const _primaryEl = document.querySelector('.gemini-query-input.primary');
+        if (_primaryEl) _cityPickerCurrentPrimary = _primaryEl.value.trim();
+
+        // Bulk expansion: replace queries with commune-expanded set
+        let _bulkMeta = null;
+        let _noWidenQueries = null;
+        if (_cityPickerBulkSelection) {
+            const sectorPrefix = extractSectorTokens(_cityPickerCurrentPrimary || firstQuery);
+            const bulkExpanded = _cityPickerBulkSelection.communes.map(c =>
+                sectorPrefix ? `${sectorPrefix} ${c}` : c
+            );
+            queries = bulkExpanded;
+            _noWidenQueries = bulkExpanded;
+            _bulkMeta = _cityPickerBulkSelection.metadata;
+        }
+
         const payload = {
             sector: sector.toUpperCase(),
             department: department || '00',
@@ -1103,15 +1362,15 @@ export async function renderNewBatch(container) {
             time_cap_per_query_min: _selectedTimeCap > 0 ? _selectedTimeCap : null,
             time_cap_total_min: _selectedTotalCap > 0 ? _selectedTotalCap : null,
             strict_naf: _strictToggleEl ? Boolean(_strictToggleEl.checked && !_strictToggleEl.disabled) : false,
+            entity_cap_confirmed: _selectedEntityCap > 0 ? _selectedEntityCap : null,
+            bulk_discovery_meta: _bulkMeta || null,
         };
 
-        // Refresh tracking from current primary input value
-        const _primaryEl = document.querySelector('.gemini-query-input.primary');
-        if (_primaryEl) _cityPickerCurrentPrimary = _primaryEl.value.trim();
-
-        // NEW — include the primary in no_widen_queries IF user picked any cities
-        if (_cityPickerSelectedCities.size > 0 && _cityPickerCurrentPrimary) {
+        // NEW — include the primary in no_widen_queries IF user picked any cities (non-bulk)
+        if (!_cityPickerBulkSelection && _cityPickerSelectedCities.size > 0 && _cityPickerCurrentPrimary) {
             payload.no_widen_queries = [_cityPickerCurrentPrimary];
+        } else if (_noWidenQueries) {
+            payload.no_widen_queries = _noWidenQueries;
         }
 
         btn.disabled = true;
@@ -1247,6 +1506,14 @@ export async function renderNewBatch(container) {
                             _timeCapRef.value = _selectedTimeCap;
                         }
                     }
+                    if (typeof draft.entity_cap === 'number') {
+                        const ecpill = document.querySelector(`#entity-cap-pills .cap-pill[data-entity-cap="${draft.entity_cap}"]`);
+                        if (ecpill) {
+                            document.querySelectorAll('#entity-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                            ecpill.classList.add('active');
+                            _selectedEntityCap = draft.entity_cap;
+                        }
+                    }
                     // Soft banner
                     const sumLine = document.getElementById('gemini-summary-line');
                     if (sumLine) {
@@ -1285,4 +1552,7 @@ export async function renderNewBatch(container) {
 
     // ── Wire city picker listeners (after draft/rerun restoration) ───
     wireCityPickerListeners();
+
+    // ── Pre-load timing baseline for estimator ─────────────────────
+    getTimingBaseline().then(() => { _updateDurationEstimator(); });
 }

@@ -733,7 +733,15 @@
     "popoverTitle": "System anomalies",
     "rapportButton": "Batch report",
     "heroStrictRescued": "{{strict}} in strict NAF, {{rescued}} rescued",
-    "cleanReport": "No system anomalies — clean batch."
+    "cleanReport": "No system anomalies — clean batch.",
+    "bulkDiscovery": {
+      "title": "Bulk discovery mode",
+      "dept": "Department",
+      "communesTargeted": "Communes targeted",
+      "skipped": "Skipped (≥80% covered)",
+      "estimation": "Estimation",
+      "actual": "Actual"
+    }
   },
   "newBatch": {
     "headline": "What are you looking for?",
@@ -776,7 +784,10 @@
     "timeCapLabel": "Max time per query",
     "timeCapNone": "Unlimited",
     "timeCapTotalLabel": "Max total time (batch)",
-    "durationEstimator": "{{n}} queries · max ~{{min}} min",
+    "durationEstimator": {
+      "withCap": "{{n}} queries · ≈{{est}} min estimated · max {{cap}} min with your cap",
+      "noCap": "{{n}} queries · ≈{{est}} min estimated"
+    },
     "queueModalTitle": "A batch is already running",
     "queueModalBody": "Another batch is running in your workspace. Queue this one? It will start automatically when the current batch finishes.",
     "queueModalConfirm": "Queue this batch",
@@ -802,7 +813,28 @@
       "clearAll": "Deselect all",
       "empty": "No matching communes.",
       "info": "Each commune clicked is added as a separate query. Auto-widening is disabled for primary queries with city picks.",
-      "parisHint": "Tip: click PARIS to target the whole city, or click \"Show more communes\" for individual arrondissements."
+      "parisHint": "Tip: click PARIS to target the whole city, or click \"Show more communes\" for individual arrondissements.",
+      "discoverAll": "Discover all",
+      "bulkSummary": "Bulk dept {{dept}} · {{communes}} communes · ≈{{entities}} entities · ≈{{minutes}} min",
+      "bulkEdit": "Edit",
+      "bulkRemove": "Remove"
+    },
+    "entityCap": {
+      "label": "Auto-confirmed entity cap:",
+      "none": "None"
+    },
+    "discoverAll": {
+      "title": "Department coverage",
+      "communesWithSirene": "communes contain this sector (SIRENE)",
+      "alreadyCovered": "already covered (≥80%)",
+      "recommended": "recommended communes",
+      "expectedEntities": "new entities expected",
+      "estimatedTime": "estimated",
+      "launchBulk": "Launch in bulk mode",
+      "forceRediscoverLink": "Force re-discovery of {{n}} already covered communes",
+      "forceConfirmText": "This may consume Maps budget for few new results. Continue?",
+      "forceConfirmYes": "Confirm",
+      "empty": "No communes match this filter in this department"
     }
   },
   "upload": {

@@ -47,6 +47,14 @@ class BatchRunRequest(BaseModel):
                     "(typically because the user manually picked cities for them via the "
                     "#/new-batch city panel)."
     )
+    entity_cap_confirmed: int | None = Field(
+        None, ge=1, le=10000,
+        description="Cap on auto-confirmed entities. In strict mode, additionally requires strict_match=true. Pipeline drains in-flight + ends with abort_reason=entity_cap_reached when reached."
+    )
+    bulk_discovery_meta: dict | None = Field(
+        None,
+        description="Coverage metadata stored in batch_data.filters_json.bulk_discovery for post-batch summary panel."
+    )
 
 
 def _build_batch_id(sector: str, dept: str, workspace_id: int | None = None) -> str:
@@ -121,6 +129,8 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["department"] = body.department.strip()
     if body.no_widen_queries:
         filters_dict["no_widen_queries"] = [q.strip() for q in body.no_widen_queries if q and q.strip()]
+    if body.bulk_discovery_meta:
+        filters_dict["bulk_discovery"] = body.bulk_discovery_meta
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
     # Build search_queries JSON for Maps-first mode
@@ -258,9 +268,9 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
             await conn.execute(
                 """INSERT INTO batch_data
-                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id, time_cap_per_query_min, time_cap_total_min, strict_naf)
-                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min, body.time_cap_total_min, body.strict_naf),
+                   (batch_id, batch_name, status, batch_number, batch_offset, total_companies, batch_size, filters_json, user_id, worker_id, strategy, search_queries, workspace_id, time_cap_per_query_min, time_cap_total_min, strict_naf, entity_cap_confirmed)
+                   VALUES (%s, %s, 'queued', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (batch_id, batch_name, batch_number, batch_offset, 2000, 2000, filters_json, user_id, worker_id, body.strategy, search_queries_json, workspace_id, body.time_cap_per_query_min, body.time_cap_total_min, body.strict_naf, body.entity_cap_confirmed),
             )
             await conn.commit()
 

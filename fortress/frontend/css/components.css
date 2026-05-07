@@ -4208,3 +4208,131 @@
     align-items: center;
     gap: var(--space-xs);
 }
+
+/* ── Discover-all modal ─────────────────────────────────────────── */
+.discover-all-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: var(--space-lg);
+}
+.discover-all-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius);
+    padding: var(--space-xl) var(--space-2xl);
+    max-width: 520px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.discover-all-modal h3 {
+    margin: 0 0 var(--space-lg) 0;
+    font-size: var(--font-lg);
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.discover-all-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-lg);
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+.discover-all-actions {
+    display: flex;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-md);
+}
+.discover-all-force-section {
+    margin-top: var(--space-md);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+.discover-all-force-link {
+    color: var(--text-muted);
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: var(--font-xs);
+}
+.discover-all-force-confirm {
+    margin-top: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--bg-elevated);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+.discover-all-force-confirm p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+}
+
+/* ── Bulk summary row ────────────────────────────────────────────── */
+.gemini-query-row.bulk-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-top: var(--space-sm);
+}
+.bulk-icon { font-size: 1.2em; flex-shrink: 0; }
+.bulk-label {
+    flex: 1;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+.btn-bulk-edit, .btn-bulk-remove {
+    background: none;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: 2px var(--space-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--font-xs);
+    flex-shrink: 0;
+}
+.btn-bulk-edit:hover, .btn-bulk-remove:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+.btn-bulk-remove { font-size: 1em; }
+
+/* ── Bulk discovery summary panel (job page) ─────────────────────── */
+.bulk-discovery-summary {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: var(--space-lg) var(--space-xl);
+    margin-top: var(--space-lg);
+}
+.bulk-discovery-summary h3 {
+    margin: 0 0 var(--space-md) 0;
+    font-size: var(--font-md);
+    font-weight: 700;
+}
+.bulk-discovery-summary table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-sm);
+}
+.bulk-discovery-summary td {
+    padding: var(--space-xs) var(--space-md) var(--space-xs) 0;
+    color: var(--text-secondary);
+    vertical-align: top;
+}
+.bulk-discovery-summary td:first-child {
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}

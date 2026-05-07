@@ -4,7 +4,8 @@ Scoped to companies linked via batch_tags (actual scraped data),
 NOT the full 16M+ sirene import table.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all
 from fortress.api.sql_helpers import merged_contacts_cte
@@ -144,6 +145,106 @@ async def get_department_jobs(dept: str, request: Request):
         ORDER BY sj.created_at DESC
     """, ws_params)
     return rows
+
+
+@router.get("/{dept}/coverage")
+async def get_dept_coverage(dept: str, request: Request, naf_codes: list[str] = Query(..., alias='naf_codes')):
+    """Return commune-level SIRENE coverage for a department + NAF filter.
+
+    Used by the 'Découvrir tout' modal to show which communes have been scraped
+    and which still have potential new entities.
+    """
+    if not naf_codes:
+        return JSONResponse(status_code=400, content={"error": "naf_codes is required for coverage analysis"})
+
+    dept = dept.strip().upper()
+    user = getattr(request.state, "user", None)
+    workspace_id = user.workspace_id if user else None
+
+    rows = await fetch_all(
+        """
+        WITH sirene_per_commune AS (
+            SELECT
+                UPPER(unaccent(co.ville)) AS commune_norm,
+                COUNT(DISTINCT co.siren) AS sirene_count
+            FROM companies co
+            WHERE co.departement = %s
+              AND co.naf_code = ANY(%s)
+              AND co.siren NOT LIKE 'MAPS%%'
+              AND co.statut = 'A'
+            GROUP BY UPPER(unaccent(co.ville))
+        ),
+        ws_scraped_per_commune AS (
+            SELECT
+                UPPER(unaccent(co.ville)) AS commune_norm,
+                COUNT(DISTINCT co.siren) AS scraped_count
+            FROM batch_tags bt
+            JOIN batch_data bd ON bd.batch_id = bt.batch_id
+            JOIN companies co ON co.siren = bt.siren
+            WHERE bd.workspace_id = %s
+              AND bd.status = 'completed'
+              AND bd.created_at > NOW() - INTERVAL '90 days'
+              AND co.departement = %s
+              AND co.siren LIKE 'MAPS%%'
+            GROUP BY UPPER(unaccent(co.ville))
+        )
+        SELECT
+            s.commune_norm,
+            s.sirene_count,
+            COALESCE(w.scraped_count, 0) AS scraped_count,
+            GREATEST(0, s.sirene_count - COALESCE(w.scraped_count, 0)) AS potential_new,
+            ROUND(100.0 * COALESCE(w.scraped_count, 0) / s.sirene_count, 1) AS coverage_pct
+        FROM sirene_per_commune s
+        LEFT JOIN ws_scraped_per_commune w ON w.commune_norm = s.commune_norm
+        ORDER BY s.sirene_count DESC
+        """,
+        (dept, naf_codes, workspace_id, dept),
+    )
+
+    if rows is None:
+        rows = []
+
+    recommended = []
+    skipped_already_covered = []
+    for r in rows:
+        pct = float(r["coverage_pct"] or 0)
+        if pct >= 80:
+            skipped_already_covered.append({
+                "commune": r["commune_norm"],
+                "sirene_count": r["sirene_count"],
+                "scraped_count": r["scraped_count"],
+                "coverage_pct": pct,
+            })
+        else:
+            recommended.append({
+                "commune": r["commune_norm"],
+                "sirene_count": r["sirene_count"],
+                "scraped_count": r["scraped_count"],
+                "potential_new": r["potential_new"],
+                "coverage_pct": pct,
+            })
+
+    expected_new_entities = sum(r["potential_new"] for r in recommended)
+    avg_seconds_per_entity = 18  # default fallback
+    estimated_minutes = int((expected_new_entities * avg_seconds_per_entity) / 60)
+
+    communes_data = DEPT_COMMUNES.get(dept, [])
+    total_communes_in_dept = len(communes_data)
+
+    dept_name = _DEPT_NAMES.get(dept, dept)
+
+    return {
+        "dept": dept,
+        "dept_name": dept_name,
+        "total_communes_in_dept": total_communes_in_dept,
+        "communes_with_sirene_match": len(rows),
+        "communes_already_covered": len(skipped_already_covered),
+        "communes_recommended": len(recommended),
+        "expected_new_entities": expected_new_entities,
+        "estimated_minutes": estimated_minutes,
+        "recommended": recommended,
+        "skipped_already_covered": skipped_already_covered,
+    }
 
 
 @router.get("/{dept}/communes")

@@ -2766,7 +2766,7 @@ async def run(batch_id: str) -> None:
                 """SELECT batch_name, search_queries, filters_json, batch_size,
                           workspace_id, completed_queries_count, queries_json, id,
                           time_cap_per_query_min, time_cap_total_min, created_at,
-                          COALESCE(strict_naf, FALSE)
+                          COALESCE(strict_naf, FALSE), entity_cap_confirmed
                    FROM batch_data WHERE batch_id = %s LIMIT 1""",
                 (batch_id,),
             )
@@ -2786,6 +2786,7 @@ async def run(batch_id: str) -> None:
             _time_cap_total_min: int | None = row[9] if row[9] is not None else None
             _batch_created_at: datetime = row[10]
             strict_naf: bool = bool(row[11])  # 12th field — mode strict toggle
+            entity_cap_confirmed: int | None = row[12] if row[12] is not None else None  # 13th field — entity cap
 
             # Set ContextVar so Maps scraper can write timing rows without threading batch_id through callbacks
             batch_id_var.set(batch_int_id)
@@ -2890,6 +2891,8 @@ async def run(batch_id: str) -> None:
                 total_queries = len(search_queries)
                 companies_discovered = 0
                 qualified = 0
+                _confirmed_for_cap: int = 0    # M6 entity cap counter — counts auto-confirmed entities
+                _entity_cap_reached: bool = False
                 seen_names: set[str] = set()     # Level 1: name+address dedup
                 seen_websites: set[str] = set()  # Level 2: website domain dedup
                 seen_sirens: set[str] = set()    # Level 4: SIREN dedup within batch
@@ -3774,7 +3777,7 @@ async def run(batch_id: str) -> None:
                     triage_bucket: str,
                     idx: int,
                 ) -> None:
-                    nonlocal qualified, _gemini_cap_logged, _query_geo_capture_count
+                    nonlocal qualified, _gemini_cap_logged, _query_geo_capture_count, _confirmed_for_cap, _entity_cap_reached
                     # Local timer for entity_total — works in both serial (inline call from
                     # _persist_result) and worker-pool (called from queue.get loop) modes.
                     # Without this, line ~4214's read of _entity_t0 hits NameError under workers
@@ -4155,6 +4158,12 @@ async def run(batch_id: str) -> None:
                                     detail=f"Auto-confirmé → {target_siren} (method={method}, naf_status={naf_status}, audit={audit_action})",
                                     workspace_id=batch_workspace_id,
                                 )
+                                # M6 entity cap counter — increment when auto-confirmed
+                                if entity_cap_confirmed is not None:
+                                    if not strict_naf or _strict_match:
+                                        _confirmed_for_cap += 1
+                                        if _confirmed_for_cap >= entity_cap_confirmed:
+                                            _entity_cap_reached = True
 
                             # Step 2.5 Band B pending audit — emitted when Band B is
                             # forced to pending (first-week audit window).
@@ -4441,6 +4450,12 @@ async def run(batch_id: str) -> None:
                                                                 }, ensure_ascii=False),
                                                                 workspace_id=batch_workspace_id,
                                                             )
+                                                            # M6 entity cap counter — gemini swap confirm
+                                                            if entity_cap_confirmed is not None:
+                                                                if not strict_naf or (_swap_strict_match is True):
+                                                                    _confirmed_for_cap += 1
+                                                                    if _confirmed_for_cap >= entity_cap_confirmed:
+                                                                        _entity_cap_reached = True
 
                                                         # Outside transaction:
                                                         _pending_link = {
@@ -4754,6 +4769,12 @@ async def run(batch_id: str) -> None:
                                                                     }, ensure_ascii=False),
                                                                     workspace_id=batch_workspace_id,
                                                                 )
+                                                                # M6 entity cap counter — gemini promotion confirm
+                                                                if entity_cap_confirmed is not None:
+                                                                    if not strict_naf or (_prom_strict_match is True):
+                                                                        _confirmed_for_cap += 1
+                                                                        if _confirmed_for_cap >= entity_cap_confirmed:
+                                                                            _entity_cap_reached = True
 
                                                             # Mutate _pending_link so officer-fetch gate fires
                                                             _pending_link = {
@@ -4896,6 +4917,13 @@ async def run(batch_id: str) -> None:
                                                             log.info("discovery.gemini_rescue",
                                                                      maps_name=maps_name, maps_siren=siren,
                                                                      rescued_siren=_vpicked, confidence=_vconf)
+                                                            # M6 entity cap counter — gemini rescue confirm
+                                                            if entity_cap_confirmed is not None:
+                                                                _r_strict = _rescue_strict_match if _rescue_strict_match is not None else True
+                                                                if not strict_naf or _r_strict:
+                                                                    _confirmed_for_cap += 1
+                                                                    if _confirmed_for_cap >= entity_cap_confirmed:
+                                                                        _entity_cap_reached = True
                                                         else:
                                                             await log_audit(
                                                                 conn,
@@ -5260,6 +5288,13 @@ async def run(batch_id: str) -> None:
                                              maps_name=maps_name, siren=_target,
                                              original_method=_pending_link["method"],
                                              enseigne_source=_enseigne_method)
+                                    # M6 entity cap counter — INPI validated rescue confirm
+                                    if entity_cap_confirmed is not None:
+                                        _iv_strict = _pending_link.get("strict_match")
+                                        if not strict_naf or _iv_strict:
+                                            _confirmed_for_cap += 1
+                                            if _confirmed_for_cap >= entity_cap_confirmed:
+                                                _entity_cap_reached = True
 
                     # Update progress (keeps heartbeat alive)
                     await _update_job_safe(
@@ -5502,6 +5537,10 @@ async def run(batch_id: str) -> None:
                         continue
                     # Resolve per-query effective dept (overrides batch-level dept_filter)
                     _effective_dept = _parse_dept_hint_from_query(search_query) or dept_filter
+                    # Entity cap check between queries
+                    if _entity_cap_reached:
+                        log.warning("discovery.entity_cap_hit_between_queries", batch_id=batch_id, cap=entity_cap_confirmed, actual=_confirmed_for_cap)
+                        break
                     # Total-cap check between queries
                     if _total_cap_sec is not None and _total_elapsed_sec() >= _total_cap_sec:
                         log.warning("discovery.total_time_cap_hit_between_queries", batch_id=batch_id, cap_min=_time_cap_total_min, elapsed_min=round(_total_elapsed_sec()/60, 1))
@@ -5691,7 +5730,7 @@ async def run(batch_id: str) -> None:
                             "duration_sec": round(time.monotonic() - _query_start, 1),
                             "abort_reason": _query_abort_reason,
                         })
-                        if _query_abort_reason == "total_time_cap_reached":
+                        if _query_abort_reason in ("total_time_cap_reached", "entity_cap_reached"):
                             break
                         continue   # bypass expansion loop for this query
 
@@ -6144,6 +6183,19 @@ async def run(batch_id: str) -> None:
                 else:
                     _dept_msg = ""
 
+                # M6 — log audit when entity cap was reached
+                if _entity_cap_reached and entity_cap_confirmed is not None:
+                    try:
+                        async with get_conn() as _cap_conn:
+                            await log_audit(
+                                _cap_conn, batch_id=batch_id, siren=None,
+                                action="abort_entity_cap_reached", result="success",
+                                detail=json.dumps({"cap": entity_cap_confirmed, "actual": _confirmed_for_cap, "strict_naf": strict_naf}),
+                            )
+                            await _cap_conn.commit()
+                    except Exception as _cap_exc:
+                        log.debug("discovery.entity_cap_audit_failed", error=str(_cap_exc))
+
                 # Z/W — surface query-level abort reasons (time-cap-hit-on-primary, anti-bot)
                 _abort_reasons = [qs.get("abort_reason") for qs in _query_stats if qs.get("abort_reason")]
                 if _abort_reasons:
@@ -6153,7 +6205,12 @@ async def run(batch_id: str) -> None:
                     _abort_prefix = ""
 
                 shortfall_msg = None
-                if companies_discovered >= 2000:
+                if _entity_cap_reached and entity_cap_confirmed is not None:
+                    shortfall_msg = (_abort_prefix +
+                        f"Cap d'entités atteint ({_confirmed_for_cap} auto-confirmées sur cap de {entity_cap_confirmed}). "
+                        "Relancez pour découvrir plus."
+                    )
+                elif companies_discovered >= 2000:
                     shortfall_msg = _abort_prefix + (
                         "Limite de sécurité atteinte (2000 entités). "
                         "Le plafond de 2000 entités a été atteint. "
