@@ -761,6 +761,10 @@
     "chipAnomalies": "{{count}} anomalies",
     "popoverTitle": "Anomalies système",
     "rapportButton": "Rapport du batch",
+    "queriesRunsAggregated": "{{count}} exécutions",
+    "queriesRunDetail": "Exécution {{n}}/{{total}}",
+    "queriesRunAbortReason": "Raison d'arrêt : {{reason}}",
+    "queriesMultipleRuns": "Cette requête a été exécutée {{count}} fois (cap de temps atteint à chaque fois)",
     "heroStrictRescued": "{{strict}} en NAF strict, {{rescued}} rescapées",
     "cleanReport": "Aucune anomalie système — batch propre.",
     "bulkDiscovery": {

@@ -47,52 +47,98 @@ export function renderQueriesPanel(queries, opts = {}) {
         return `<span style="color:var(--text-muted)">${t('monitor.queriesEmpty')}</span>`;
     }
 
-    const primaries = (queries || []).filter(q => !q.is_expansion);
+    const allPrimaries = (queries || []).filter(q => !q.is_expansion);
     const lines = [];
 
-    for (const p of primaries) {
-        const expansions = (queries || []).filter(q => q.is_expansion && q.primary_query === p.query);
-        const cityExp = expansions.filter(e => e.widening_type === 'city');
-        const postalExp = expansions.filter(e => e.widening_type === 'postal_code');
+    // Group primaries by query text — same-name primaries are different runs of the same query
+    const primaryGroups = new Map();
+    for (const p of allPrimaries) {
+        if (!primaryGroups.has(p.query)) primaryGroups.set(p.query, []);
+        primaryGroups.get(p.query).push(p);
+    }
 
-        const primaryEntityCount = p.new_companies || 0;
-        const expansionEntityTotal = expansions.reduce((s, e) => s + (e.new_companies || 0), 0);
-        const expansionCount = expansions.length;
-        const totalEntityCount = primaryEntityCount + expansionEntityTotal;
-        const durationStr = p.duration_sec != null ? `${p.duration_sec}s` : '';
-        const primaryId = `qp-primary-${Math.random().toString(36).slice(2, 8)}`;
+    for (const [queryText, runs] of primaryGroups.entries()) {
+        if (runs.length === 1) {
+            // ── Single-run branch — preserve existing render verbatim ──
+            const p = runs[0];
+            const expansions = (queries || []).filter(q => q.is_expansion && q.primary_query === p.query);
+            const cityExp = expansions.filter(e => e.widening_type === 'city');
+            const postalExp = expansions.filter(e => e.widening_type === 'postal_code');
 
-        const summaryParts = [];
-        if (expansionCount > 0) {
-            summaryParts.push(`${totalEntityCount} ${t('monitor.queriesNewEntities')}`);
-            summaryParts.push(t('monitor.queriesBreakdown', {
-                primary: primaryEntityCount,
-                widen: expansionEntityTotal,
-                count: expansionCount,
-            }));
-        } else {
-            summaryParts.push(`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`);
-        }
-        if (durationStr) summaryParts.push(durationStr);
+            const primaryEntityCount = p.new_companies || 0;
+            const expansionEntityTotal = expansions.reduce((s, e) => s + (e.new_companies || 0), 0);
+            const expansionCount = expansions.length;
+            const totalEntityCount = primaryEntityCount + expansionEntityTotal;
+            const durationStr = p.duration_sec != null ? `${p.duration_sec}s` : '';
+            const primaryId = `qp-primary-${Math.random().toString(36).slice(2, 8)}`;
 
-        if (collapsible) {
-            if (expansionCount === 0) {
-                lines.push(`
-                    <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
-                        <div
-                            class="qp-row-clickable"
-                            data-search-query="${escapeHtml(p.query)}"
-                            role="button"
-                            tabindex="0"
-                            style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
-                            title="${t('job.queriesClickToFilter')}"
-                        >
-                            <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
-                            <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
-                            <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+            const summaryParts = [];
+            if (expansionCount > 0) {
+                summaryParts.push(`${totalEntityCount} ${t('monitor.queriesNewEntities')}`);
+                summaryParts.push(t('monitor.queriesBreakdown', {
+                    primary: primaryEntityCount,
+                    widen: expansionEntityTotal,
+                    count: expansionCount,
+                }));
+            } else {
+                summaryParts.push(`${primaryEntityCount} ${t('monitor.queriesNewEntities')}`);
+            }
+            if (durationStr) summaryParts.push(durationStr);
+
+            if (collapsible) {
+                if (expansionCount === 0) {
+                    lines.push(`
+                        <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
+                            <div
+                                class="qp-row-clickable"
+                                data-search-query="${escapeHtml(p.query)}"
+                                role="button"
+                                tabindex="0"
+                                style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
+                                title="${t('job.queriesClickToFilter')}"
+                            >
+                                <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
+                                <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
+                                <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+                            </div>
                         </div>
-                    </div>
-                `);
+                    `);
+                } else {
+                    lines.push(`
+                        <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
+                            <div
+                                class="qp-row-clickable"
+                                data-search-query="${escapeHtml(p.query)}"
+                                role="button"
+                                tabindex="0"
+                                style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
+                                title="${t('job.queriesClickToFilter')}"
+                            >
+                                <span
+                                    class="qp-chevron-btn"
+                                    data-toggle-target="${primaryId}"
+                                    style="cursor:pointer; padding:0 4px"
+                                    onclick="event.stopPropagation(); (function(el){
+                                        var body=document.getElementById(el.dataset.toggleTarget);
+                                        if(!body) return;
+                                        var chevron=el.querySelector('.qp-chevron');
+                                        var hidden=body.style.display==='none';
+                                        body.style.display=hidden?'':'none';
+                                        if(chevron) chevron.style.transform=hidden?'rotate(90deg)':'';
+                                    })(this)"
+                                >
+                                    <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
+                                </span>
+                                <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
+                                <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
+                                <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
+                            </div>
+                            <div id="${primaryId}" style="display:none; padding-left:var(--space-lg); padding-top:var(--space-xs)">
+                                ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
+                            </div>
+                        </div>
+                    `);
+                }
             } else {
                 lines.push(`
                     <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
@@ -101,15 +147,63 @@ export function renderQueriesPanel(queries, opts = {}) {
                             data-search-query="${escapeHtml(p.query)}"
                             role="button"
                             tabindex="0"
+                            style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0; cursor:pointer"
+                            title="${t('job.queriesClickToFilter')}"
+                        >
+                            <span><span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span> <strong>${escapeHtml(p.query)}</strong></span>
+                            <span style="color:var(--text-muted); font-size:var(--font-sm)">→ ${summaryParts.join(' · ')}</span>
+                        </div>
+                        <div style="padding-left:var(--space-lg)">
+                            ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
+                        </div>
+                    </div>
+                `);
+            }
+        } else {
+            // ── Multi-run branch — aggregate + chevron expand for per-run details ──
+            const aggregatedNewCompanies = runs.reduce((s, r) => s + (r.new_companies || 0), 0);
+            const aggregatedDuration = runs.reduce((s, r) => s + (r.duration_sec || 0), 0);
+            const groupId = `qp-runs-${Math.random().toString(36).slice(2, 8)}`;
+
+            const summaryParts = [
+                `${aggregatedNewCompanies} ${t('monitor.queriesNewEntities')}`,
+                `${Math.round(aggregatedDuration)}s`,
+                t('job.queriesRunsAggregated', { count: runs.length }),
+            ];
+
+            const runDetails = runs.map((r, idx) => {
+                const reasonText = r.abort_reason ? stopReasonText(r.abort_reason, null, capMin) : '';
+                const detailParts = [
+                    t('job.queriesRunDetail', { n: idx + 1, total: runs.length }),
+                    `${r.new_companies || 0} ${t('monitor.queriesNewEntities')}`,
+                    r.duration_sec != null ? `${r.duration_sec}s` : '',
+                    reasonText ? `[${escapeHtml(reasonText)}]` : '',
+                ].filter(Boolean);
+                return `
+                    <div style="display:flex; gap:8px; padding:4px 0; font-size:var(--font-xs); color:var(--text-secondary)">
+                        <span style="color:var(--text-muted)">└─</span>
+                        <span class="qp-state-icon">✓</span>
+                        <span>${detailParts.join(' · ')}</span>
+                    </div>
+                `;
+            }).join('');
+
+            if (collapsible) {
+                lines.push(`
+                    <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
+                        <div
+                            class="qp-row-clickable"
+                            data-search-query="${escapeHtml(queryText)}"
+                            role="button"
+                            tabindex="0"
                             style="display:flex; align-items:center; gap:8px; padding:6px var(--space-sm); cursor:pointer; border-radius:var(--radius-sm); background:var(--bg-elevated); border:1px solid var(--border-subtle)"
                             title="${t('job.queriesClickToFilter')}"
                         >
                             <span
                                 class="qp-chevron-btn"
-                                data-toggle-target="${primaryId}"
                                 style="cursor:pointer; padding:0 4px"
                                 onclick="event.stopPropagation(); (function(el){
-                                    var body=document.getElementById(el.dataset.toggleTarget);
+                                    var body=document.getElementById('${groupId}');
                                     if(!body) return;
                                     var chevron=el.querySelector('.qp-chevron');
                                     var hidden=body.style.display==='none';
@@ -120,34 +214,28 @@ export function renderQueriesPanel(queries, opts = {}) {
                                 <span class="qp-chevron" style="display:inline-block; transition:transform 0.2s; color:var(--text-muted); font-size:var(--font-xs)">▸</span>
                             </span>
                             <span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span>
-                            <strong style="font-size:var(--font-sm)">${escapeHtml(p.query)}</strong>
+                            <strong style="font-size:var(--font-sm)">${escapeHtml(queryText)}</strong>
                             <span style="color:var(--text-muted); font-size:var(--font-xs); margin-left:auto">→ ${summaryParts.join(' · ')}</span>
                         </div>
-                        <div id="${primaryId}" style="display:none; padding-left:var(--space-lg); padding-top:var(--space-xs)">
-                            ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
+                        <div id="${groupId}" style="display:none; padding-left:var(--space-lg); padding-top:var(--space-xs)">
+                            ${runDetails}
+                        </div>
+                    </div>
+                `);
+            } else {
+                // Non-collapsible (live monitor variant) — render flat with all runs visible
+                lines.push(`
+                    <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
+                        <div style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0">
+                            <span><span class="qp-state-icon">✓</span> <strong>${escapeHtml(queryText)}</strong></span>
+                            <span style="color:var(--text-muted); font-size:var(--font-sm)">→ ${summaryParts.join(' · ')}</span>
+                        </div>
+                        <div style="padding-left:var(--space-lg)">
+                            ${runDetails}
                         </div>
                     </div>
                 `);
             }
-        } else {
-            lines.push(`
-                <div class="qp-row qp-row--done" style="margin-bottom:var(--space-sm)">
-                    <div
-                        class="qp-row-clickable"
-                        data-search-query="${escapeHtml(p.query)}"
-                        role="button"
-                        tabindex="0"
-                        style="display:flex; justify-content:space-between; gap:24px; padding:6px 12px 6px 0; cursor:pointer"
-                        title="${t('job.queriesClickToFilter')}"
-                    >
-                        <span><span class="qp-state-icon" aria-label="${t('monitor.queriesStateDone')}">✓</span> <strong>${escapeHtml(p.query)}</strong></span>
-                        <span style="color:var(--text-muted); font-size:var(--font-sm)">→ ${summaryParts.join(' · ')}</span>
-                    </div>
-                    <div style="padding-left:var(--space-lg)">
-                        ${_renderExpansionBuckets(cityExp, postalExp, expansions, capMin, collapsible)}
-                    </div>
-                </div>
-            `);
         }
     }
 
