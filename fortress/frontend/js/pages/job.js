@@ -50,6 +50,17 @@ function renderBulkDiscoveryPanel(meta, data) {
     `;
 }
 
+// TODO consolidate: monitor.js + dashboard.js have similar duration formatters; extract to components.js when convenient.
+function formatLongDuration(sec) {
+    if (sec == null || sec < 0) return '';
+    if (sec < 60) return `${sec}s`;
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    return `${m}m ${s}s`;
+}
+
 function buildScoreboardCard(job, linkStats, summary) {
     if (!linkStats) return '';
     const confirmed = linkStats.confirmed || 0;
@@ -107,7 +118,7 @@ function buildScoreboardCard(job, linkStats, summary) {
             <div>
                 <h1 class="page-title" style="margin-bottom:var(--space-sm)">
                     ${escapeHtml(job.batch_name)}
-                    ${job.batch_number ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-muted); margin-left:var(--space-sm)">${t('job.batchNumber', { number: job.batch_number })}</span>` : ''}
+                    ${job.batch_number ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-muted); margin-left:var(--space-sm)">${t('job.batchNumber', { number: job.batch_number })}${job.duration_sec != null ? ` · ${formatLongDuration(job.duration_sec)}` : ''}</span>` : ''}
                 </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap">
                     ${statusBadge(job.status)}

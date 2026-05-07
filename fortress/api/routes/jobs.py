@@ -614,7 +614,10 @@ async def get_job(batch_id: str, request: Request):
             sj.shortfall_reason,
             sj.current_query,
             COALESCE(sj.strict_naf, FALSE) AS strict_naf,
-            EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds
+            EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds,
+            EXTRACT(EPOCH FROM (
+                (SELECT MAX(timestamp) FROM batch_log WHERE batch_id = sj.batch_id) - sj.created_at
+            ))::int AS duration_sec
         FROM batch_data sj
         WHERE sj.batch_id = %s {ws_filter}
     """, (batch_id,) + ws_params)

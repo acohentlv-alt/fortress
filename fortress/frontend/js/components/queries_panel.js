@@ -24,6 +24,12 @@ export function stopReasonText(reason, cumulative, capMin) {
             return t('monitor.queriesStopMaxPerPrimary').replace('{{n}}', '12');
         case 'time_cap_reached':
             return t('monitor.queriesStopTimeCap').replace('{{n}}', capMin != null ? capMin : '?');
+        case 'total_time_cap_reached':
+            return t('monitor.queriesStopTotalTimeCap').replace('{{n}}', capMin != null ? capMin : '?');
+        case 'time_cap_reached_primary':
+            return t('monitor.queriesStopPrimaryTimeCap').replace('{{n}}', capMin != null ? capMin : '?');
+        case 'antibot_block':
+            return t('monitor.queriesStopAntibot');
         default:
             return t('monitor.queriesStopGeneric');
     }
