@@ -724,7 +724,7 @@
       "copied": "Copied!",
       "cat": {
         "website_unreachable": "Websites unreachable",
-        "maps_no_data": "No Maps data",
+        "maps_no_data": "No SIRENE match (Maps step)",
         "a2_extract_anomaly": "Mentions-légales extraction anomaly",
         "entity_error": "Raw entity errors"
       }

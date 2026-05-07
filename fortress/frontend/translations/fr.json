@@ -753,7 +753,7 @@
       "copied": "Copié !",
       "cat": {
         "website_unreachable": "Sites web injoignables",
-        "maps_no_data": "Aucune donnée Maps",
+        "maps_no_data": "Sans match SIRENE (étape Maps)",
         "a2_extract_anomaly": "Anomalie d'extraction (mentions légales)",
         "entity_error": "Erreurs entité brutes"
       }
