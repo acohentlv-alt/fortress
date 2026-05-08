@@ -64,6 +64,7 @@ def _extract_street_key(normalized: str) -> str:
 
 
 _STREET_ABBREVS = {
+    # Street types (existing — DO NOT MODIFY)
     "rte": "route", "r": "rue",
     "av": "avenue", "ave": "avenue",
     "bd": "boulevard", "blvd": "boulevard",
@@ -74,6 +75,20 @@ _STREET_ABBREVS = {
     "res": "residence", "lot": "lotissement",
     "zac": "zac", "za": "zone artisanale",
     "zi": "zone industrielle",
+    # Civic-title abbreviations (May 8 — Brief 02). French government registries
+    # routinely abbreviate marshal/general/colonel/commandant/lieutenant honorifics
+    # in street names; Maps shows the long form. See Section 3.1 of
+    # FRENCH_BUSINESS_TAXONOMY.md for the rationale and the rejected candidates
+    # (mar/cap/pr/me — false-positive risk on Languedoc/Catalan toponyms or low yield).
+    "mal": "marechal",          # Mal Foch / Mal de Lattre / Mal Joffre
+    "gal": "general",            # Gal de Gaulle / Gal Leclerc
+    "gen": "general",            # Gen de Gaulle (alternate spelling, INPI rare)
+    "col": "colonel",            # Col Fabien / Col Driant
+    "cdt": "commandant",         # Cdt Cousteau / Cdt l'Herminier
+    "lt": "lieutenant",          # Lt Colonel X (rare — but verified in SIRENE)
+    "dr": "docteur",             # Dr Schweitzer / Dr Roux
+    "st": "saint",               # St Charles / St Sabin / St Michel
+    "ste": "sainte",             # Ste Radegonde / Ste Marie
 }
 
 
