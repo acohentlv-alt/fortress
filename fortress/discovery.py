@@ -3758,7 +3758,39 @@ async def run(batch_id: str) -> None:
                     if settings.worker_pool_enabled:
                         await _entity_queue.put(_entity_data)
                     else:
-                        await _process_entity_post_triage(*_entity_data)
+                        try:
+                            await _process_entity_post_triage(*_entity_data)
+                        except Exception as _persist_exc:
+                            # Persist failed AFTER counter increment at the producer
+                            # site. Decrement so companies_discovered stays in sync
+                            # with what's actually in batch_tags. Surface to batch_log
+                            # so the failure is visible in the anomalies tile, not
+                            # just stdout (maps.py:940 only logs, doesn't audit).
+                            companies_discovered -= 1
+                            # NOTE: do NOT decrement `qualified`. The `qualified += 1`
+                            # at line ~3856 fires INSIDE _process_entity_post_triage and
+                            # may or may not have executed before the raise. Off-by-one
+                            # in either direction is acceptable — qualified is a
+                            # qualitative "had phone or website" filter, not load-bearing.
+                            log.warning(
+                                "discovery.persist_failed_inline",
+                                maps_name=maps_name,
+                                error=str(_persist_exc),
+                            )
+                            try:
+                                async with pool.connection() as _err_conn:
+                                    await log_audit(
+                                        _err_conn,
+                                        batch_id=batch_id,
+                                        siren=f"PERSIST_FAIL_{maps_name[:30]}",
+                                        action="entity_error",
+                                        result="fail",
+                                        detail=f"persist failed: {str(_persist_exc)[:300]} | maps_name={maps_name}",
+                                        search_query=_current_search_query or None,
+                                        workspace_id=batch_workspace_id,
+                                    )
+                            except Exception:
+                                pass  # best-effort
 
                 # ── Worker body (runs inline or in pool worker task) ──────────
                 # Contains everything after triage: MAPS entity creation, DB persist,
@@ -5491,6 +5523,7 @@ async def run(batch_id: str) -> None:
 
                 if settings.worker_pool_enabled:
                     async def _worker_task() -> None:
+                        nonlocal companies_discovered, qualified
                         while True:
                             item = await _entity_queue.get()
                             try:
@@ -5498,6 +5531,9 @@ async def run(batch_id: str) -> None:
                                     break
                                 await _process_entity_post_triage(*item)
                             except Exception as _worker_exc:
+                                # Persist failed — decrement counter (same reason as
+                                # inline path: producer already incremented at dispatch)
+                                companies_discovered -= 1
                                 log.exception(
                                     "worker.entity_error",
                                     error=str(_worker_exc),
