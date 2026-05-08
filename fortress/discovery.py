@@ -408,6 +408,15 @@ def _normalize_name(name: str) -> str:
         # enough that the lift doesn't justify the risk surface).
         "sarlu", "selarl", "selas", "scp", "scm",
         "gfa", "cuma", "sica",
+        # Brief 05 (May 8) — extension for taxonomy 2.G (Associations & fondations).
+        # `assoc` (16,701 active SIRENs) is the abbreviation common in older SIRENE
+        # registrations. `fondation` (1,436 active SIRENs) and `fond` (223 active
+        # SIRENs) are the leading prefixes for Fondation entities (cat-jur 9300).
+        # `association` is already in the set — Brief 05 fills the abbrev/fondation
+        # gap. False-positive guard is the same structural tokenization: `fonderie`
+        # is its own token (set lookup miss), `fonds de dotation` keeps `fonds`
+        # (≠ `fond`), `associu` (Corsican) is its own token.
+        "assoc", "fondation", "fond",
     }
     tokens = [t for t in cleaned.split() if t not in _LEGAL and len(t) > 0]
     return " ".join(tokens)
@@ -985,7 +994,7 @@ _FOREIGN_INDICATORS = frozenset({
 # Step 0 INPI fallback to retry with the prefix-only name when the full search
 # misses. Gated narrowly to associations/fondations — generic " - " fallback
 # would catch too many false-positive patterns (lawyer names, branch suffixes).
-_ASSOC_PREFIX_RE = re.compile(r"^\s*(association|asso|fondation)\b", re.IGNORECASE)
+_ASSOC_PREFIX_RE = re.compile(r"^\s*(association|assoc|asso|fondation|fond)\b", re.IGNORECASE)
 
 
 def _parse_maps_address(addr: str | None) -> tuple[str | None, str | None]:
