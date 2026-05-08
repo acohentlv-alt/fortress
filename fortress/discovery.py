@@ -398,6 +398,16 @@ def _normalize_name(name: str) -> str:
         "scs", "sca", "ei", "eirl", "asso", "association",
         "et", "cie", "fils", "freres", "groupe", "holding",
         "earl", "gaec", "scea", "scev",
+        # Brief 04 (May 8) — extension for taxonomy 2.A (SARLU/SELARL/SELAS/SCM/SCP)
+        # and taxonomy 2.C (GFA/CUMA/SICA). False-positive guard is structural:
+        # tokens are split on whitespace before set lookup, so substring matches
+        # like "curcuma"/"sicamus" do not strip. Excluded from the extension:
+        # "se" (Société européenne, code 5800) — high false-positive risk
+        # ("Le Bon SE" → "Le Bon" is harmless but "Société Européenne SE" → "societe
+        # europeenne" demonstrates the hit; the volume of code 5800 SIRENs is low
+        # enough that the lift doesn't justify the risk surface).
+        "sarlu", "selarl", "selas", "scp", "scm",
+        "gfa", "cuma", "sica",
     }
     tokens = [t for t in cleaned.split() if t not in _LEGAL and len(t) > 0]
     return " ".join(tokens)
