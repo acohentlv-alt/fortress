@@ -789,6 +789,9 @@ async def get_job(batch_id: str, request: Request):
             COUNT(DISTINCT co.siren) FILTER (
                 WHERE co.naf_status = 'mismatch' AND co.link_confidence = 'pending'
             ) AS mismatch_pending,
+            COUNT(DISTINCT co.siren) FILTER (
+                WHERE co.naf_status = 'verified' AND co.link_confidence = 'pending'
+            ) AS verified_pending,
             COUNT(DISTINCT co.siren) FILTER (WHERE co.naf_status IN ('verified', 'mismatch')) AS evaluated,
             COUNT(DISTINCT co.siren) FILTER (
                 WHERE co.naf_status = 'verified'
@@ -816,6 +819,7 @@ async def get_job(batch_id: str, request: Request):
         link_stats["naf_mismatch"] = int(naf_row.get("mismatch") or 0)
         link_stats["naf_mismatch_confirmed"] = int(naf_row.get("mismatch_confirmed") or 0)
         link_stats["naf_mismatch_pending"] = int(naf_row.get("mismatch_pending") or 0)
+        link_stats["naf_verified_pending"] = int(naf_row.get("verified_pending") or 0)
         link_stats["naf_evaluated"] = int(naf_row.get("evaluated") or 0)
         # BUG 2 FIX — clickable counts (legend + bar segment use these so legend == click result)
         link_stats["naf_verified_clickable"] = int(naf_row.get("verified_clickable") or 0)

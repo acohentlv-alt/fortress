@@ -751,6 +751,8 @@
     "scoreboardPendingApproval": "À VALIDER",
     "scoreboardSubtextPending": "{{count}} entreprises ont besoin de validation manuelle.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmées, {{pending}} en attente)",
+    "pendingSplitInPicker": "✓ {{count}} dans votre filière",
+    "pendingSplitOutOfPicker": "⚠ {{count}} dans d'autres secteurs",
     "strictMode": {
       "badge": "MODE STRICT",
       "tooltip": "Cette campagne n'inclut que le code NAF exact, sans expansion sectorielle. Les entités hors-cible sont cachées."

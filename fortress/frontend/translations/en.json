@@ -723,6 +723,8 @@
     "scoreboardPendingApproval": "AWAITING REVIEW",
     "scoreboardSubtextPending": "{{count}} companies need manual review.",
     "linkStatsNafMismatchSubline": "({{confirmed}} confirmed, {{pending}} pending)",
+    "pendingSplitInPicker": "✓ {{count}} in your sector",
+    "pendingSplitOutOfPicker": "⚠ {{count}} in other sectors",
     "strictMode": {
       "badge": "STRICT MODE",
       "tooltip": "This campaign only includes the exact NAF code, without sector expansion. Off-target entities are hidden."

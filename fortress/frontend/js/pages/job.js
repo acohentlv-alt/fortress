@@ -461,6 +461,17 @@ function buildScoreboardCard(job, linkStats, summary) {
     // Pending hero card — promotes the previously-buried badge to first-class.
     // Hidden when pending=0. Click toggles the existing 'pending' filter (same
     // semantics as the legend row + the deleted badge).
+    // Pending split — show only when picker was set (NULL naf_status batches have no in/out distinction)
+    const verifiedPending = linkStats.naf_verified_pending || 0;
+    const mismatchPending = linkStats.naf_mismatch_pending || 0;
+    const showPendingSplit = pending > 0 && pickedNafs.length > 0;
+    const pendingSplitHtml = showPendingSplit ? `
+        <div style="font-size:var(--font-xs); color:var(--text-muted); margin-top:var(--space-xs); line-height:1.4">
+            <span style="color:var(--success)">${t('job.pendingSplitInPicker', { count: verifiedPending })}</span>
+            ·
+            <span style="color:#f59e0b">${t('job.pendingSplitOutOfPicker', { count: mismatchPending })}</span>
+        </div>
+    ` : '';
     const pendingHeroCardHtml = pending > 0 ? `
         <div class="pending-hero-card" data-filter="pending"
              style="cursor:pointer; background:var(--bg-elevated); border-radius:var(--radius);
@@ -471,6 +482,7 @@ function buildScoreboardCard(job, linkStats, summary) {
                 <span style="color:var(--text-muted); font-size:var(--font-sm)">/ ${total}</span>
             </div>
             <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.4">${t('job.scoreboardSubtextPending', { count: pending })}</div>
+            ${pendingSplitHtml}
         </div>
     ` : '';
 
@@ -842,7 +854,7 @@ export async function renderJob(container, batchId) {
     }
 
     // Sort change handler
-    document.getElementById('job-sort').addEventListener('change', (e) => {
+    document.getElementById('job-sort')?.addEventListener('change', (e) => {
         loadCompanies(batchId, 1, e.target.value, _currentFilter, _currentSearchQuery);
     });
 
