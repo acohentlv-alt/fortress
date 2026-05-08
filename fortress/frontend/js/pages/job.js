@@ -245,8 +245,12 @@ function buildScoreboardCard(job, linkStats, summary) {
     `;
 
     // ── C: Two hero metric cards ───────────────────────────────────
-    // Show Secteur card if either picked NAFs OR there's at least one confirmed match with a NAF
-    const showSectorCard = hasPicked || dominantNaf !== null;
+    // Hide the SECTEUR DOMINANT tile for wide batches with no picker — the
+    // "dominant" code is essentially random when the matcher had no sector
+    // constraint. Keep it for picker batches AND for strict batches (where it
+    // shows the strict-match rate).
+    const isStrict = !!job.strict_naf;
+    const showSectorCard = hasPicked || isStrict;
 
     const confirmPct = pct(confirmed);
 
