@@ -359,17 +359,59 @@ async def lifespan(app: FastAPI):
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_tags_upper_batch_name ON batch_tags (UPPER(batch_name))")
 
                 # ── MAPS ID sequence (race-condition-safe) ────────────────
+                # IMPORTANT: aggregate is MAX(siren) NOT MAX(SUBSTRING(siren, 5)::INTEGER).
+                # Both produce the same value while all MAPS IDs are 9 chars (zero-padded
+                # 5-digit suffix), but ONLY MAX(siren) uses companies_pkey via Index Only Scan
+                # Backward (~0.05 ms). The legacy MAX(SUBSTRING(...)::INTEGER) form forces a
+                # parallel seq scan over 14.7M rows (~11s on cold cache) — see Brief 06.
+                #
+                # SAFETY TRIPWIRE (defense-in-depth): at MAPS99999 the format f"MAPS{next_id:05d}"
+                # would produce a 10-char MAPS100000. The schema bounds this — companies.siren
+                # is varchar(9), so the INSERT itself raises StringDataRightTruncation. A 10-char
+                # MAPS row CANNOT exist in the table with the current schema, which means lex-max
+                # divergence from numeric-max cannot manifest in practice. Today: 6,590 rows;
+                # runway to MAPS99999: ~14 years at current rate. The guard below is paranoia +
+                # forward documentation: if a future schema-widening migration ever lands without
+                # auditing this file, the WARNING + slow-path fallback gives us a graceful "log
+                # and continue" instead of silent breakage.
                 await conn.execute("CREATE SEQUENCE IF NOT EXISTS maps_id_seq")
-                await conn.execute("""
-                    SELECT setval('maps_id_seq',
-                        COALESCE(
-                            (SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER))
-                             FROM companies WHERE siren LIKE 'MAPS%%'),
-                            0
-                        ) + 1,
-                        false
+                _maps_overflow_check = await (await conn.execute("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM companies
+                        WHERE siren ~ '^MAPS[0-9]{6,}$'
                     )
-                """)
+                """)).fetchone()
+                if _maps_overflow_check and _maps_overflow_check[0]:
+                    logger.warning(
+                        "⚠ MAPS ID overflow detected: a row with 6+ digit suffix exists. "
+                        "The lex-max → numeric-max equivalence no longer holds. "
+                        "Falling back to legacy SUBSTRING-based aggregate (slow, ~11s). "
+                        "Action required: widen the f-string format and re-pad existing rows."
+                    )
+                    await conn.execute("""
+                        SELECT setval('maps_id_seq',
+                            COALESCE(
+                                (SELECT MAX(CAST(SUBSTRING(siren FROM 5) AS INTEGER))
+                                 FROM companies WHERE siren LIKE 'MAPS%%'),
+                                0
+                            ) + 1,
+                            false
+                        )
+                    """)
+                else:
+                    await conn.execute("""
+                        SELECT setval('maps_id_seq',
+                            COALESCE(
+                                CAST(SUBSTRING(
+                                    (SELECT MAX(siren)
+                                     FROM companies WHERE siren LIKE 'MAPS%%')
+                                    FROM 5
+                                ) AS INTEGER),
+                                0
+                            ) + 1,
+                            false
+                        )
+                    """)
 
                 # Backfill batch_tags.batch_id from batch_data (idempotent — only updates NULLs)
                 await conn.execute("""
