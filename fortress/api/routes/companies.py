@@ -1466,6 +1466,14 @@ async def _get_company_impl(siren: str, request=None):
         'auto_widened',
         # Rollbacks (rare but useful for transparency)
         'rollback_phase3_retroactive',
+        # ── NEW: Operational pipeline steps (Brief 08) ──────────────────
+        'maps_lookup', 'website_crawl', 'financial_data', 'a2_entry', 'officers_found',
+        # ── NEW: A2 informational outcomes (Brief 08) ──────────────────
+        'a2_no_mentions_page', 'a2_legal_name_extracted', 'a2_inpi_no_hit',
+        'a2_skip_same_name',
+        # ── NEW: Filtering / budget outcomes (Brief 08) ────────────────
+        'relevance_filter', 'gemini_budget_exceeded',
+        'siren_website_rejected_franchise_live',
     )
 
     # Audit rows can be keyed by EITHER the MAPS ID (for entities discovered via Maps) OR the

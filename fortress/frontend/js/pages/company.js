@@ -672,7 +672,19 @@ function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkC
         const action = row.action;
         const result = row.result;
         let icon = 'ℹ️';
-        if (action.startsWith('auto_linked_')) icon = '✅';
+        // Operational pipeline steps (distinct symbols for at-a-glance recognition)
+        // These must come BEFORE prefix checks — a2_entry would otherwise match startsWith('a2_')
+        if (action === 'maps_lookup') icon = '🗺️';
+        else if (action === 'website_crawl') icon = '🌐';
+        else if (action === 'financial_data') icon = '💰';
+        else if (action === 'officers_found') icon = '👥';
+        else if (action === 'a2_entry') icon = '🔍';
+        // Filtering / outcome rejections
+        else if (action === 'relevance_filter') icon = '❌';
+        else if (action === 'siren_website_rejected_franchise_live') icon = '❌';
+        else if (action === 'gemini_budget_exceeded') icon = '⚠️';
+        // Existing dispatch — unchanged from prior code
+        else if (action.startsWith('auto_linked_')) icon = '✅';
         else if (action.startsWith('gemini_shadow_yes')) icon = '✅';
         else if (action === 'gemini_shadow_no' || action === 'gemini_rescue_rejected_naf') icon = '❌';
         else if (action === 'gemini_quarantine' || action === 'gemini_frankenstein_protected') icon = '⚠️';
