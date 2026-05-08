@@ -105,6 +105,7 @@ function buildScoreboardCard(job, linkStats, summary) {
             inpi_mentions_legales: 'company.linkReasonInpiMentionsLegales',
             chain: 'company.linkReasonChain',
             gemini_judge: 'company.linkReasonGeminiJudge',
+            gemini_promoted: 'company.linkReasonGeminiPromoted',
             geo_proximity: 'company.linkReasonGeoProximity',
             cp_name_disamb: 'company.linkReasonCpNameDisamb',
             cp_name_disamb_indiv: 'company.linkReasonCpNameDisambIndiv',

@@ -262,6 +262,7 @@ function _buildEntityLinkBanner(co, linkedCo, suggestedMatches, linkMethod, cont
         if (method === 'inpi_mentions_legales') return t('company.linkReasonInpiMentionsLegales');
         if (method === 'chain') return t('company.linkReasonChain');
         if (method === 'gemini_judge') return t('company.linkReasonGeminiJudge');
+        if (method === 'gemini_promoted') return t('company.linkReasonGeminiPromoted');
         if (method === 'geo_proximity') return t('company.linkReasonGeoProximity');
         return t('company.linkReasonAuto');
     };

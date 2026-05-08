@@ -742,7 +742,13 @@ async def get_job(batch_id: str, request: Request):
                 WHEN co.link_confidence = 'pending' THEN 'pending'
                 ELSE 'confirmed'
             END AS state,
-            COALESCE(co.link_method, 'native_sirene') AS method,
+            -- Split gemini_judge into two surfaces: regular judge vs Phase 2 promotion.
+            -- Phase 2 promotion sets link_method='gemini_judge' AND rescued_by='gemini_promoted'.
+            CASE
+                WHEN COALESCE(co.link_method, 'native_sirene') = 'gemini_judge'
+                     AND co.rescued_by = 'gemini_promoted' THEN 'gemini_promoted'
+                ELSE COALESCE(co.link_method, 'native_sirene')
+            END AS method,
             COUNT(DISTINCT co.siren) AS n
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
