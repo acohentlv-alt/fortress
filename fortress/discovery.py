@@ -1606,6 +1606,73 @@ async def _gather_alternatives(
         return []
 
 
+def _etab_display_enseigne(r) -> str:
+    """Return the best display enseigne for a Step 2.7 establishment row.
+
+    Prefers establishment-level enseigne (r[9] = e.enseigne_etablissement) over
+    establishment denomination (r[10] = e.denomination_usuelle) over the head
+    SIREN's enseigne (r[5] = c.enseigne). This is essential for the camping
+    municipal pattern where the head SIREN denomination is "COMMUNE DE X" but
+    the operating storefront is "CAMPING MUNICIPAL DE X".
+
+    Row column layout (Step 2.7 SELECT with enseigne_etablissement extension):
+      r[0]  e.siret
+      r[1]  e.siren
+      r[2]  e.naf_etablissement
+      r[3]  e.code_postal_etab
+      r[4]  c.denomination
+      r[5]  c.enseigne
+      r[6]  c.adresse
+      r[7]  c.ville
+      r[8]  c.statut
+      r[9]  e.enseigne_etablissement   ← preferred display name
+      r[10] e.denomination_usuelle     ← second choice
+    """
+    return (r[9] or r[10] or r[5] or "")
+
+
+def _disambiguate_etab_rows(maps_name: str, etab_rows: list) -> dict | None:
+    """Disambiguate multiple Step 2.7 establishment rows by maps_name token overlap.
+
+    Token sources: union of head-SIREN (denomination + enseigne) AND
+    establishment-level (enseigne_etablissement + denomination_usuelle).
+    Including establishment-level fields is essential for the camping municipal
+    pattern where the head SIREN denomination is the commune name (zero overlap
+    with the Maps storefront name).
+
+    Returns a candidate dict (siren, denomination, enseigne, score, method,
+    adresse, ville) when a single dominant winner is found (overlap ≥ 1 and
+    strictly greater than second place). Returns None to fall through to Step 5.
+
+    Row layout: see _etab_display_enseigne for the 11-column definition.
+    Single-row case: callers should handle len==1 directly; this function is
+    only called when len(etab_rows) > 1.
+    """
+    maps_tokens = set(_normalize_name(maps_name).split())
+    scored = []
+    for r in etab_rows:
+        name_tokens = set(_normalize_name(
+            f"{r[4] or ''} {r[5] or ''} {r[9] or ''} {r[10] or ''}"
+        ).split())
+        overlap = len(maps_tokens & name_tokens)
+        scored.append((overlap, r))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    if scored and scored[0][0] >= 1 and (
+        len(scored) == 1 or scored[0][0] > scored[1][0]
+    ):
+        r = scored[0][1]
+        return {
+            "siren": r[1],
+            "denomination": r[4] or "",
+            "enseigne": _etab_display_enseigne(r),
+            "score": 0.88,
+            "method": "siret_address_naf",
+            "adresse": r[6] or "",
+            "ville": r[7] or "",
+        }
+    return None
+
+
 async def _match_to_sirene(
     conn: Any,
     maps_name: str,
@@ -2480,7 +2547,8 @@ async def _match_to_sirene(
         async with _step_2_7_cm:
             etab_cur = await conn.execute(
                 """SELECT e.siret, e.siren, e.naf_etablissement, e.code_postal_etab,
-                          c.denomination, c.enseigne, c.adresse, c.ville, c.statut
+                          c.denomination, c.enseigne, c.adresse, c.ville, c.statut,
+                          e.enseigne_etablissement, e.denomination_usuelle
                      FROM establishments e
                      JOIN companies c ON c.siren = e.siren
                     WHERE e.code_postal_etab = %s
@@ -2501,47 +2569,42 @@ async def _match_to_sirene(
                     siret=row[0],
                     siren=row[1],
                     naf=row[2],
+                    etab_enseigne=row[9],
                 )
                 return {
                     "siren": row[1],
                     "denomination": row[4] or "",
-                    "enseigne": row[5] or "",
+                    "enseigne": _etab_display_enseigne(row),
                     "score": 0.92,
                     "method": "siret_address_naf",
                     "adresse": row[6] or "",
                     "ville": row[7] or "",
                 }
             elif len(etab_rows) > 1:
-                # Disambiguate by maps_name token overlap
-                maps_tokens = set(_normalize_name(maps_name).split())
-                scored = []
-                for r in etab_rows:
-                    name_tokens = set(_normalize_name(f"{r[4] or ''} {r[5] or ''}").split())
-                    overlap = len(maps_tokens & name_tokens)
-                    scored.append((overlap, r))
-                scored.sort(key=lambda x: x[0], reverse=True)
-                if scored and scored[0][0] >= 1 and (
-                    len(scored) == 1 or scored[0][0] > scored[1][0]
-                ):
-                    r = scored[0][1]
+                # Disambiguate via module-level helper (testable).
+                # Token sources include head-SIREN AND establishment-level fields.
+                # See _disambiguate_etab_rows docstring for the camping municipal pattern.
+                _winner = _disambiguate_etab_rows(maps_name, etab_rows)
+                if _winner is not None:
+                    _wr = next(
+                        r for r in etab_rows if r[1] == _winner["siren"]
+                    )
                     log.info(
                         "discovery.siret_address_naf_disamb",
                         maps_name=maps_name,
                         maps_cp=maps_cp,
-                        siret=r[0],
-                        siren=r[1],
-                        naf=r[2],
-                        token_overlap=scored[0][0],
+                        siret=_wr[0],
+                        siren=_wr[1],
+                        naf=_wr[2],
+                        token_overlap=len(
+                            set(_normalize_name(maps_name).split()) &
+                            set(_normalize_name(
+                                f"{_wr[4] or ''} {_wr[5] or ''} {_wr[9] or ''} {_wr[10] or ''}"
+                            ).split())
+                        ),
+                        etab_enseigne=_wr[9],
                     )
-                    return {
-                        "siren": r[1],
-                        "denomination": r[4] or "",
-                        "enseigne": r[5] or "",
-                        "score": 0.88,
-                        "method": "siret_address_naf",
-                        "adresse": r[6] or "",
-                        "ville": r[7] or "",
-                    }
+                    return _winner
                 # else fall through to Step 5
     else:
         # Step 2.7 guard-skipped: record fired=False so fire-rate is computable
@@ -4453,6 +4516,52 @@ async def run(batch_id: str) -> None:
                                             log.warning("discovery.trigram_pool_failed",
                                                         maps_name=maps_name, error=str(_trg_exc))
                                             _candidates_for_prompt = []
+                                        # Augment with SIRET-establishment candidates when picker+CP available.
+                                        # Trigram pool fetches by name token similarity from companies table —
+                                        # misses operating SIRETs whose head SIREN denomination is a commune
+                                        # or holding name (CAMPING MUNICIPAL DU GAVE under COMMUNE DE
+                                        # SAUVETERRE DE BEARN, etc.). Establishment lookup at maps_cp + picker
+                                        # NAF gives Gemini the right candidates to evaluate. Capped at 5 to
+                                        # keep prompt size bounded; Gemini sees up to 15 candidates total.
+                                        if maps_cp and picked_nafs:
+                                            try:
+                                                _etab_cur = await conn.execute(
+                                                    """SELECT e.siret, e.siren, e.naf_etablissement,
+                                                              e.enseigne_etablissement, e.denomination_usuelle,
+                                                              c.denomination, c.enseigne, c.adresse, c.ville
+                                                         FROM establishments e
+                                                         JOIN companies c ON c.siren = e.siren
+                                                        WHERE e.code_postal_etab = %s
+                                                          AND e.naf_etablissement = ANY(%s)
+                                                          AND e.etat_administratif = 'A'
+                                                          AND c.statut = 'A'
+                                                          AND c.siren NOT LIKE 'MAPS%%'
+                                                        LIMIT 5""",
+                                                    (maps_cp, list(picked_nafs)),
+                                                )
+                                                _etab_aug = await _etab_cur.fetchall()
+                                                _existing_sirens = {
+                                                    c.get("siren") for c in _candidates_for_prompt if c.get("siren")
+                                                }
+                                                for _r in _etab_aug:
+                                                    _siren_aug = _r[1]
+                                                    if _siren_aug in _existing_sirens:
+                                                        continue
+                                                    _candidates_for_prompt.append({
+                                                        "siren": _siren_aug,
+                                                        "denomination": _r[5] or "",
+                                                        # Prefer establishment-level enseigne (matches Step 2.7 helper).
+                                                        "enseigne": (_r[3] or _r[4] or _r[6] or ""),
+                                                        "adresse": _r[7] or "",
+                                                        "ville": _r[8] or "",
+                                                        "naf_code": _r[2] or "",
+                                                        "method": "establishments_pool",
+                                                        "score": 0.5,
+                                                    })
+                                                    _existing_sirens.add(_siren_aug)
+                                            except Exception as _aug_exc:
+                                                log.warning("discovery.establishments_pool_failed",
+                                                            maps_name=maps_name, error=str(_aug_exc))
                                         if not _candidates_for_prompt:
                                             await log_audit(
                                                 conn,
