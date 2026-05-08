@@ -35,72 +35,101 @@ function effectifLabel(code) {
 }
 
 function nafStatusBadge(status, ctx) {
-    // ctx = { link_confidence, link_method, link_signals } — optional, from company detail API
+    // ctx = { link_confidence, link_method, link_signals, rescued_by } — optional, from company detail API
     const _STRONG_METHODS = new Set(['inpi', 'siren_website', 'enseigne', 'phone', 'address', 'inpi_fuzzy_agree', 'inpi_mentions_legales', 'chain', 'gemini_judge', 'geo_proximity', 'siret_address_naf']);
 
+    // Existing variable name `map` preserved (was already `const map = {...}` at line 41 pre-fix).
     const map = {
         verified:  { cls: 'glass-badge--green',  icon: '✓', labelKey: 'company.nafVerified' },
-        mismatch:  { cls: 'glass-badge--amber',  icon: '⚠', labelKey: 'company.nafMismatch' },
+        mismatch:  { cls: 'glass-badge--amber',  icon: '⚠', labelKey: 'company.nafMismatch' },  // Path D default
         maps_only: { cls: 'glass-badge--grey',   icon: '○', labelKey: 'company.nafMapsOnly' },
         no_filter: null,
     };
     const m = map[status];
     if (!m) return '';
 
-    // Context-aware tooltip for mismatch badges
-    if (status === 'mismatch' && ctx) {
-        const { link_confidence, link_method, link_signals } = ctx;
-
-        // Case 1: rich tooltip with signal list. Triggers when EITHER:
-        //   (a) confirmed + strong method + link_signals — the original rescued case
-        //   (b) pending + strong method + link_signals.inpi_corroboration — the Phase 4
-        //       enseigne fallback case where the rescue inspection ran but didn't promote.
-        //       Without (b), pending rows with diagnostic inpi_corroboration data hit the
-        //       terse Case 2 tooltip, hiding the rescue's partial-match findings from Cindy.
-        const _hasInpiCorroboration = link_signals
-            && link_signals.inpi_corroboration
-            && typeof link_signals.inpi_corroboration === 'object';
-        if ((link_confidence === 'confirmed' && _STRONG_METHODS.has(link_method) && link_signals)
-            || (link_confidence === 'pending' && _STRONG_METHODS.has(link_method) && _hasInpiCorroboration)) {
-            const signalKeys = {
-                siren_website_match: 'company.signalSirenWebsite',
-                phone_match:         'company.signalPhone',
-                address_match:       'company.signalAddress',
-                enseigne_match:      'company.signalEnseigne',
-            };
-            // Collect true signals from top-level link_signals AND nested inpi_corroboration.
-            // Phase 4 INPI rescue (rescued_by='inpi_validated') stores its corroborating
-            // address+enseigne match in link_signals.inpi_corroboration.{address_match,
-            // enseigne_match}. Top-level address_match is typically false for HQ-vs-storefront
-            // mismatches, so without this nested iteration the tooltip would only show
-            // enseigne signals — hiding the address corroboration that actually justified
-            // the rescue. Set dedupes if both top-level and nested have the same key.
-            const trueSignals = new Set();
-            for (const [k, v] of Object.entries(link_signals)) {
-                if (v === true) trueSignals.add(k);
-            }
-            const corroboration = link_signals.inpi_corroboration;
-            if (corroboration && typeof corroboration === 'object') {
-                for (const [k, v] of Object.entries(corroboration)) {
-                    if (v === true) trueSignals.add(k);
-                }
-            }
-            const agreed = [...trueSignals]
-                .map(k => `<li>${t(signalKeys[k] || k)}</li>`)
-                .join('');
-            const signalList = agreed
-                ? `<br><strong>${t('company.signalsAgreed')} :</strong><ul style="margin:4px 0 0 12px; padding:0">${agreed}</ul>`
-                : '';
-            const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchStrongTitle')}</strong><br>${t('company.nafMismatchStrongBody')}${signalList}</span></span>`;
-            return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${tooltip}</span>`;
-        }
-
-        // Case 2: pending + mismatch OR confirmed without link_signals (manual /link, NULL signals) → terse tooltip
-        const terse = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card">${t('company.nafMismatchTerse')}</span></span>`;
-        return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${terse}</span>`;
+    // Non-mismatch paths: render plain badge, no tooltip — unchanged.
+    if (status !== 'mismatch') {
+        return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}</span>`;
     }
 
-    return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}</span>`;
+    // No ctx → defensive plain badge (shouldn't hit on company detail page).
+    if (!ctx) {
+        return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}</span>`;
+    }
+
+    const { link_confidence, link_method, link_signals, rescued_by } = ctx;
+
+    // ── Provenance branching: Path A (Phase 4 INPI) → B (Track 2/chain/footer-SIREN) → C (Gemini active) → D (Phase A default) ──
+    // GUARD: Paths A/B/C are "informative" cyan badges that signal "the link IS correct, the NAF just describes a different head/operating split."
+    // That semantic only holds when link_confidence='confirmed'. Pending rows (e.g., 20 ws174 rows with siren_website + naf_status='mismatch' + pending)
+    // must NOT receive the informative badge — pending means the match itself is unconfirmed, so we must NOT signal "structurally fine."
+    // Pending mismatches fall through to Path D's existing rich/terse warning logic, which already handles pending+strong+inpi_corroboration correctly.
+
+    if (link_confidence === 'confirmed') {
+
+        // Path A: INPI Phase 4 corroboration (rescued_by overrides link_method).
+        if (rescued_by === 'inpi_validated') {
+            const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchInpiTitle')}</strong><br>${t('company.nafMismatchInpiBody')}</span></span>`;
+            return `<span class="glass-badge glass-badge--cyan">ℹ ${t('company.nafMismatchInpi')}${tooltip}</span>`;
+        }
+
+        // Path B: Track 2 / chain / footer-SIREN — structural mismatch by design.
+        if (link_method === 'siret_address_naf' || link_method === 'chain' || link_method === 'siren_website') {
+            // Tooltip body varies by sub-path so Cindy gets the right structural reason.
+            let bodyKey = 'company.nafMismatchEtablissementBodyTrack2';
+            if (link_method === 'chain') bodyKey = 'company.nafMismatchEtablissementBodyChain';
+            else if (link_method === 'siren_website') bodyKey = 'company.nafMismatchEtablissementBodyFooterSiren';
+            const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchEtablissementTitle')}</strong><br>${t(bodyKey)}</span></span>`;
+            return `<span class="glass-badge glass-badge--cyan">ℹ ${t('company.nafMismatchEtablissement')}${tooltip}</span>`;
+        }
+
+        // Path C: Gemini active (D1b swap/rescue, Phase 2 promote).
+        if (link_method === 'gemini_judge') {
+            const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchGeminiTitle')}</strong><br>${t('company.nafMismatchGeminiBody')}</span></span>`;
+            return `<span class="glass-badge glass-badge--cyan">ℹ ${t('company.nafMismatchGemini')}${tooltip}</span>`;
+        }
+
+    }  // end if (link_confidence === 'confirmed')
+
+    // Path D: Phase A 2-signal (default fallback) — preserve existing rich/terse tooltip logic VERBATIM.
+    // Case D.1: rich tooltip with signal list. Triggers when EITHER:
+    //   (a) confirmed + strong method + link_signals — the original rescued case
+    //   (b) pending + strong method + link_signals.inpi_corroboration — Phase 4 enseigne fallback diagnostic
+    const _hasInpiCorroboration = link_signals
+        && link_signals.inpi_corroboration
+        && typeof link_signals.inpi_corroboration === 'object';
+    if ((link_confidence === 'confirmed' && _STRONG_METHODS.has(link_method) && link_signals)
+        || (link_confidence === 'pending' && _STRONG_METHODS.has(link_method) && _hasInpiCorroboration)) {
+        const signalKeys = {
+            siren_website_match: 'company.signalSirenWebsite',
+            phone_match:         'company.signalPhone',
+            address_match:       'company.signalAddress',
+            enseigne_match:      'company.signalEnseigne',
+        };
+        const trueSignals = new Set();
+        for (const [k, v] of Object.entries(link_signals)) {
+            if (v === true) trueSignals.add(k);
+        }
+        const corroboration = link_signals.inpi_corroboration;
+        if (corroboration && typeof corroboration === 'object') {
+            for (const [k, v] of Object.entries(corroboration)) {
+                if (v === true) trueSignals.add(k);
+            }
+        }
+        const agreed = [...trueSignals]
+            .map(k => `<li>${t(signalKeys[k] || k)}</li>`)
+            .join('');
+        const signalList = agreed
+            ? `<br><strong>${t('company.signalsAgreed')} :</strong><ul style="margin:4px 0 0 12px; padding:0">${agreed}</ul>`
+            : '';
+        const tooltip = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.nafMismatchStrongTitle')}</strong><br>${t('company.nafMismatchStrongBody')}${signalList}</span></span>`;
+        return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${tooltip}</span>`;
+    }
+
+    // Case D.2: pending + mismatch OR confirmed without link_signals (manual /link, NULL signals) → terse tooltip
+    const terse = `<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card">${t('company.nafMismatchTerse')}</span></span>`;
+    return `<span class="glass-badge ${m.cls}">${m.icon} ${t(m.labelKey)}${terse}</span>`;
 }
 
 // Forme juridique — human-readable labels for common codes
@@ -812,7 +841,7 @@ export async function renderCompany(container, siren) {
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
                     </span>` : ''}
-                    ${co.naf_status ? nafStatusBadge(co.naf_status, { link_confidence: data.link_confidence, link_method: data.link_method, link_signals: data.link_signals }) : ''}
+                    ${co.naf_status ? nafStatusBadge(co.naf_status, { link_confidence: data.link_confidence, link_method: data.link_method, link_signals: data.link_signals, rescued_by: data.rescued_by }) : ''}
                     ${effectifLabel(co.tranche_effectif) ? `<span class="glass-badge glass-badge--green">👥 ${effectifLabel(co.tranche_effectif)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.trancheEffectif')}</strong><br>${t('company.effectifTooltip')}<span class="info-tip-source">${t('company.effectifTooltipSource')}</span></span></span>
                     </span>` : ''}
