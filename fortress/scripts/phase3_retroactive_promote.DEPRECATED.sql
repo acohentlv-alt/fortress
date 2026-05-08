@@ -1,3 +1,7 @@
+-- DEPRECATED — DO NOT RUN.
+-- See phase3_retroactive_promote.DEPRECATED.py banner for context.
+-- Brief 03 (May 8) deprecated this script after May 6 incident on ws174.
+
 -- Phase 3 retroactive promotion — manual one-shot (committer runs)
 -- Identifies past pending rows in workspaces sanctioned via
 -- gemini_promote_workspace_ids that would be promoted under Phase 2's gate,

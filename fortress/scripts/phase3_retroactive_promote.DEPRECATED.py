@@ -1,3 +1,28 @@
+"""DEPRECATED — DO NOT RUN.
+
+This script was used during Phase 3 promotion-gate development to retroactively
+apply the live pipeline's tier-classification logic to historical pending+
+gemini_shadow_yes rows. It is NO LONGER SAFE because it passes `picked_nafs=[]`
+to _promote_classify_signals (line 156 of the original script body below),
+making empty picker structurally indistinguishable from a genuine section-letter
+match — and then blanket-sets `naf_status=NULL+strict_match=True` to bypass
+the live pipeline's NAF rejection.
+
+May 6 incident: 3 wrong promotions on ws174 (MAPS06363, MAPS06297, MAPS06293)
+shipped because of this. They were rolled back manually on 2026-05-06 22:29 via
+the `rollback_phase3_retroactive` audit action.
+
+Brief 03 (May 8) deprecates the script. The original module docstring follows
+unchanged below — kept verbatim for archaeological purposes only.
+
+If you need to run a retroactive promotion sweep in the future, write a fresh
+script that:
+  1. Reads `picked_nafs` from the original batch's `filters_json` (not [] blanket),
+  2. Recomputes naf_status against the real picker, NOT NULL,
+  3. Sets strict_match per the matched NAF's prefix relationship to the picker,
+  4. Goes through the standard QA + committer flow before any --apply run.
+"""
+
 """Phase 3 retroactive promotion — manual dry-run / apply script.
 
 Identifies past pending+gemini_shadow_yes rows and applies Phase 2's

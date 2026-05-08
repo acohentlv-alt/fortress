@@ -597,11 +597,22 @@ def _naf_section_matches(sirene_naf: str | None, picked_nafs: list[str]) -> bool
     enseigne + exact postal match in dense-urban dept AND the sector distance
     is 'soft' (same INSEE section letter, e.g. 56.30Z bar ↔ 56.10A restaurant
     both in section I).
+
+    Picker entries may be full NAF codes (e.g. "01.11Z") or bare section
+    letters (e.g. "A") — single uppercase letters are treated as their
+    own section directly, so broad-sector pickers work without expansion.
     """
     sirene_section = get_section_for_code(sirene_naf) if sirene_naf else None
     if not sirene_section:
         return False
-    return any(get_section_for_code(p) == sirene_section for p in picked_nafs)
+
+    def _picker_section(p: str) -> str | None:
+        # Bare section letter (e.g. "A") → return as-is
+        if len(p) == 1 and p.isupper():
+            return p
+        return get_section_for_code(p)
+
+    return any(_picker_section(p) == sirene_section for p in picked_nafs)
 
 
 def _promote_classify_signals(
@@ -663,14 +674,51 @@ def _promote_classify_signals(
             agreeing.append("enseigne")
         if sig.get("phone_match") is True and "phone" not in agreeing:
             agreeing.append("phone")
-        if section_ok:
+        # Audit label split (R.2 May 8): "naf_section" implied a real section
+        # comparison; when picker is empty we just skipped the section check.
+        # Record the cases distinctly so post-hoc audit can tell them apart.
+        if not picked_nafs:
+            agreeing.append("empty_picker")
+        elif _naf_section_matches(matched_naf, picked_nafs):
             agreeing.append("naf_section")
         if dept_ok:
             agreeing.append("dept")
-        if section_ok or dept_ok:
+        # Corroborating signals for tier-2 dept-only path: enseigne_match,
+        # phone_match. address_match and siren_website_match are
+        # EXCLUDED here because they short-circuit to tier-1 earlier in
+        # this function (lines 645 and 638 respectively — `if
+        # sig.get("address_match") is True: return "tier1", ...` and same
+        # for siren_website_match), so by the time control reaches the
+        # tier-2 block, those two signals can never be True. Counting
+        # them would be harmless but misleading. The method label itself
+        # (inpi/enseigne/phone) is NOT corroboration — it's the entry
+        # condition for this branch. naf_section / empty_picker / dept
+        # are tier-classification gates, also NOT corroboration.
+        _TIER2_CORROBORATING_SIGNALS = ("enseigne_match", "phone_match")
+        _corroborating_signals_count = sum(
+            1 for k in _TIER2_CORROBORATING_SIGNALS if sig.get(k) is True
+        )
+        # Tier-2 promotion gate (R.1 May 8): section-letter agreement is
+        # an independent path (genuine sector-letter overlap is strong on
+        # its own). Dept-only agreement now requires at least one
+        # corroborating signal — a dept token alone is too noisy to
+        # justify auto-confirm with naf_status=mismatch (May 6 incident
+        # rationale: 8 of 14 14d tier-2 promotes had zero corroborating
+        # signals; trade-off is accuracy over raw confirm count).
+        # NOTE: the `section_ok` boolean still combines empty-picker and
+        # genuine section-match (per the original `not picked_nafs or
+        # _naf_section_matches` definition above); empty-picker counts as
+        # a "section path" here because there is no NAF filter to block on.
+        # NOTE: siret_address_naf / chain / inpi_validated auto-confirm
+        # via dedicated cascade gates (rules b/e/f in CLAUDE.md) and never
+        # reach _promote_classify_signals — R.1 does NOT touch those paths.
+        if section_ok or (dept_ok and _corroborating_signals_count >= 1):
             return "tier2", agreeing, blockers
-        # Strong method but no dept and no section → block.
-        blockers.append("strong_method_no_dept_no_section")
+        # Strong method but no section path AND (no dept OR dept-only with
+        # zero corroboration) → block. The block path translates to
+        # hold_pending in the live caller (discovery.py:4689-4692, no
+        # SQL write — row stays pending, audit row records reason).
+        blockers.append("strong_method_no_section_no_corroborated_dept")
         return "block", agreeing, blockers
 
     # Tier 3 — weak methods needing ≥1 Tier-1/Tier-2 corroborating signal
