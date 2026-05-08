@@ -778,6 +778,24 @@
       "skipped": "Skippées (≥80% couvertes)",
       "estimation": "Estimation",
       "actual": "Réel"
+    },
+    "timing": {
+      "title": "Vitesse du batch",
+      "headline": "{{qualified}} entités qualifiées en {{minutes}} min",
+      "rate": "{{rate}} entités/min",
+      "colStep": "Étape",
+      "colP50": "Médiane",
+      "colP95": "P95",
+      "colTotal": "Total",
+      "colPct": "% du temps",
+      "bucketMapsScrape": "Scraping Google Maps",
+      "bucketMatchCascade": "Cascade de matching SIRENE",
+      "bucketWebsiteCrawl": "Crawl du site web",
+      "bucketInpiOfficers": "Récupération INPI (dirigeants)",
+      "bucketGeminiJudge": "Validation IA Gemini",
+      "bucketDbWrite": "Écriture base de données",
+      "bucketOther": "Autres",
+      "footnote": "Médiane = temps typique d'une étape · P95 = temps des 5% les plus lents · les lignes en orange représentent ≥ 40% du temps total."
     }
   },
   "newBatch": {

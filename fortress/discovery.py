@@ -2629,6 +2629,80 @@ async def _update_job_safe(
         await _update_job(new_conn, batch_id, **fields)
 
 
+async def _compute_timing_breakdown(
+    pool, batch_int_id: int, qualified_count: int, total_runtime_sec: float,
+) -> dict:
+    """Aggregate pipeline_timings rows for one batch into a JSONB-shaped dict.
+
+    Reads pipeline_timings WHERE batch_id = %s AND fired = TRUE, groups by step,
+    computes count + p50_ms + p95_ms + total_sec per step, then rolls up to
+    a shortfall_breakdown of percentage-of-runtime per logical bucket.
+
+    Logical buckets (Maps + Match + Crawl + INPI + Other) are computed in Python
+    from the per-step rollup so step-name renames don't break the bucketing.
+
+    Returns dict matching the JSONB schema described in the brief. On query
+    failure, returns a minimal dict with total_runtime_sec/qualified_count only —
+    never raises.
+    """
+    breakdown = {
+        "total_runtime_sec": round(total_runtime_sec, 1),
+        "qualified_count": qualified_count,
+        "qualified_per_min": round(qualified_count / (total_runtime_sec / 60), 2)
+            if total_runtime_sec > 0 else 0.0,
+        "per_step": {},
+        "shortfall_breakdown": {},
+    }
+    try:
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                """SELECT step,
+                          COUNT(*) AS n,
+                          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)::INT AS p50_ms,
+                          PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::INT AS p95_ms,
+                          SUM(duration_ms) AS total_ms
+                     FROM pipeline_timings
+                    WHERE batch_id = %s AND fired = TRUE
+                    GROUP BY step""",
+                (batch_int_id,),
+            )
+            rows = await cur.fetchall()
+        for step, n, p50, p95, total_ms in rows:
+            breakdown["per_step"][step] = {
+                "n": int(n),
+                "p50_ms": int(p50 or 0),
+                "p95_ms": int(p95 or 0),
+                "total_sec": round(int(total_ms or 0) / 1000.0, 1),
+            }
+        # Bucket roll-up — pct-of-runtime per logical bucket
+        # v2 fix (BLOCKER #1): match_cascade time_step at discovery.py:3156 ENCOMPASSES
+        # nested time_step blocks (inpi_step0 at line 1699, step_2_7 at line 2409).
+        # Their durations are ALREADY summed into match_cascade.total_ms — listing them
+        # in the bucket would double-count. Children appear in per_step (drill-in detail)
+        # but NOT in the bucket sum.
+        bucket_map = {
+            "maps_scrape": ["maps_scroll", "maps_card"],
+            "match_cascade": ["match_cascade"],  # parent already includes inpi_step0/_assoc_fallback/step_2_7
+            "website_crawl": ["crawl"],
+            "inpi_officers": ["inpi_officers"],
+            "gemini_judge": ["gemini_judge"],
+            "db_write": ["db_write"],
+        }
+        accounted_sec = 0.0
+        for bucket, steps in bucket_map.items():
+            sec = sum(breakdown["per_step"].get(s, {}).get("total_sec", 0.0) for s in steps)
+            pct = (sec / total_runtime_sec) if total_runtime_sec > 0 else 0.0
+            breakdown["shortfall_breakdown"][f"{bucket}_pct"] = round(pct, 3)
+            accounted_sec += sec
+        other_sec = max(0.0, total_runtime_sec - accounted_sec)
+        breakdown["shortfall_breakdown"]["other_pct"] = round(
+            (other_sec / total_runtime_sec) if total_runtime_sec > 0 else 0.0, 3
+        )
+    except Exception as e:
+        log.warning("discovery.timing_breakdown_compute_failed", batch_id=batch_int_id, error=str(e))
+    return breakdown
+
+
 async def _heartbeat_loop(batch_id: str) -> None:
     """Touch updated_at every 60s so the watchdog knows we're alive.
 
@@ -2782,6 +2856,7 @@ async def run(batch_id: str) -> None:
             _completed_queries_count: int = int(row[5] or 0)
             _prior_queries_json = row[6]
             batch_int_id: int = int(row[7])  # INTEGER PK of batch_data row — used for pipeline_timings FK
+            _batch_t0_monotonic = time.monotonic()  # for total_runtime_sec
             _time_cap_min: int | None = row[8] if row[8] is not None else None
             _time_cap_total_min: int | None = row[9] if row[9] is not None else None
             _batch_created_at: datetime = row[10]  # legacy: kept for row index alignment with row[11] strict_naf; no longer used after _loop_anchor_utc switch (2026-05-07)
@@ -6324,6 +6399,19 @@ async def run(batch_id: str) -> None:
                     final_status = "interrupted"
                 else:
                     final_status = "completed"
+
+                # Compute timing breakdown ONCE at batch end — reads pipeline_timings,
+                # rolls up to JSONB. Best-effort: on failure, breakdown stays None.
+                _timing_breakdown_json: str | None = None
+                try:
+                    _runtime_sec = time.monotonic() - _batch_t0_monotonic
+                    _breakdown = await _compute_timing_breakdown(
+                        pool, batch_int_id, qualified, _runtime_sec,
+                    )
+                    _timing_breakdown_json = json.dumps(_breakdown)
+                except Exception as _exc:
+                    log.warning("discovery.timing_breakdown_skip", error=str(_exc))
+
                 _final_written = False
                 for _attempt in range(3):
                     try:
@@ -6340,6 +6428,7 @@ async def run(batch_id: str) -> None:
                             triage_green=triage_counts["green"],
                             triage_yellow=triage_counts["yellow"],
                             triage_red=triage_counts["red"],
+                            timing_breakdown=_timing_breakdown_json,
                         )
                         _final_written = True
                         break

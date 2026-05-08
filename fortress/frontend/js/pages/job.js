@@ -61,6 +61,114 @@ function formatLongDuration(sec) {
     return `${m}m ${s}s`;
 }
 
+/**
+ * Build the "Vitesse du batch" panel from job.timing_breakdown JSONB.
+ * Returns empty string when data is unavailable (legacy batches with NULL timing_breakdown).
+ */
+function buildTimingPanel(job) {
+    const tb = job.timing_breakdown;
+    if (!tb || typeof tb !== 'object') return '';
+
+    const totalSec = Number(tb.total_runtime_sec || 0);
+    const qual = Number(tb.qualified_count || 0);
+    const rate = Number(tb.qualified_per_min || 0);
+    const totalMin = Math.round(totalSec / 60 * 10) / 10;
+
+    // Bucket display order — sorted by percentage descending
+    const sb = tb.shortfall_breakdown || {};
+    const buckets = [
+        { key: 'maps_scrape', i18n: 'job.timing.bucketMapsScrape',
+          steps: ['maps_scroll', 'maps_card'] },
+        { key: 'match_cascade', i18n: 'job.timing.bucketMatchCascade',
+          steps: ['match_cascade', 'inpi_step0', 'inpi_step0_assoc_fallback',
+                  'step_2_7_siret_addr_naf'] },
+        { key: 'website_crawl', i18n: 'job.timing.bucketWebsiteCrawl',
+          steps: ['crawl'] },
+        { key: 'inpi_officers', i18n: 'job.timing.bucketInpiOfficers',
+          steps: ['inpi_officers'] },
+        { key: 'gemini_judge', i18n: 'job.timing.bucketGeminiJudge',
+          steps: ['gemini_judge'] },
+        { key: 'db_write', i18n: 'job.timing.bucketDbWrite',
+          steps: ['db_write'] },
+    ];
+
+    const perStep = tb.per_step || {};
+    const rows = buckets.map(b => {
+        const totalSecBucket = b.steps.reduce(
+            (acc, s) => acc + (perStep[s]?.total_sec || 0), 0
+        );
+        const pct = sb[b.key + '_pct'] || 0;
+        // Aggregate p50/p95 across steps in bucket — use weighted-by-n when multiple
+        let p50 = 0, p95 = 0, n = 0;
+        b.steps.forEach(s => {
+            const sd = perStep[s];
+            if (sd && sd.n > 0) {
+                p50 += (sd.p50_ms || 0) * sd.n;
+                p95 += Math.max(p95, sd.p95_ms || 0); // p95 we take MAX (worst-case across steps)
+                n += sd.n;
+            }
+        });
+        p50 = n > 0 ? Math.round(p50 / n) : 0;
+        return { ...b, totalSec: totalSecBucket, pct, p50, p95: Math.round(p95), n };
+    }).filter(r => r.n > 0).sort((a, b) => b.pct - a.pct);
+
+    const otherPct = sb.other_pct || 0;
+    const otherSec = totalSec * otherPct;
+
+    const fmtMs = (ms) => ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+    const fmtSec = (s) => s >= 60 ? `${Math.round(s / 60 * 10) / 10}min` : `${Math.round(s)}s`;
+    const fmtPct = (p) => `${Math.round(p * 100)}%`;
+
+    return `
+        <div class="card" id="timing-card" style="margin-bottom:var(--space-xl)">
+            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                ${t('job.timing.title')}
+            </h3>
+            <div style="display:flex; align-items:baseline; gap:var(--space-md); margin-bottom:var(--space-lg); flex-wrap:wrap">
+                <span style="font-size:var(--font-lg); font-weight:600">
+                    ${t('job.timing.headline', { qualified: qual, minutes: totalMin })}
+                </span>
+                <span style="color:var(--text-muted); font-size:var(--font-sm)">
+                    ${t('job.timing.rate', { rate: rate.toFixed(2) })}
+                </span>
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:var(--font-sm)">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-default); color:var(--text-muted); font-size:var(--font-xs)">
+                        <th style="text-align:left; padding:var(--space-sm) var(--space-md)">${t('job.timing.colStep')}</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md)">${t('job.timing.colP50')}</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md)">${t('job.timing.colP95')}</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md)">${t('job.timing.colTotal')}</th>
+                        <th style="text-align:right; padding:var(--space-sm) var(--space-md)">${t('job.timing.colPct')}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(r => `
+                        <tr style="border-bottom:1px solid var(--border-default); ${r.pct >= 0.4 ? 'background:rgba(245,158,11,0.08)' : ''}">
+                            <td style="padding:var(--space-sm) var(--space-md)">${t(r.i18n)} <span style="color:var(--text-muted); font-size:var(--font-xs)">(n=${r.n})</span></td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums">${fmtMs(r.p50)}</td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums">${fmtMs(r.p95)}</td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums">${fmtSec(r.totalSec)}</td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums; font-weight:600">${fmtPct(r.pct)}</td>
+                        </tr>
+                    `).join('')}
+                    ${otherPct > 0.01 ? `
+                        <tr style="color:var(--text-muted)">
+                            <td style="padding:var(--space-sm) var(--space-md)">${t('job.timing.bucketOther')}</td>
+                            <td colspan="2"></td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums">${fmtSec(otherSec)}</td>
+                            <td style="text-align:right; padding:var(--space-sm) var(--space-md); font-variant-numeric:tabular-nums">${fmtPct(otherPct)}</td>
+                        </tr>
+                    ` : ''}
+                </tbody>
+            </table>
+            <div style="margin-top:var(--space-md); color:var(--text-muted); font-size:var(--font-xs)">
+                ${t('job.timing.footnote')}
+            </div>
+        </div>
+    `;
+}
+
 function buildScoreboardCard(job, linkStats, summary) {
     if (!linkStats) return '';
     const confirmed = linkStats.confirmed || 0;
@@ -590,6 +698,8 @@ export async function renderJob(container, batchId) {
             </h3>
             <div id="queries-card-list"></div>
         </div>
+
+        ${buildTimingPanel(job)}
 
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">

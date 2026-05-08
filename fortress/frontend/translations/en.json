@@ -749,6 +749,24 @@
       "skipped": "Skipped (≥80% covered)",
       "estimation": "Estimation",
       "actual": "Actual"
+    },
+    "timing": {
+      "title": "Batch speed",
+      "headline": "{{qualified}} qualified entities in {{minutes}} min",
+      "rate": "{{rate}} entities/min",
+      "colStep": "Step",
+      "colP50": "Median",
+      "colP95": "P95",
+      "colTotal": "Total",
+      "colPct": "% of time",
+      "bucketMapsScrape": "Google Maps scraping",
+      "bucketMatchCascade": "SIRENE match cascade",
+      "bucketWebsiteCrawl": "Website crawl",
+      "bucketInpiOfficers": "INPI officers fetch",
+      "bucketGeminiJudge": "Gemini AI validation",
+      "bucketDbWrite": "DB write",
+      "bucketOther": "Other",
+      "footnote": "Median = typical step time · P95 = 95th-percentile slow case · orange rows are ≥ 40% of total time."
     }
   },
   "newBatch": {
