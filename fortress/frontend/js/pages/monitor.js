@@ -287,22 +287,14 @@ async function renderJobMonitor(container, batchId) {
                 <div class="monitor-metrics" style="flex:1; min-width:280px">
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-scraped">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricCompleted')}</div>
-                        </div>
-                        <div class="monitor-metric">
-                            <div class="monitor-metric-value" id="mon-failed">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricFailed')}</div>
+                            <div class="monitor-metric-label" id="mon-scraped-label">${t('monitor.metricConfirmed')}</div>
+                            <div class="monitor-metric-subtext" id="mon-scraped-scope" style="font-size:11px; color:var(--text-muted); margin-top:2px"></div>
                         </div>
                         <div class="monitor-metric">
                             <div class="monitor-metric-value" id="mon-duration">0m 0s</div>
-                            <div class="monitor-metric-label">${t('monitor.metricDuration')}</div>
+                            <div class="monitor-metric-label">${t('monitor.metricTotalTime')}</div>
+                            <div class="monitor-metric-subtext" style="font-size:11px; color:var(--text-muted); margin-top:2px">${t('monitor.metricTotalTimeSubtext')}</div>
                         </div>
-                        ${isAdmin ? `
-                        <div class="monitor-metric">
-                            <div class="monitor-metric-value" id="mon-replaced">0</div>
-                            <div class="monitor-metric-label">${t('monitor.metricSubstitutions')}</div>
-                        </div>
-                        ` : '<div id="mon-replaced" style="display:none">0</div>'}
                 </div>
             </div>
         </div>
@@ -363,9 +355,7 @@ async function renderJobMonitor(container, batchId) {
         statusRow: document.getElementById('mon-status-row'),
         ring: document.getElementById('mon-ring'),
         scraped: document.getElementById('mon-scraped'),
-        failed: document.getElementById('mon-failed'),
         duration: document.getElementById('mon-duration'),
-        replaced: document.getElementById('mon-replaced'),
         pipeline: document.getElementById('mon-pipeline'),
         wave: document.getElementById('mon-wave'),
         gauges: document.getElementById('mon-gauges'),
@@ -385,9 +375,9 @@ async function renderJobMonitor(container, batchId) {
 
     // ── State tracking ──────────────────────────────────────────
     const renderedSirens = new Set();
-    let lastScrapedCount = 0;
+    let lastScrapedCount = '';
     let failedPolls = 0;
-    let previousValues = { scraped: -1, failed: -1, replaced: -1, pct: -1 };
+    let previousValues = { scraped: -1, pct: -1 };
     let isRunning = false;
     let jobWorkspaceId = null;
 
@@ -573,17 +563,29 @@ async function renderJobMonitor(container, batchId) {
         tickDuration();
 
         const scraped = job.companies_scraped || 0;
-        // Strict mode: link_stats.total is strict-filtered (see jobs.py:619).
-        // Wide mode keeps the legacy raw counter so wide batches behave unchanged.
-        const qualified = job.strict_naf
-            ? (job.link_stats?.total || 0)
-            : (job.companies_qualified || 0);
-        const failed = job.companies_failed || 0;
-        const replaced = job.replaced_count || 0;
-        // Ring now shows qualification rate: qualified / scraped (of Maps results
-        // evaluated, how many passed the quality filter). Divide-by-zero guarded
-        // by null pct when scraped == 0 (Maps still searching).
-        const qualRate = scraped > 0 ? Math.round((qualified / scraped) * 100) : null;
+        // Change 3+4: Primary tile now shows confirmed entities (exportable).
+        // Same source as Job page tile #22. Replaces the old qualified/strict flip-flop.
+        const confirmedValue = job.link_stats?.confirmed || 0;
+        // Keep qualified for cards/completion logic (link_stats.total — broad set)
+        const qualified = job.link_stats?.total || job.companies_qualified || 0;
+
+        // Change 3: Scope label — explicit per mode/dept combination
+        const isStrictMode = Boolean(job.strict_naf);
+        const isDeptFiltered = Boolean(job.filters_json?.department && job.filters_json.department !== 'FR' && job.filters_json.department !== 'ALL');
+        let scopeLabel = '';
+        if (isStrictMode && isDeptFiltered) {
+            scopeLabel = t('monitor.scopeStrictDept', { dept: job.filters_json.department });
+        } else if (isStrictMode) {
+            scopeLabel = t('monitor.scopeStrict');
+        } else if (isDeptFiltered) {
+            scopeLabel = t('monitor.scopeDept', { dept: job.filters_json.department });
+        } else {
+            scopeLabel = t('monitor.scopeAllBatch');
+        }
+
+        // Change 4: Ring = confirmed / total_discovered; label changes per mode
+        // Divide-by-zero guarded by null pct when scraped == 0.
+        const qualRate = scraped > 0 ? Math.round((confirmedValue / scraped) * 100) : null;
         isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
         jobWorkspaceId = job.workspace_id == null ? null : job.workspace_id;
         const isUpload = job.mode === 'upload';
@@ -597,6 +599,7 @@ async function renderJobMonitor(container, batchId) {
         $.statusRow.innerHTML = `
             ${isRunning ? '' : statusBadge(job.status || 'queued')}
             ${isRunning ? `<span class="live-badge"><span class="live-badge-dot"></span> ${t('monitor.liveLabel')}</span>` : ''}
+            ${Boolean(job.strict_naf) ? `<span class="mode-chip mode-chip--strict" title="${t('monitor.modeStrictTooltip')}">${t('monitor.modeStrictChip')}</span>` : ''}
         `;
 
         // Show/hide cancel button
@@ -611,7 +614,7 @@ async function renderJobMonitor(container, batchId) {
                     ? ` (${job.wave_current}/${job.wave_total})`
                     : '';
                 $.currentQuery.style.display = 'block';
-                $.currentQuery.textContent = `Recherche : ${job.current_query}${waveText}...`;
+                $.currentQuery.textContent = t('monitor.currentQueryLabel', { query: `${job.current_query}${waveText}` });
             } else {
                 $.currentQuery.style.display = 'none';
             }
@@ -633,9 +636,8 @@ async function renderJobMonitor(container, batchId) {
                     html += `<div style="font-size:var(--font-sm); margin-top:4px; color:var(--text-secondary)">`;
                     if (b.exhaustive_default) {
                         // For Apr-17+ batches, target is a ceiling not a goal.
-                        // Show raw progress. "entité" singular for count=1, "entités" otherwise.
-                        const unit = b.progress === 1 ? 'entité' : 'entités';
-                        html += `${escapeHtml(b.batch_name)} — ${b.progress} ${unit}`;
+                        // Show raw progress. Use i18n key for unit.
+                        html += `${escapeHtml(b.batch_name)} — ${t('monitor.queueEntityCount', { count: b.progress })}`;
                     } else {
                         html += `${escapeHtml(b.batch_name)} — ${b.progress}/${b.target}`;
                     }
@@ -682,36 +684,44 @@ async function renderJobMonitor(container, batchId) {
                 }
             }
             // Label swap: when batch is terminal + scraped=0, show "Batch sans
-            // résultat" instead of the generic "Taux de qualification" (reads
-            // awkwardly on a finished batch with nothing found). On running batches
-            // the label stays "Taux de qualification".
+            // résultat" instead of the dynamic confirmation-rate label.
             if (ringLabel) {
                 const isTerminalNoResult = terminalStatuses.has(job.status) && scraped === 0;
-                ringLabel.textContent = isTerminalNoResult
-                    ? t('monitor.ringLabelNoResult')
-                    : t('monitor.ringLabelQualRate');
+                if (isTerminalNoResult) {
+                    ringLabel.textContent = t('monitor.ringLabelNoResult');
+                } else {
+                    // Dynamic label per scope (Change 4)
+                    let ringSuffix = '';
+                    if (isStrictMode && isDeptFiltered) {
+                        ringSuffix = ` — strict + dép. ${job.filters_json.department}`;
+                    } else if (isStrictMode) {
+                        ringSuffix = ' — strict';
+                    } else if (isDeptFiltered) {
+                        ringSuffix = ` — dép. ${job.filters_json.department}`;
+                    }
+                    ringLabel.textContent = t('monitor.ringLabelDynamic', { suffix: ringSuffix });
+                }
             }
         }
 
         // ── Metric Counters — animate only on change ────────────
-        const completedValue = qualified > 0 ? qualified : (job.triage_green || 0);
-        const completedLabel = qualified > 0 ? t('monitor.metricCompleted') : (job.triage_green || 0) > 0 ? t('monitor.metricKnown') : t('monitor.metricCompleted');
+        // Change 3: show confirmedValue (exportable, link_confidence=confirmed).
+        // Fall back to triage_green display if no confirmed entities yet (all-GREEN batch).
+        const completedValue = confirmedValue > 0 ? confirmedValue : (job.triage_green || 0);
+        const completedLabel = confirmedValue > 0 ? t('monitor.metricConfirmed') : (job.triage_green || 0) > 0 ? t('monitor.metricKnown') : t('monitor.metricConfirmed');
         if (completedValue !== previousValues.scraped) {
             previousValues.scraped = completedValue;
             animateCounter($.scraped, completedValue);
             // Update the label below the counter
-            const scrapedLabel = $.scraped?.nextElementSibling;
-            if (scrapedLabel && scrapedLabel.classList.contains('monitor-metric-label')) {
+            const scrapedLabel = document.getElementById('mon-scraped-label');
+            if (scrapedLabel) {
                 scrapedLabel.textContent = completedLabel;
             }
         }
-        if (failed !== previousValues.failed) {
-            previousValues.failed = failed;
-            animateCounter($.failed, failed);
-        }
-        if (replaced !== previousValues.replaced) {
-            previousValues.replaced = replaced;
-            animateCounter($.replaced, replaced);
+        // Always update scope label (may change as batch progresses)
+        const scopeEl = document.getElementById('mon-scraped-scope');
+        if (scopeEl) {
+            scopeEl.textContent = scopeLabel;
         }
 
         // ── Pipeline Stage (hide for uploads) ──────────────────
@@ -725,7 +735,7 @@ async function renderJobMonitor(container, batchId) {
             let stage = null;
             if (isRunning) {
                 if (job.status === 'triage') stage = null;
-                else if (qualified > 0) stage = 'inpi';            // mid-pipeline (INPI is the slow representative)
+                else if ((job.link_stats?.total || 0) > 0) stage = 'inpi'; // mid-pipeline (INPI is the slow representative)
                 else if (scraped > 0) stage = 'triage';            // past Maps, classifying/processing
                 else stage = 'maps';                                // still searching Maps
             } else if (job.status === 'completed' || job.status === 'interrupted') {
@@ -753,9 +763,9 @@ async function renderJobMonitor(container, batchId) {
                 ${renderGauge(q.phone_pct || 0, t('monitor.gaugePhone'))}
                 ${renderGauge(q.email_pct || 0, t('monitor.gaugeEmail'))}
                 ${renderGauge(q.website_pct || 0, t('monitor.gaugeWeb'))}
-                ${renderGauge(q.officers_pct || 0, '👤 Dirigeants')}
-                ${renderGauge(q.financials_pct || 0, '💰 Financier')}
-                ${renderGauge(q.siret_pct || q.social_pct || 0, '🔗 Social')}
+                ${renderGauge(q.officers_pct || 0, t('monitor.gaugeOfficers'))}
+                ${renderGauge(q.financials_pct || 0, t('monitor.gaugeFinancials'))}
+                ${renderGauge(q.social_pct || 0, t('monitor.gaugeSocial'))}
             `;
         } catch { /* gauges are optional */ }
 
@@ -817,9 +827,9 @@ async function renderJobMonitor(container, batchId) {
             $.completion.innerHTML = `
                 <div class="completion-card" style="border-left: 4px solid #F97316; background: color-mix(in srgb, var(--bg-surface) 90%, #F97316);">
                     <div class="completion-icon" style="background:rgba(249,115,22,0.1); color:#F97316">⚠️</div>
-                    <div class="completion-title" style="color:#F97316">Batch interrompu</div>
-                    <div class="completion-subtitle">${job.shortfall_reason || 'Le processus s\'est arrêté de manière inattendue.'}</div>
-                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid #F97316; color:var(--text)">Voir les résultats partiels</a>
+                    <div class="completion-title" style="color:#F97316">${t('monitor.interruptedTitle')}</div>
+                    <div class="completion-subtitle">${job.shortfall_reason || t('monitor.interruptedSubtext')}</div>
+                    <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid #F97316; color:var(--text)">${t('monitor.interruptedCta')}</a>
                 </div>
             `;
         }
@@ -870,8 +880,11 @@ async function renderJobMonitor(container, batchId) {
         // ── Company Cards — append-only (track rendered SIRENs) ──
         $.cardsTitle.textContent = t('monitor.collectingTitle', { count: qualified });
 
-        if (qualified > 0 && qualified !== lastScrapedCount) {
-            lastScrapedCount = qualified;
+        // Change 7: refresh trigger uses composite key (link_stats.total + companies_scraped)
+        // to avoid silent freeze when confirmedValue stops changing mid-batch.
+        const _refreshKey = `${job.link_stats?.total || 0}:${scraped}`;
+        if (_refreshKey !== lastScrapedCount) {
+            lastScrapedCount = _refreshKey;
             try {
                 const cardData = await getJobCompanies(batchId, { page: 1, pageSize: 50, sort: 'completude' });
                 if (cardData && cardData.companies && cardData.companies.length > 0) {

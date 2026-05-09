@@ -1969,6 +1969,24 @@
     box-shadow: 0 0 6px var(--success);
 }
 
+/* ── Mode chip (strict NAF, etc.) ──────────────────────────────── */
+.mode-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    cursor: default;
+}
+
+.mode-chip--strict {
+    background: rgba(139, 92, 246, 0.15);
+    color: rgb(139, 92, 246);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
 /* ── Warning Banner (polling failure) ──────────────────────────── */
 .poll-warning {
     display: flex;
