@@ -878,8 +878,8 @@ export async function renderJob(container, batchId) {
             <div class="loading"><div class="spinner"></div></div>
         </div>
 
-        <!-- Departments covered (only when > 1 dept) -->
-        ${job.departments && job.departments.length > 1 ? `
+        <!-- Departments covered — always shown when at least 1 dept present -->
+        ${job.departments && job.departments.length > 0 ? `
             <div class="card" style="margin-bottom:var(--space-xl); margin-top:var(--space-xl)">
                 <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
                     ${t('job.deptsCovered')}
@@ -898,12 +898,12 @@ export async function renderJob(container, batchId) {
         <details class="advanced-section" id="advanced-section" ${_advancedOpen ? 'open' : ''} style="margin-top:var(--space-xl)">
             <summary class="advanced-section-summary">${t('job.advancedSection')}</summary>
             <div class="advanced-section-body">
-                <!-- Recherches effectuées -->
-                <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
+                <!-- Recherches effectuées — always visible; placeholder until data arrives -->
+                <div class="card" id="queries-card" style="margin-bottom:var(--space-xl)">
                     <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
                         ${t('job.queriesCardTitle')}
                     </h3>
-                    <div id="queries-card-list"></div>
+                    <div id="queries-card-list"><span style="color:var(--text-muted)">${t('common.loading')}</span></div>
                 </div>
 
                 ${buildTimingPanel(job)}
@@ -912,15 +912,17 @@ export async function renderJob(container, batchId) {
 
     `;
 
-    // Populate queries card
+    // Populate queries card — always visible; replace placeholder with data or empty message
     const qPanel = document.getElementById('queries-card-list');
-    const qCard = document.getElementById('queries-card');
-    if (qPanel && queriesData.queries && queriesData.queries.length > 0) {
-        qPanel.innerHTML = renderQueriesPanel(
-            queriesData.queries,
-            { collapsible: true, capMin: queriesData.time_cap_min }
-        );
-        qCard.style.display = '';
+    if (qPanel) {
+        if (queriesData.queries && queriesData.queries.length > 0) {
+            qPanel.innerHTML = renderQueriesPanel(
+                queriesData.queries,
+                { collapsible: true, capMin: queriesData.time_cap_min }
+            );
+        } else {
+            qPanel.innerHTML = `<span style="color:var(--text-muted)">${t('monitor.queriesEmpty')}</span>`;
+        }
 
         // E4.A — wire drill-down click handlers (once per renderJob call, qPanel is recreated)
         bindQueriesPanelClicks(qPanel);
@@ -1239,15 +1241,63 @@ async function loadCompanies(batchId, page, sort, filter = '', searchQuery = '')
                     <a href="#/new-batch" class="btn btn-primary">${t('job.newSearch')}</a>
                 </div>
             `;
+        } else if (searchQuery) {
+            // Active text search returned nothing — tell user why and offer clear
+            companiesContainer.innerHTML = `
+                ${chipHtml}
+                <div class="empty-state">
+                    <div class="empty-state-icon">🔍</div>
+                    <div class="empty-state-text">${t('job.emptyStateFilterActive', { query: escapeHtml(searchQuery) })}</div>
+                    <button id="clear-filter-btn" class="btn btn-secondary" style="margin-top:var(--space-md)">${t('job.clearFilter')}</button>
+                </div>
+            `;
+        } else if (filter && filter !== 'all') {
+            // Legend filter active (pending / naf_confirmed / etc.) but returned nothing
+            const filterMsgKey = `job.emptyStateLegendFilter_${filter}`;
+            companiesContainer.innerHTML = `
+                ${chipHtml}
+                <div class="empty-state">
+                    <div class="empty-state-icon">🔎</div>
+                    <div class="empty-state-text">${t(filterMsgKey) || t('job.noCompaniesFound')}</div>
+                    <button id="clear-filter-btn" class="btn btn-secondary" style="margin-top:var(--space-md)">${t('job.clearFilter')}</button>
+                </div>
+            `;
+        } else if ((job?.companies_scraped || 0) > 0) {
+            // Companies were scraped but none matched SIRENE
+            companiesContainer.innerHTML = `
+                ${chipHtml}
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div class="empty-state-text">${t('job.emptyStateAllUnmatched')}</div>
+                    <p style="color:var(--text-muted); font-size:var(--font-sm); margin-top:var(--space-sm)">${t('job.emptyStateAllUnmatchedDescription')}</p>
+                </div>
+            `;
+        } else if (job?.status === 'completed') {
+            // Batch completed but found nothing at all
+            companiesContainer.innerHTML = `
+                ${chipHtml}
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div class="empty-state-text">${t('job.emptyStateBatchEmpty')}</div>
+                    <p style="color:var(--text-muted); font-size:var(--font-sm); margin-top:var(--space-sm)">${t('job.emptyStateBatchEmptyDescription')}</p>
+                </div>
+            `;
         } else {
             companiesContainer.innerHTML = `
                 ${chipHtml}
                 <div class="empty-state">
                     <div class="empty-state-icon">📭</div>
-                    <div class="empty-state-text">${t('job.noCompaniesFound')}</div>
+                    <div class="empty-state-text">${t('job.emptyStateGeneric')}</div>
                 </div>
             `;
         }
+        // Wire "clear filter" button if rendered
+        document.getElementById('clear-filter-btn')?.addEventListener('click', async () => {
+            _currentFilter = '';
+            _currentSearchQuery = '';
+            document.querySelectorAll('.legend-row').forEach(r => r.classList.remove('active'));
+            await loadCompanies(_currentBatchId, 1, _currentSort, '', '');
+        });
         attachChipClearHandler();
         return;
     }

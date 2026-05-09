@@ -432,28 +432,27 @@ function _renderBranchRow(e) {
  * Bind click + keyboard handlers on the panel's clickable rows.
  * Dispatches a `qp:filter` CustomEvent with detail.searchQuery on the panel root.
  *
- * !!! NON-IDEMPOTENT — DO NOT CALL MORE THAN ONCE PER ROOT ELEMENT !!!
- * Each call adds a fresh pair of listeners. Calling twice on the same root
- * causes click events to fire qp:filter TWICE; calling N times causes Nx stacking.
+ * IDEMPOTENT — safe to call multiple times on the same root element.
+ * Uses a sentinel flag (data-qp-bound) to detect re-bind; removes previous
+ * listeners before attaching new ones so events never fire twice.
  *
  * Safe usage:
  *   - monitor.js: bind ONCE, OUTSIDE the 1.5s polling callback
  *   - job.js: bind per renderJob() call (qPanel is freshly recreated each render)
- *   - DO NOT call from inside setInterval / poll loops on persistent DOM nodes
  *
  * @param {HTMLElement} root - the container that wraps renderQueriesPanel output
  */
 export function bindQueriesPanelClicks(root) {
     if (!root) return;
-    const handler = (e) => {
+
+    const clickHandler = (e) => {
         const target = e.target.closest('.qp-row-clickable');
         if (!target) return;
         const sq = target.dataset.searchQuery;
         if (!sq) return;
         root.dispatchEvent(new CustomEvent('qp:filter', { detail: { searchQuery: sq }, bubbles: true }));
     };
-    root.addEventListener('click', handler);
-    root.addEventListener('keydown', (e) => {
+    const keyHandler = (e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
         const target = e.target.closest('.qp-row-clickable');
         if (!target) return;
@@ -461,5 +460,17 @@ export function bindQueriesPanelClicks(root) {
         const sq = target.dataset.searchQuery;
         if (!sq) return;
         root.dispatchEvent(new CustomEvent('qp:filter', { detail: { searchQuery: sq }, bubbles: true }));
-    });
+    };
+
+    // Remove previous handlers if already bound (idempotency guard)
+    if (root.dataset.qpBound === 'true' && root._qpClickHandler) {
+        root.removeEventListener('click', root._qpClickHandler);
+        root.removeEventListener('keydown', root._qpKeyHandler);
+    }
+
+    root.addEventListener('click', clickHandler);
+    root.addEventListener('keydown', keyHandler);
+    root._qpClickHandler = clickHandler;
+    root._qpKeyHandler = keyHandler;
+    root.dataset.qpBound = 'true';
 }
