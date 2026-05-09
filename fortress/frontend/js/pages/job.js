@@ -965,10 +965,25 @@ export async function renderJob(container, batchId) {
             // Pre-fill new batch form using search_queries (current format)
             const queries = job.search_queries || [];
             const parsedQueries = typeof queries === 'string' ? JSON.parse(queries) : queries;
+            // Parse filters_json (the source-of-truth for original launch state)
+            const filters = (() => {
+                const f = job.filters_json;
+                if (!f) return {};
+                try {
+                    return typeof f === 'string' ? JSON.parse(f) : f;
+                } catch { return {}; }
+            })();
             if (parsedQueries.length > 0) {
                 sessionStorage.setItem('fortress_expansion_prefill', JSON.stringify({
                     queries: parsedQueries,
-                    size: job.batch_size || 20
+                    size: job.batch_size || 20,
+                    // NEW — preserve all launch-time filter state
+                    department: filters.department || null,
+                    naf_codes: filters.naf_codes || (filters.naf_code ? [filters.naf_code] : null),
+                    time_cap_per_query_min: job.time_cap_per_query_min ?? null,
+                    time_cap_total_min: job.time_cap_total_min ?? null,
+                    entity_cap_confirmed: job.entity_cap_confirmed ?? null,
+                    strict_naf: Boolean(job.strict_naf),
                 }));
                 window.location.hash = '#/new-batch';
             } else {

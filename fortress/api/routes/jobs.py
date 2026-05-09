@@ -615,6 +615,9 @@ async def get_job(batch_id: str, request: Request):
             sj.current_query,
             COALESCE(sj.strict_naf, FALSE) AS strict_naf,
             sj.timing_breakdown,
+            sj.time_cap_per_query_min,
+            sj.time_cap_total_min,
+            sj.entity_cap_confirmed,
             EXTRACT(EPOCH FROM (NOW() - sj.updated_at)) AS idle_seconds,
             EXTRACT(EPOCH FROM (
                 (SELECT MAX(timestamp) FROM batch_log WHERE batch_id = sj.batch_id) - sj.created_at

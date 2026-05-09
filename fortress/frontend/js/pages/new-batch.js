@@ -1515,6 +1515,8 @@ export async function renderNewBatch(container) {
         clearDraft();
         try {
             const prefill = JSON.parse(prefillRaw);
+
+            // 1. Restore queries
             if (prefill.queries && Array.isArray(prefill.queries) && prefill.queries.length > 0) {
                 const primaryInput = document.querySelector('.gemini-query-input.primary');
                 if (primaryInput && prefill.queries[0]) primaryInput.value = prefill.queries[0];
@@ -1523,6 +1525,78 @@ export async function renderNewBatch(container) {
                     document.getElementById('additional-queries').appendChild(newRow);
                 }
             }
+
+            // 2. Restore NAF codes (uses tryAddCode to populate the picker chips)
+            if (Array.isArray(prefill.naf_codes)) {
+                for (const code of prefill.naf_codes) {
+                    const lbl = _nafLabelByCode[code];
+                    if (lbl) tryAddCode(code, lbl);
+                }
+            }
+
+            // 3. Restore time-cap pill
+            if (typeof prefill.time_cap_per_query_min === 'number' && prefill.time_cap_per_query_min > 0) {
+                const pill = document.querySelector(
+                    `#time-cap-pills .cap-pill[data-cap-min="${prefill.time_cap_per_query_min}"]`
+                );
+                if (pill) {
+                    document.querySelectorAll('#time-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                    pill.classList.add('active');
+                    _selectedTimeCap = prefill.time_cap_per_query_min;
+                    _timeCapRef.value = _selectedTimeCap;
+                }
+            }
+
+            // 4. Restore total-cap pill (UI ID is #time-cap-total-pills, verified in executor)
+            if (typeof prefill.time_cap_total_min === 'number' && prefill.time_cap_total_min > 0) {
+                _selectedTotalCap = prefill.time_cap_total_min;
+                const totalPill = document.querySelector(
+                    `#time-cap-total-pills .cap-pill[data-cap-min="${prefill.time_cap_total_min}"]`
+                );
+                if (totalPill) {
+                    document.querySelectorAll('#time-cap-total-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                    totalPill.classList.add('active');
+                }
+            }
+
+            // 5. Restore entity-cap pill
+            if (typeof prefill.entity_cap_confirmed === 'number' && prefill.entity_cap_confirmed > 0) {
+                const ecpill = document.querySelector(
+                    `#entity-cap-pills .cap-pill[data-entity-cap="${prefill.entity_cap_confirmed}"]`
+                );
+                if (ecpill) {
+                    document.querySelectorAll('#entity-cap-pills .cap-pill').forEach(x => x.classList.remove('active'));
+                    ecpill.classList.add('active');
+                    _selectedEntityCap = prefill.entity_cap_confirmed;
+                }
+            }
+
+            // 6. Restore strict-NAF toggle
+            if (typeof prefill.strict_naf === 'boolean') {
+                const strictToggle = document.getElementById('strict-naf-toggle');
+                if (strictToggle && !strictToggle.disabled) {
+                    strictToggle.checked = prefill.strict_naf;
+                }
+            }
+
+            // 7. Restore department by injecting into primary query (no dept dropdown exists — verified).
+            //    If primary query already has a digit-based hint, leave it alone (user's choice wins).
+            //    Otherwise, prepend the dept code so parseDeptHint at launch extracts it correctly.
+            if (prefill.department && prefill.department !== 'FR' && prefill.department !== 'ALL') {
+                const primaryInput = document.querySelector('.gemini-query-input.primary');
+                if (primaryInput) {
+                    const currentPrimary = primaryInput.value || '';
+                    // Don't double-inject if query already has a 5-digit postal or 2-3 digit dept code
+                    const hasDigitHint = /\b\d{2,5}\b/.test(currentPrimary);
+                    if (!hasDigitHint) {
+                        // Append dept code to primary query (visible to user, editable)
+                        primaryInput.value = currentPrimary
+                            ? `${currentPrimary} ${prefill.department}`
+                            : prefill.department;
+                    }
+                }
+            }
+
             updateSummary();
         } catch {}
     } else {
