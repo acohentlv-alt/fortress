@@ -169,6 +169,24 @@ function buildTimingPanel(job) {
     `;
 }
 
+/**
+ * Compute a human-readable scope label for the hero tile.
+ * Reflects which subset of data is being shown (strict NAF, dept filter, or both).
+ */
+function computeScopeLabel(job) {
+    const strict = Boolean(job.strict_naf);
+    let filtersObj = job.filters_json;
+    if (typeof filtersObj === 'string') {
+        try { filtersObj = JSON.parse(filtersObj); } catch (_) { filtersObj = null; }
+    }
+    const dept = (filtersObj && filtersObj.department) || '';
+    const deptFilter = (dept && dept !== 'FR' && dept !== 'ALL') ? dept : null;
+    if (strict && deptFilter) return t('job.scopeStrictDept', { dept: deptFilter });
+    if (strict) return t('job.scopeStrict');
+    if (deptFilter) return t('job.scopeDept', { dept: deptFilter });
+    return t('job.scopeAllBatch');
+}
+
 function buildScoreboardCard(job, linkStats, summary) {
     if (!linkStats) return '';
     const confirmed = linkStats.confirmed || 0;
@@ -231,7 +249,6 @@ function buildScoreboardCard(job, linkStats, summary) {
                 </h1>
                 <div style="display:flex; align-items:center; gap:var(--space-md); flex-wrap:wrap">
                     ${statusBadge(job.status)}
-                    ${(job.exhaustive && !job.exhaustive_default) ? `<span class="badge badge-exhaustive">⚡ ${t('job.exhaustiveMode', { target: job.batch_size })}</span>` : ''}
                     ${job.strict_naf ? `<span class="strict-mode-badge" title="${t('job.strictMode.tooltip')}">${t('job.strictMode.badge')}</span>` : ''}
                     <span style="color:var(--text-secondary); font-size:var(--font-sm)">
                         ${t('job.createdOn')} ${formatDateTime(job.created_at)}
@@ -344,11 +361,12 @@ function buildScoreboardCard(job, linkStats, summary) {
     // the legend self-hides via the `greenCount > 0` guard at line 198. This avoids
     // the silent 4→0 click divergence in no-NAF batches.
     const greenCount = verified;
+    // Change 8: drop pending legend row — pending hero card is the canonical surface.
+    // Bar segment still present for visual proportion (see barHtml above).
     const legendHtml = `
         <div style="margin-bottom:var(--space-lg)">
             ${greenLegendLabel && greenCount > 0 ? legendRow('naf_confirmed', 'var(--success)', greenCount, greenLegendLabel) : ''}
             ${amberLegendLabel && mismatch > 0 ? legendRow('naf_sibling', '#f59e0b', mismatch, amberLegendLabel) : ''}
-            ${pending > 0 ? legendRow('pending', '#fb923c', pending, t('job.legendPending')) : ''}
             ${unlinked > 0 ? legendRow('unlinked', 'var(--text-muted)', unlinked, t('job.legendUnlinked')) : ''}
         </div>
     `;
@@ -443,16 +461,18 @@ function buildScoreboardCard(job, linkStats, summary) {
         }
     }
 
-    const heroCard = (icon, label, num, denom, pctVal, subtext, fullWidth) => {
-        const colour = rateColour(pctVal);
+    // heroCard: denom and pctVal are optional — pass null to suppress the "/ N" and "N%" display.
+    const heroCard = (icon, label, num, denom, pctVal, subtext, fullWidth, scopeLabel) => {
+        const colour = denom != null ? rateColour(pctVal) : 'var(--accent)';
         return `
             <div style="${fullWidth ? 'grid-column: 1 / -1;' : ''} background:var(--bg-elevated); border-radius:var(--radius); padding:var(--space-lg); border:1px solid var(--border-subtle)">
                 <div style="font-size:var(--font-xs); color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; font-weight:700; margin-bottom:var(--space-sm)">${icon} ${label}</div>
                 <div style="display:flex; align-items:baseline; gap:var(--space-sm); margin-bottom:var(--space-sm)">
                     <span style="font-size:var(--font-2xl); font-weight:800; color:${colour}">${num}</span>
-                    <span style="color:var(--text-muted); font-size:var(--font-sm)">/ ${denom}</span>
-                    <span style="font-size:var(--font-lg); font-weight:700; color:${colour}; margin-left:auto">${pctVal}%</span>
+                    ${denom != null ? `<span style="color:var(--text-muted); font-size:var(--font-sm)">/ ${denom}</span>` : ''}
+                    ${pctVal != null ? `<span style="font-size:var(--font-lg); font-weight:700; color:${colour}; margin-left:auto">${pctVal}%</span>` : ''}
                 </div>
+                ${scopeLabel ? `<div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:var(--space-xs); font-style:italic">${scopeLabel}</div>` : ''}
                 <div style="font-size:var(--font-sm); color:var(--text-secondary); line-height:1.4">${subtext}</div>
             </div>
         `;
@@ -492,9 +512,23 @@ function buildScoreboardCard(job, linkStats, summary) {
     const _gridCols = _heroCardCount === 1 ? '1fr' : (_heroCardCount === 2 ? '1fr 1fr' : '1fr 1fr 1fr');
     const _identifiedFullWidth = _heroCardCount === 1;
 
+    // Change 1 (A1=c): scope label below confirmed count; drop tautological denom/pct.
+    const scopeLabel = computeScopeLabel(job);
+
+    // Change 2 (A2=a): cross-dept expander when there are confirmed entities outside the dept filter.
+    const crossDeptCount = linkStats.cross_dept_count || 0;
+    const crossDeptHtml = crossDeptCount > 0 ? `
+        <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
+            ${t('job.crossDeptExpander', { count: crossDeptCount })}
+            <a href="#/job/${encodeURIComponent(job.batch_id || '')}?override_dept=ALL" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
+                ${t('job.crossDeptViewAll')}
+            </a>
+        </div>
+    ` : '';
+
     const heroGridHtml = `
         <div style="display:grid; grid-template-columns:${_gridCols}; gap:var(--space-xl); margin-bottom:var(--space-lg)" class="scoreboard-hero-grid">
-            ${heroCard('🎯', t('job.scoreboardIdentified'), confirmed, total, confirmPct, identifiedSubtext, _identifiedFullWidth)}
+            ${heroCard('🎯', t('job.scoreboardIdentified'), confirmed, null, null, identifiedSubtext + crossDeptHtml, _identifiedFullWidth, scopeLabel)}
             ${pendingHeroCardHtml}
             ${showSectorCard ? heroCard('🏷️', sectorCardLabel, sectorNum, sectorDenom, sectorPct, sectorSubtext, false) : ''}
         </div>
@@ -511,11 +545,13 @@ function buildScoreboardCard(job, linkStats, summary) {
         deptChip = `<span style="color:var(--text-secondary); font-size:var(--font-sm)">📍 ${t('job.chipDepartments', { count: depts.length })}</span>`;
     }
 
-    const summaryQualified = (summary && summary.qualified) || qualified;
+    // Change 4 (C1=b): use matching_search_count (Brief 06 field); backward-compat fallback to companies_qualified.
+    const matchingSearchCount = (summary && summary.matching_search_count) || qualified;
+    const qualifiedSubtitle = isStrict ? t('job.searchCriteriaSubtitleStrict') : t('job.searchCriteriaSubtitleWide');
     const contactableChip = `
         <div style="display:flex; flex-direction:column; gap:2px">
-            <span style="font-size:var(--font-sm); font-weight:600">✉️ ${t('job.chipContactable', { count: summaryQualified })}</span>
-            <span style="font-size:var(--font-xs); color:var(--text-muted)">${t('job.chipContactableSub')}</span>
+            <span style="font-size:var(--font-sm); font-weight:600">🎯 ${t('job.qualifiedChipMain', { count: matchingSearchCount })}</span>
+            <span style="font-size:var(--font-xs); color:var(--text-muted)">${qualifiedSubtitle}</span>
         </div>
     `;
 
@@ -548,7 +584,10 @@ function buildScoreboardCard(job, linkStats, summary) {
         </div>
     `;
 
-    // ── E: Disclosure "▸ Voir le détail par méthode" ──────────────
+    // ── E: Disclosure "▸ Voir le détail par méthode" — admin-only (Change 6) ──
+    const _currentUser = getCachedUser();
+    const isAdmin = _currentUser?.role === 'admin';
+
     const methodEntries = Object.entries(byMethod)
         .filter(([, n]) => n > 0)
         .sort((a, b) => b[1] - a[1]);
@@ -567,7 +606,8 @@ function buildScoreboardCard(job, linkStats, summary) {
         </div>
     `).join('');
 
-    const disclosureHtml = hasDetail ? `
+    // Change 6 (B4): only render the method-disclosure for admins.
+    const disclosureHtml = (isAdmin && hasDetail) ? `
         <div style="display:flex; justify-content:flex-end; margin-top:var(--space-sm)">
             <button id="link-stats-toggle" style="background:none; border:1px solid var(--border-subtle); color:var(--accent); cursor:pointer; font-size:var(--font-xs); font-weight:600; padding:4px 10px; border-radius:var(--radius-sm); display:flex; align-items:center; gap:4px; white-space:nowrap" onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background='transparent'">
                 <span id="link-stats-chevron" style="display:inline-block; transition:transform 0.2s">▸</span>
@@ -695,6 +735,18 @@ export async function renderJob(container, batchId) {
     const entityCount = job.link_stats?.total || scraped || qualified || batchSize;
     const q = quality || {};
 
+    // Change 7 (D4=a): admin sees Avancé expanded; non-admin sees it collapsed.
+    const _pageUser = getCachedUser();
+    const _pageIsAdmin = _pageUser?.role === 'admin';
+
+    // Retrieve stored Avancé disclosure state (persist across page reloads for this batch)
+    const _advancedStorageKey = `fortress_advanced_open_${batchId}`;
+    const _advancedStoredOpen = localStorage.getItem(_advancedStorageKey);
+    // If stored, use stored value; else default: open for admin, closed for non-admin.
+    const _advancedOpen = _advancedStoredOpen !== null
+        ? _advancedStoredOpen === 'true'
+        : _pageIsAdmin;
+
     container.innerHTML = `
         ${breadcrumb([
             { label: 'Dashboard', href: '#/' },
@@ -702,16 +754,6 @@ export async function renderJob(container, batchId) {
         ])}
 
         ${buildScoreboardCard(job, job.link_stats, summary)}
-
-        <!-- Recherches effectuées -->
-        <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
-            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
-                ${t('job.queriesCardTitle')}
-            </h3>
-            <div id="queries-card-list"></div>
-        </div>
-
-        ${buildTimingPanel(job)}
 
         <!-- Quality Gauges -->
         <div class="card" style="margin-bottom:var(--space-xl)">
@@ -765,6 +807,22 @@ export async function renderJob(container, batchId) {
             </div>
         ` : ''}
 
+        <!-- Change 7 (D4=a): Engineering surfaces in collapsible "Avancé" disclosure -->
+        <details class="advanced-section" id="advanced-section" ${_advancedOpen ? 'open' : ''} style="margin-top:var(--space-xl)">
+            <summary class="advanced-section-summary">${t('job.advancedSection')}</summary>
+            <div class="advanced-section-body">
+                <!-- Recherches effectuées -->
+                <div class="card" id="queries-card" style="margin-bottom:var(--space-xl); display:none">
+                    <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                        ${t('job.queriesCardTitle')}
+                    </h3>
+                    <div id="queries-card-list"></div>
+                </div>
+
+                ${buildTimingPanel(job)}
+            </div>
+        </details>
+
     `;
 
     // Populate queries card
@@ -801,6 +859,14 @@ export async function renderJob(container, batchId) {
 
     // Load companies
     await loadCompanies(batchId, 1, 'completude', '', _currentSearchQuery);
+
+    // Change 7: persist Avancé disclosure state in localStorage
+    const advancedSection = document.getElementById('advanced-section');
+    if (advancedSection) {
+        advancedSection.addEventListener('toggle', () => {
+            localStorage.setItem(_advancedStorageKey, advancedSection.open ? 'true' : 'false');
+        });
+    }
 
     // Link stats disclosure toggle (Request A)
     const linkStatsBtn = document.getElementById('link-stats-toggle');

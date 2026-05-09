@@ -4507,3 +4507,61 @@
 .gemini-panel-row:last-child { border-bottom: none; }
 .gemini-panel-label { color: var(--text-secondary); }
 .gemini-panel-value { color: var(--text-primary); font-weight: 500; }
+
+/* ── Job page — "Avancé / Technical details" disclosure (Change 7 D4=a) ── */
+.advanced-section {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    margin-bottom: var(--space-xl);
+}
+
+.advanced-section-summary {
+    padding: var(--space-md) var(--space-lg);
+    cursor: pointer;
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    user-select: none;
+}
+
+.advanced-section-summary::-webkit-details-marker { display: none; }
+.advanced-section-summary::marker { content: ''; }
+.advanced-section-summary::after {
+    content: '▾';
+    color: var(--text-muted);
+    margin-left: auto;
+    transition: transform var(--transition-fast);
+}
+
+.advanced-section:not([open]) .advanced-section-summary::after {
+    transform: rotate(-90deg);
+}
+
+.advanced-section-summary:hover {
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.advanced-section-body {
+    padding: var(--space-lg);
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* Scope label inside hero card (Change 1 A1=c) */
+.hero-cross-dept-expander {
+    margin-top: var(--space-sm);
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}
+
+.hero-cross-dept-expander .text-link {
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+}

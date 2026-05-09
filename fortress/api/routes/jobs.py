@@ -1166,9 +1166,6 @@ async def get_job_summary(batch_id: str, request: Request):
     return {
         "target": target,
         "found": found,
-        # Brief 06 (2026-05-09): "qualified" kept as backward-compat alias for job.js:514.
-        # Brief 07 will switch frontend to read "matching_search_count" and delete this alias.
-        "qualified": qualified,
         "matching_search_count": qualified,
         "failed": failed,
         "triage": {
