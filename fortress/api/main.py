@@ -70,6 +70,137 @@ def _sweeper_should_spawn(batch_id: str) -> bool:
     return True
 
 
+async def _resumable_interrupted_batch_id(conn) -> "tuple[str, int | None] | None":
+    """Return (batch_id, workspace_id) of the oldest auto-resumable interrupted
+    batch, or None.
+
+    Eligibility:
+      - status = 'interrupted'
+      - resume_attempt_count < 2 (circuit breaker — manual Reprendre resets to 0)
+      - cancel_requested = false (never auto-resume cancellations)
+      - created_at > NOW() - INTERVAL '24 hours' (don't resurrect ancient batches)
+      - updated_at > NOW() - INTERVAL '6 hours' (only batches with recent activity;
+        a batch idle for 6 hours has been abandoned by the user)
+      - companies_scraped < batch_size OR batch_size = 0 (don't resume already-full)
+
+    Returns oldest first by created_at so a user with two interrupted batches
+    in the same workspace gets the earlier one resumed first.
+    """
+    cur = await conn.execute(
+        """SELECT batch_id, workspace_id FROM batch_data
+           WHERE status = 'interrupted'
+             AND COALESCE(resume_attempt_count, 0) < 2
+             AND COALESCE(cancel_requested, FALSE) = FALSE
+             AND created_at > NOW() - INTERVAL '24 hours'
+             AND updated_at > NOW() - INTERVAL '6 hours'
+             AND (COALESCE(batch_size, 0) = 0
+                  OR COALESCE(companies_scraped, 0) < COALESCE(batch_size, 0))
+           ORDER BY created_at ASC LIMIT 1"""
+    )
+    row = await cur.fetchone()
+    if not row:
+        return None
+    return (row[0], row[1])
+
+
+async def _auto_resume_spawn(batch_id: str, workspace_id: "int | None") -> bool:
+    """Flip interrupted → queued, increment resume_attempt_count, spawn the
+    discovery subprocess. Returns True if spawn was attempted (whether or not
+    the subprocess Popen succeeded).
+
+    Caller MUST have already verified:
+      - no other batch is in_progress (global cap = 1)
+      - _sweeper_should_spawn(batch_id) returned True (double-spawn guard)
+
+    Race-safe via single-statement UPDATE that also checks NOT EXISTS in_progress
+    AND replicates the same-workspace 15-min concurrency guard from manual
+    /jobs/{id}/resume (jobs.py:497-531). Test workspaces (settings.test_workspace_ids)
+    are exempt from the same-workspace guard, matching manual-resume semantics.
+    """
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _Path
+    from fortress.api.db import get_conn as _gc
+    from fortress.config.settings import settings as _settings
+
+    is_test_ws = (
+        workspace_id is not None and workspace_id in (_settings.test_workspace_ids or [])
+    )
+
+    # ── Atomic flip + increment + double-checks (Issue 1+2 from /review) ──
+    # Single UPDATE atomically:
+    # (a) WHERE status = 'interrupted'  — race-safe vs parallel auto-resume
+    # (b) AND NOT EXISTS in_progress    — race-safe vs user-launched fresh batch
+    # (c) AND NOT EXISTS recent same-workspace queued OR in_progress (skipped for test_ws)
+    # Test workspaces skip (c) per jobs.py:499-503 manual-resume semantics.
+    same_ws_guard = (
+        ""
+        if is_test_ws
+        else """
+        AND NOT EXISTS (
+            SELECT 1 FROM batch_data b2
+            WHERE b2.batch_id != batch_data.batch_id
+              AND b2.workspace_id = batch_data.workspace_id
+              AND b2.status IN ('queued', 'in_progress')
+              AND b2.updated_at > NOW() - INTERVAL '15 minutes'
+        )
+        """
+    )
+    try:
+        async with _gc() as _ar_conn:
+            cur = await _ar_conn.execute(
+                f"""UPDATE batch_data
+                    SET status = 'queued',
+                        resume_attempt_count = COALESCE(resume_attempt_count, 0) + 1,
+                        cancel_requested = FALSE,
+                        shortfall_reason = NULL,
+                        updated_at = NOW()
+                    WHERE batch_id = %s
+                      AND status = 'interrupted'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM batch_data b3
+                          WHERE b3.status = 'in_progress'
+                      )
+                      {same_ws_guard}
+                    RETURNING resume_attempt_count""",
+                (batch_id,),
+            )
+            row = await cur.fetchone()
+            await _ar_conn.commit()
+            if not row:
+                logger.info(
+                    "auto_resume.race_lost batch=%s ws=%s test_ws=%s",
+                    batch_id, workspace_id, is_test_ws,
+                )
+                return False
+            attempt_n = row[0]
+    except Exception as exc:
+        logger.warning("auto_resume.flip_failed batch=%s err=%s", batch_id, exc)
+        return False
+
+    # ── Spawn subprocess (same pattern as catch-up + sweeper above) ──
+    fortress_root = _Path(__file__).resolve().parent.parent
+    runner_cmd = [_sys.executable, "-m", "fortress.discovery", batch_id]
+    launcher = _Path("/tmp/fortress_launcher.py")
+    if launcher.exists():
+        runner_cmd = [_sys.executable, str(launcher), "runner", batch_id]
+    try:
+        _sp.Popen(
+            runner_cmd, cwd=str(fortress_root),
+            stdout=None, stderr=None,
+            close_fds=False, start_new_session=True,
+        )
+        logger.info(
+            "auto_resume.spawned batch=%s ws=%s attempt=%d",
+            batch_id, workspace_id, attempt_n,
+        )
+    except Exception as exc:
+        logger.warning(
+            "auto_resume.popen_failed batch=%s err=%s", batch_id, exc
+        )
+    return True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle — resilient to DB failures."""
@@ -204,6 +335,7 @@ async def lifespan(app: FastAPI):
                 await conn.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS strict_match BOOLEAN")
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS entity_cap_confirmed INTEGER")
                 await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS timing_breakdown JSONB")
+                await conn.execute("ALTER TABLE batch_data ADD COLUMN IF NOT EXISTS resume_attempt_count INTEGER DEFAULT 0")
 
                 # Index for Enrichment History timeline rendering performance
                 await conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_log_siren_time ON batch_log (siren, timestamp DESC)")
@@ -634,12 +766,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Could not create dynamic tables: %s", e)
 
-        # ── E2: startup catch-up — spawn at most ONE oldest queued batch globally ──
-        # On boot (or restart), if the previous discovery process died without
-        # picking up the next queued batch, kick off the single oldest queued batch
-        # globally (any workspace). Only if zero in_progress batches exist anywhere
-        # (global concurrency cap = 1 across all workspaces, matching the guard in
-        # batch.py and the sweeper below).
+        # ── Startup catch-up — auto-resume interrupted, then spawn queued ──
+        # Order: interrupted batches first (they had work; restarting Cindy's
+        # wine batch is more valuable than starting a fresh queued one).
+        # If no resumable interrupted batch, fall through to oldest queued.
+        # Single-spawn semantics preserved: max ONE subprocess spawned per
+        # startup pass, regardless of which path fires.
         try:
             from fortress.api.db import get_conn
             import subprocess, sys as _sys, os as _os
@@ -649,37 +781,50 @@ async def lifespan(app: FastAPI):
                     "SELECT 1 FROM batch_data WHERE status='in_progress' LIMIT 1"
                 )
                 _has_running = await _running_cur.fetchone()
-                if not _has_running:
-                    _cur = await _conn.execute(
-                        """SELECT batch_id, workspace_id FROM batch_data
-                           WHERE status = 'queued'
-                           ORDER BY created_at ASC LIMIT 1"""
-                    )
-                    _orphaned = await _cur.fetchall()
+                if _has_running:
+                    pass  # something already in flight — neither path fires
                 else:
-                    _orphaned = []
-            if _orphaned:
-                _fortress_root = _Path(__file__).resolve().parent.parent  # parent of fortress/
-                for _row in _orphaned:
-                    _bid = _row[0] if isinstance(_row, tuple) else _row["batch_id"]
-                    _ws = _row[1] if isinstance(_row, tuple) else _row["workspace_id"]
-                    _runner_cmd = [_sys.executable, "-m", "fortress.discovery", _bid]
-                    _launcher = _Path("/tmp/fortress_launcher.py")
-                    if _launcher.exists():
-                        _runner_cmd = [_sys.executable, str(_launcher), "runner", _bid]
-                    if not _sweeper_should_spawn(_bid):
-                        logger.info("Catch-up: skip respawn (guard) batch=%s", _bid)
-                        continue
-                    try:
-                        subprocess.Popen(
-                            _runner_cmd,
-                            cwd=str(_fortress_root),
-                            stdout=None, stderr=None,
-                            close_fds=False, start_new_session=True,
+                    # Path 1: try interrupted first
+                    _resumable = await _resumable_interrupted_batch_id(_conn)
+                    if _resumable is not None:
+                        _bid, _ws = _resumable
+                        if _sweeper_should_spawn(_bid):
+                            await _auto_resume_spawn(_bid, _ws)
+                        else:
+                            logger.info(
+                                "Catch-up: skip auto-resume (guard) batch=%s",
+                                _bid,
+                            )
+                    else:
+                        # Path 2: fall back to oldest queued (legacy behavior)
+                        _cur = await _conn.execute(
+                            """SELECT batch_id, workspace_id FROM batch_data
+                               WHERE status = 'queued'
+                               ORDER BY created_at ASC LIMIT 1"""
                         )
-                        logger.info("✅ Catch-up: spawned orphaned queued batch %s (ws=%s)", _bid, _ws)
-                    except Exception as _e:
-                        logger.warning("Catch-up spawn failed for %s: %s", _bid, _e)
+                        _orphaned = await _cur.fetchall()
+                        if _orphaned:
+                            _fortress_root = _Path(__file__).resolve().parent.parent
+                            for _row in _orphaned:
+                                _bid = _row[0] if isinstance(_row, tuple) else _row["batch_id"]
+                                _ws = _row[1] if isinstance(_row, tuple) else _row["workspace_id"]
+                                _runner_cmd = [_sys.executable, "-m", "fortress.discovery", _bid]
+                                _launcher = _Path("/tmp/fortress_launcher.py")
+                                if _launcher.exists():
+                                    _runner_cmd = [_sys.executable, str(_launcher), "runner", _bid]
+                                if not _sweeper_should_spawn(_bid):
+                                    logger.info("Catch-up: skip respawn (guard) batch=%s", _bid)
+                                    continue
+                                try:
+                                    subprocess.Popen(
+                                        _runner_cmd,
+                                        cwd=str(_fortress_root),
+                                        stdout=None, stderr=None,
+                                        close_fds=False, start_new_session=True,
+                                    )
+                                    logger.info("✅ Catch-up: spawned orphaned queued batch %s (ws=%s)", _bid, _ws)
+                                except Exception as _e:
+                                    logger.warning("Catch-up spawn failed for %s: %s", _bid, _e)
         except Exception as _e:
             logger.warning("Catch-up scan failed: %s", _e)
     else:
@@ -709,6 +854,21 @@ async def lifespan(app: FastAPI):
                     _running = await _running_cur.fetchone()
                     if _running:
                         continue  # something already running — wait
+
+                    # Path 1: auto-resume an interrupted batch first
+                    _resumable = await _resumable_interrupted_batch_id(_swp_conn)
+                    if _resumable is not None:
+                        _bid, _ws = _resumable
+                        if _sweeper_should_spawn(_bid):
+                            await _auto_resume_spawn(_bid, _ws)
+                            continue  # spawned — wait for next cycle
+                        logger.info(
+                            "🔄 Sweeper: skip auto-resume (guard) batch=%s",
+                            _bid,
+                        )
+                        continue  # in guard window — wait
+
+                    # Path 2: fall back to oldest queued (legacy behavior)
                     _swp_cur = await _swp_conn.execute(
                         """SELECT batch_id, workspace_id FROM batch_data
                            WHERE status = 'queued'

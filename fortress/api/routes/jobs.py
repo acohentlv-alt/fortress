@@ -535,6 +535,7 @@ async def resume_job(batch_id: str, request: Request):
                SET status = 'queued',
                    cancel_requested = FALSE,
                    shortfall_reason = NULL,
+                   resume_attempt_count = 0,
                    updated_at = NOW()
                WHERE batch_id = %s""",
             (batch_id,),
