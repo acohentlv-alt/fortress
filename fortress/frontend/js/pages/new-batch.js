@@ -48,7 +48,9 @@ const DEPT_NAMES = {
 
 /**
  * Parse a query string into a dept code.
- * Mirrors fortress/discovery.py:104 _parse_dept_hint_from_query.
+ * Tries: 5-digit postal code → 2-3 digit dept code → dept/city name (word-boundary match).
+ * NOTE: the Python equivalent at discovery.py:_parse_dept_hint_from_query
+ * does NOT have the dept/city-name fallback — JS-only convenience.
  */
 function parseDeptHint(query) {
     if (!query) return null;
@@ -68,7 +70,11 @@ function parseDeptHint(query) {
     const norm = query.toLowerCase();
     const sortedKeys = Object.keys(DEPT_NAMES).sort((a, b) => b.length - a.length);
     for (const name of sortedKeys) {
-        if (norm.includes(name)) return DEPT_NAMES[name];
+        // Word-boundary match — prevents "saint" from matching "ain" (dept 01),
+        // "transport" from matching "or", "nordic" from matching "nord", etc.
+        // Special chars in dept names (spaces, hyphens) are literal — no regex chars in DEPT_NAMES.
+        const re = new RegExp(`\\b${name}\\b`);
+        if (re.test(norm)) return DEPT_NAMES[name];
     }
     return null;
 }
