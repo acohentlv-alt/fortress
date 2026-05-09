@@ -4234,6 +4234,26 @@
     margin-top: var(--space-xs);
 }
 
+/* ─── Feedback CTA chip (Brief 08 — replaces anomaly chip) ─── */
+.feedback-cta-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(6, 182, 212, 0.10);
+    color: #22D3EE;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+    border-radius: var(--radius);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.feedback-cta-chip:hover {
+    background: rgba(6, 182, 212, 0.20);
+}
+
 /* ─── Rapport du batch button ─── */
 .rapport-btn {
     display: inline-flex;

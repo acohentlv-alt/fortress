@@ -310,6 +310,14 @@ async def lifespan(app: FastAPI):
                     )
                 """)
                 await conn.execute("""
+                    ALTER TABLE bug_reports
+                    ADD COLUMN IF NOT EXISTS feedback_type VARCHAR(30) NOT NULL DEFAULT 'bug'
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_bug_reports_feedback_type
+                    ON bug_reports(feedback_type, created_at DESC)
+                """)
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS company_notes (
                         id SERIAL PRIMARY KEY,
                         siren VARCHAR(9) NOT NULL,

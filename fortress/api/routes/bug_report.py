@@ -11,7 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email import encoders
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from fortress.api.db import execute, fetch_all, fetch_one
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/bug-report", tags=["bug-report"])
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
-def _send_bug_email_sync(description: str, ctx: dict, screenshot_bytes: bytes | None, screenshot_name: str | None):
+def _send_bug_email_sync(description: str, ctx: dict, screenshot_bytes: bytes | None, screenshot_name: str | None, feedback_type: str = "bug"):
     smtp_user = getattr(settings, "smtp_user", None) or ""
     smtp_pass = getattr(settings, "smtp_password", None) or ""
     notify_to = getattr(settings, "contact_notify_email", None) or smtp_user
@@ -48,7 +48,7 @@ def _send_bug_email_sync(description: str, ctx: dict, screenshot_bytes: bytes | 
     msg = MIMEMultipart("mixed")
     msg["From"] = smtp_user
     msg["To"] = notify_to
-    msg["Subject"] = f"Bug Report — {username}"
+    msg["Subject"] = f"{'Bug Report' if feedback_type == 'bug' else 'Feedback'} — {username}"
 
     error_html = ""
     if errors:
@@ -107,11 +107,15 @@ async def submit_bug_report(
     request: Request,
     description: str = Form(...),
     context: str = Form("{}"),
+    feedback_type: str = Form("bug"),
     screenshot: UploadFile | None = File(None),
 ):
     user = getattr(request.state, "user", None)
     if not user:
         return JSONResponse(status_code=401, content={"error": "Authentification requise."})
+
+    if feedback_type not in ("bug", "batch_quality", "general"):
+        return JSONResponse(status_code=422, content={"error": "Type de rapport invalide."})
 
     description = description.strip()
     if not description or len(description) < 5:
@@ -138,8 +142,8 @@ async def submit_bug_report(
         screenshot_b64 = base64.b64encode(screenshot_bytes).decode("ascii")
 
     await execute("""
-        INSERT INTO bug_reports (username, role, workspace_id, description, context, screenshot_name, screenshot_data, page_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO bug_reports (username, role, workspace_id, description, context, screenshot_name, screenshot_data, page_url, feedback_type)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         user.username,
         user.role,
@@ -149,18 +153,19 @@ async def submit_bug_report(
         screenshot_name,
         screenshot_b64,
         ctx.get("page_url") or "",
+        feedback_type,
     ))
 
-    asyncio.get_event_loop().run_in_executor(None, _send_bug_email_sync, description, ctx, screenshot_bytes, screenshot_name)
+    asyncio.get_event_loop().run_in_executor(None, _send_bug_email_sync, description, ctx, screenshot_bytes, screenshot_name, feedback_type)
 
     try:
         await log_activity(
             user.id,
             user.username,
-            "bug_report",
-            "bug",
+            f"feedback_{feedback_type}",
+            feedback_type,
             ctx.get("page_url", ""),
-            f"Bug report: {description[:100]}"
+            f"{feedback_type}: {description[:100]}"
         )
     except Exception:
         pass
@@ -169,29 +174,41 @@ async def submit_bug_report(
 
 
 @router.get("")
-async def list_bug_reports(request: Request):
+async def list_bug_reports(request: Request, feedback_type: str | None = Query(None)):
     user = getattr(request.state, "user", None)
     if not user:
         return JSONResponse(status_code=401, content={"error": "Authentification requise."})
     if user.role == "user":
         return JSONResponse(status_code=403, content={"error": "Accès réservé aux administrateurs et responsables."})
 
+    # Validate optional feedback_type filter
+    if feedback_type is not None and feedback_type not in ("bug", "batch_quality", "general"):
+        return JSONResponse(status_code=422, content={"error": "Type de filtre invalide."})
+
+    type_filter = "AND feedback_type = %s" if feedback_type else ""
+
     if user.role == "admin":
-        rows = await fetch_all("""
+        params = (feedback_type,) if feedback_type else ()
+        rows = await fetch_all(f"""
             SELECT id, username, role, workspace_id, description, context, page_url,
-                   (screenshot_data IS NOT NULL) AS has_screenshot, created_at
+                   feedback_type, (screenshot_data IS NOT NULL) AS has_screenshot, created_at
             FROM bug_reports
+            WHERE TRUE {type_filter}
             ORDER BY created_at DESC
-        """)
+        """, params)
     else:
         # head: only own workspace
-        rows = await fetch_all("""
+        if feedback_type:
+            params_head = (user.workspace_id, feedback_type)
+        else:
+            params_head = (user.workspace_id,)
+        rows = await fetch_all(f"""
             SELECT id, username, role, workspace_id, description, context, page_url,
-                   (screenshot_data IS NOT NULL) AS has_screenshot, created_at
+                   feedback_type, (screenshot_data IS NOT NULL) AS has_screenshot, created_at
             FROM bug_reports
-            WHERE workspace_id = %s
+            WHERE workspace_id = %s {type_filter}
             ORDER BY created_at DESC
-        """, (user.workspace_id,))
+        """, params_head)
 
     reports = []
     for row in rows:
@@ -203,6 +220,7 @@ async def list_bug_reports(request: Request):
             "description": row["description"],
             "context": row["context"],
             "page_url": row["page_url"],
+            "feedback_type": row["feedback_type"],
             "has_screenshot": bool(row["has_screenshot"]),
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         })

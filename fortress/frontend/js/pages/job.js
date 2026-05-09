@@ -557,23 +557,11 @@ function buildScoreboardCard(job, linkStats, summary) {
 
     const sh = summary?.system_health;
     const anomaliesChip = (sh && sh.total_errors > 0) ? `
-        <span class="anomaly-chip-wrapper" style="position:relative; display:inline-block">
-            <button class="anomaly-chip" data-test-id="anomaly-chip" type="button"
-                aria-haspopup="dialog" aria-expanded="false">
-                ⚠️ ${t('job.chipAnomalies', { count: sh.total_errors })}
-                <span class="anomaly-chip-chevron">▾</span>
-            </button>
-            <div class="anomaly-popover" data-test-id="anomaly-popover" role="dialog" aria-modal="false" hidden>
-                <h4 class="anomaly-popover-title">${t('job.popoverTitle')}</h4>
-                ${Object.entries(sh.categories || {}).map(([key, data]) => `
-                    <div class="anomaly-popover-row">
-                        <span class="anomaly-popover-label">${t('job.systemHealth.cat.' + key)}</span>
-                        <span class="anomaly-popover-count">${data.count}</span>
-                        ${data.samples?.length ? `<span class="anomaly-popover-samples">${t('job.systemHealth.sample')}: ${data.samples.join(', ')}</span>` : ''}
-                    </div>
-                `).join('')}
-            </div>
-        </span>
+        <button class="feedback-cta-chip" data-test-id="feedback-cta-chip" type="button"
+            data-batch-id="${escapeHtml(job.batch_id || '')}"
+            data-batch-name="${escapeHtml(job.batch_name || '')}">
+            📨 ${t('job.feedbackCtaButton')}
+        </button>
     ` : '';
 
     const chipsHtml = `
@@ -698,6 +686,105 @@ function buildBatchReport(summary, job) {
         });
     }
     return lines.join('\n');
+}
+
+// Brief 08 — Feedback modal for batch quality reporting
+function openFeedbackModal(batchId, batchName, summary) {
+    const existing = document.getElementById('feedback-modal-overlay');
+    if (existing) existing.remove();
+
+    const sh = summary?.system_health || { total_errors: 0, categories: {} };
+    const anomalyTotal = sh.total_errors || 0;
+    const anomalyCounts = sh.categories || {};
+    const sampleSirens = summary?.sample_anomaly_sirens || [];
+
+    // Build anomaly detail lines for context preview
+    const catLines = Object.entries(anomalyCounts).map(([key, data]) =>
+        `${t('job.systemHealth.cat.' + key)}: ${data.count}`
+    ).join(', ');
+    const contextPreview = catLines
+        ? `${t('job.feedbackModalAnomalyCount', { count: anomalyTotal })} (${catLines})`
+        : t('job.feedbackModalAnomalyCount', { count: anomalyTotal });
+    const sirenPreview = sampleSirens.length
+        ? t('job.feedbackModalSampleSirens', { sirens: sampleSirens.join(', ') })
+        : '';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'feedback-modal-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+        <div class="modal-content" style="max-width:540px">
+            <h3 class="modal-title">${t('job.feedbackModalTitle', { batchName: escapeHtml(batchName) })}</h3>
+            <div class="modal-body">
+                <p style="margin-bottom:var(--space-sm)">${t('job.feedbackModalSubtitle')}</p>
+                <div style="background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:var(--radius); padding:var(--space-sm) var(--space-md); font-size:var(--font-xs); color:var(--text-muted); margin-bottom:var(--space-md)">
+                    <div style="font-weight:600; margin-bottom:4px">${t('job.feedbackModalContextLabel')}</div>
+                    <div>${escapeHtml(contextPreview)}</div>
+                    ${sirenPreview ? `<div style="margin-top:2px">${escapeHtml(sirenPreview)}</div>` : ''}
+                </div>
+                <textarea id="feedback-modal-textarea"
+                    placeholder="${t('job.feedbackModalTextareaPlaceholder')}"
+                    style="width:100%; min-height:120px; box-sizing:border-box; padding:var(--space-sm); border:1px solid var(--border-default); border-radius:var(--radius); background:var(--bg-input, var(--bg-elevated)); color:var(--text-primary); font-size:var(--font-sm); resize:vertical; font-family:inherit"
+                ></textarea>
+            </div>
+            <div class="modal-actions">
+                <button id="feedback-modal-cancel" class="btn btn-secondary">${t('job.feedbackModalCancel')}</button>
+                <button id="feedback-modal-submit" class="btn btn-primary">${t('job.feedbackModalSubmit')}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    const close = () => {
+        overlay.classList.remove('visible');
+        setTimeout(() => overlay.remove(), 200);
+    };
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    document.getElementById('feedback-modal-cancel').addEventListener('click', close);
+
+    document.getElementById('feedback-modal-submit').addEventListener('click', async () => {
+        const textarea = document.getElementById('feedback-modal-textarea');
+        const userMessage = (textarea?.value || '').trim();
+        if (!userMessage) return;
+
+        const submitBtn = document.getElementById('feedback-modal-submit');
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '…'; }
+
+        const contextJson = JSON.stringify({
+            page_url: window.location.hash,
+            batch_id: batchId,
+            batch_name: batchName,
+            anomaly_total: anomalyTotal,
+            anomaly_counts: anomalyCounts,
+            sample_sirens: sampleSirens,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const formData = new FormData();
+            formData.append('description', userMessage);
+            formData.append('context', contextJson);
+            formData.append('feedback_type', 'batch_quality');
+
+            const resp = await fetch('/api/bug-report', { method: 'POST', body: formData, credentials: 'include' });
+            close();
+            if (resp.ok) {
+                showToast(t('job.feedbackToastSuccess'), 'success');
+            } else {
+                showToast(t('job.feedbackToastError'), 'error');
+            }
+        } catch (_err) {
+            close();
+            showToast(t('job.feedbackToastError'), 'error');
+        }
+    });
+
+    requestAnimationFrame(() => {
+        document.getElementById('feedback-modal-textarea')?.focus();
+    });
 }
 
 export async function renderJob(container, batchId) {
@@ -896,26 +983,11 @@ export async function renderJob(container, batchId) {
         });
     }
 
-    // Anomaly chip popover toggle
-    const anomalyChip = document.querySelector('[data-test-id="anomaly-chip"]');
-    const anomalyPopover = document.querySelector('[data-test-id="anomaly-popover"]');
-    if (anomalyChip && anomalyPopover) {
-        anomalyChip.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isOpen = !anomalyPopover.hasAttribute('hidden');
-            if (isOpen) {
-                anomalyPopover.setAttribute('hidden', '');
-                anomalyChip.setAttribute('aria-expanded', 'false');
-            } else {
-                anomalyPopover.removeAttribute('hidden');
-                anomalyChip.setAttribute('aria-expanded', 'true');
-            }
-        });
-        document.addEventListener('click', (e) => {
-            if (!anomalyChip.contains(e.target) && !anomalyPopover.contains(e.target)) {
-                anomalyPopover.setAttribute('hidden', '');
-                anomalyChip.setAttribute('aria-expanded', 'false');
-            }
+    // Feedback CTA chip — opens feedback modal (Brief 08)
+    const feedbackCtaChip = document.querySelector('[data-test-id="feedback-cta-chip"]');
+    if (feedbackCtaChip) {
+        feedbackCtaChip.addEventListener('click', () => {
+            openFeedbackModal(batchId, job.batch_name || batchId, summary);
         });
     }
 

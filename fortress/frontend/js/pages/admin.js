@@ -22,11 +22,11 @@ import {
     getOppositions,
     submitOpposition,
     confirmOppositionDeletion,
-    getBugReports,
     deleteBugReport,
 } from '../api.js';
 import { escapeHtml, showToast, showConfirmModal, formatDateTime } from '../components.js';
 import { isStale } from '../app.js';
+import { t } from '../i18n.js';
 
 const INPUT_STYLE = `
     background: var(--bg-input);
@@ -111,7 +111,7 @@ export async function renderAdmin(container, gen) {
             <button class="admin-tab" data-tab="users">Utilisateurs</button>
             <button class="admin-tab" data-tab="logs">Journaux</button>
             <button class="admin-tab" data-tab="rgpd">RGPD</button>
-            <button class="admin-tab" data-tab="bugs">Bugs</button>
+            <button class="admin-tab" data-tab="bugs">${t('admin.tabReports')}</button>
         </div>
 
         <!-- TAB: Espaces de travail -->
@@ -197,11 +197,17 @@ export async function renderAdmin(container, gen) {
             </div>
         </div>
 
-        <!-- TAB: Bugs -->
+        <!-- TAB: Bugs / Rapports utilisateur (Brief 08) -->
         <div id="tab-bugs" class="admin-tab-content" style="display:none">
             <div class="card">
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--space-lg)">
-                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">Rapports de bugs</h3>
+                    <h3 style="font-size:var(--font-sm); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin:0">Rapports utilisateurs</h3>
+                    <select id="bug-feedback-type-filter" style="padding:var(--space-xs) var(--space-sm); border:1px solid var(--border-default); border-radius:var(--radius); background:var(--bg-input, var(--bg-elevated)); color:var(--text-primary); font-size:var(--font-sm); cursor:pointer">
+                        <option value="">Tous les types</option>
+                        <option value="bug">Bugs</option>
+                        <option value="batch_quality">Feedback batch</option>
+                        <option value="general">Général</option>
+                    </select>
                 </div>
                 <div id="bugs-table-container">
                     <div class="loading"><div class="spinner"></div></div>
@@ -1240,20 +1246,33 @@ export async function renderAdmin(container, gen) {
 
     const bugsTableContainer = container.querySelector('#bugs-table-container');
 
-    async function loadBugReports() {
+    async function loadBugReports(feedbackTypeFilter) {
         if (!bugsTableContainer) return;
         bugsTableContainer.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
         try {
-            const data = await getBugReports();
-            if (!data || !data._ok) {
-                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur : ${escapeHtml(extractApiError(data))}</div></div>`;
+            const url = feedbackTypeFilter
+                ? `/api/bug-report?feedback_type=${encodeURIComponent(feedbackTypeFilter)}`
+                : '/api/bug-report';
+            const resp = await fetch(url, { credentials: 'include' });
+            const data = resp.ok ? await resp.json() : null;
+            if (!data || !resp.ok) {
+                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-text">Erreur de chargement des rapports.</div></div>`;
                 return;
             }
             const reports = data.reports || [];
             if (reports.length === 0) {
-                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🐛</div><div class="empty-state-text">Aucun rapport de bug.</div></div>`;
+                bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📥</div><div class="empty-state-text">Aucun rapport.</div></div>`;
                 return;
             }
+
+            // Brief 08: feedback_type badge helper
+            function feedbackBadge(ft) {
+                if (ft === 'batch_quality') return `<span class="glass-badge glass-badge--cyan">📊 Batch</span>`;
+                if (ft === 'general') return `<span class="glass-badge glass-badge--gold">💬 Général</span>`;
+                return `<span class="glass-badge glass-badge--violet">🐛 Bug</span>`;
+            }
+
+            const colCount = currentUser.role === 'admin' ? 8 : 7;
 
             bugsTableContainer.innerHTML = `
                 <div style="overflow-x:auto">
@@ -1261,6 +1280,7 @@ export async function renderAdmin(container, gen) {
                         <thead>
                             <tr>
                                 <th class="contacts-th">Date</th>
+                                <th class="contacts-th">Type</th>
                                 <th class="contacts-th">Utilisateur</th>
                                 <th class="contacts-th">Espace</th>
                                 <th class="contacts-th">Page</th>
@@ -1273,6 +1293,7 @@ export async function renderAdmin(container, gen) {
                             ${reports.map(r => `
                                 <tr class="contacts-row bug-report-row" data-bug-id="${r.id}" style="cursor:pointer">
                                     <td class="contacts-td" style="color:var(--text-muted); white-space:nowrap">${r.created_at ? formatDateTime(r.created_at) : '—'}</td>
+                                    <td class="contacts-td">${feedbackBadge(r.feedback_type)}</td>
                                     <td class="contacts-td" style="font-weight:600; color:var(--text-primary)">${escapeHtml(r.username || '—')}</td>
                                     <td class="contacts-td" style="color:var(--text-secondary)">${r.workspace_id != null ? r.workspace_id : '<span style="color:var(--text-muted)">admin</span>'}</td>
                                     <td class="contacts-td" style="color:var(--text-muted); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${escapeHtml(r.page_url || '')}">${escapeHtml(r.page_url || '—')}</td>
@@ -1289,7 +1310,7 @@ export async function renderAdmin(container, gen) {
                                     </td>` : ''}
                                 </tr>
                                 <tr class="bug-detail-row" id="bug-detail-${r.id}" style="display:none">
-                                    <td colspan="${currentUser.role === 'admin' ? 7 : 6}" style="padding:var(--space-md) var(--space-lg); background:var(--bg-secondary)">
+                                    <td colspan="${colCount}" style="padding:var(--space-md) var(--space-lg); background:var(--bg-secondary)">
                                         <div style="font-size:var(--font-sm); color:var(--text-secondary); white-space:pre-wrap; margin-bottom:var(--space-sm)">${escapeHtml(r.description || '')}</div>
                                         ${r.has_screenshot ? `<img src="/api/bug-report/${r.id}/screenshot" alt="Capture d'écran" style="max-width:100%; max-height:300px; border-radius:var(--radius-sm); border:1px solid var(--border-default); display:block; margin-top:var(--space-sm)">` : ''}
                                     </td>
@@ -1318,8 +1339,8 @@ export async function renderAdmin(container, gen) {
                     e.stopPropagation();
                     const bugId = parseInt(btn.dataset.bugId, 10);
                     showConfirmModal({
-                        title: 'Supprimer le rapport de bug',
-                        body: '<p>Voulez-vous vraiment supprimer ce rapport de bug ? Cette action est irréversible.</p>',
+                        title: 'Supprimer le rapport',
+                        body: '<p>Voulez-vous vraiment supprimer ce rapport ? Cette action est irréversible.</p>',
                         confirmLabel: 'Supprimer',
                         danger: true,
                         onConfirm: async () => {
@@ -1329,7 +1350,8 @@ export async function renderAdmin(container, gen) {
                                 return;
                             }
                             showToast('Rapport supprimé.', 'success');
-                            loadBugReports();
+                            const currentFilter = document.getElementById('bug-feedback-type-filter')?.value || '';
+                            loadBugReports(currentFilter || undefined);
                         },
                     });
                 });
@@ -1337,6 +1359,15 @@ export async function renderAdmin(container, gen) {
         } catch (err) {
             bugsTableContainer.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><div class="empty-state-text">Impossible de charger les rapports.</div></div>`;
         }
+    }
+
+    // Brief 08: Wire feedback type filter dropdown
+    const bugFilterSelect = container.querySelector('#bug-feedback-type-filter');
+    if (bugFilterSelect) {
+        bugFilterSelect.addEventListener('change', () => {
+            const val = bugFilterSelect.value || undefined;
+            loadBugReports(val);
+        });
     }
 
     // Load everything

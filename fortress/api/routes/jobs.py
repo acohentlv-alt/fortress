@@ -1125,6 +1125,19 @@ async def get_job_summary(batch_id: str, request: Request):
                 "samples": samples,
             }
 
+    # Brief 08: sample anomalous SIRENs for the feedback CTA pre-filled context
+    sample_rows = await fetch_all(
+        """SELECT DISTINCT siren
+           FROM batch_log
+           WHERE batch_id = %s
+             AND result IN ('fail', 'no_data', 'no_match', 'not_found')
+             AND siren IS NOT NULL
+             AND siren NOT LIKE 'A2%%'
+           LIMIT 5""",
+        (batch_id,),
+    )
+    sample_anomaly_sirens = [r["siren"] for r in (sample_rows or [])]
+
     target = job.get("batch_size") or job.get("total_companies") or 0
     found = job.get("companies_scraped") or 0
     # Brief 06 (2026-05-09) — Change 2 (C1=b): count entities matching the search criteria
@@ -1193,6 +1206,7 @@ async def get_job_summary(batch_id: str, request: Request):
             "strict_naf_active": bool(job.get("strict_naf")),
         },
         "system_health": system_health,
+        "sample_anomaly_sirens": sample_anomaly_sirens,
     }
 
 
