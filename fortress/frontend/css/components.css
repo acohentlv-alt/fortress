@@ -4431,7 +4431,8 @@
 .decision-chart-step {
     display: grid;
     grid-template-columns: 24px 24px 1fr auto 24px;
-    gap: var(--space-sm);
+    grid-template-rows: auto auto;
+    gap: var(--space-sm) var(--space-sm);
     align-items: baseline;
     padding: var(--space-xs) var(--space-sm);
     background: var(--bg-elevated);
@@ -4490,6 +4491,23 @@
     bottom: 100%;
     margin-top: 0;
     margin-bottom: var(--space-xs);
+}
+
+.decision-finding-sub-line {
+    grid-column: 3 / -1;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    padding-top: 0.125rem;
+    padding-bottom: 0.25rem;
+    line-height: 1.4;
+    word-break: break-word;
+    opacity: 0.9;
+}
+
+.decision-chart-final .decision-finding-sub-line {
+    grid-column: 2 / -1;
+    font-size: var(--font-xs);
+    font-weight: 400;
 }
 
 .decision-chart-final {

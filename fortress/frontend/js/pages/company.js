@@ -662,6 +662,296 @@ function formatDuration(ms) {
     return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// ── Per-step findings helpers (Brief 10) ─────────────────────────────────────
+
+/** Safely parse detail — returns parsed object if JSON, else returns string as-is. */
+function _parseDetail(detail) {
+    if (!detail) return null;
+    if (typeof detail === 'object') return detail;
+    const s = String(detail).trim();
+    if (s.startsWith('{') || s.startsWith('[')) {
+        try { return JSON.parse(s); } catch (_) { /* fall through */ }
+    }
+    return s;
+}
+
+/** Truncate a string to maxLen characters, appending "…" if cut. */
+function _truncate(str, maxLen) {
+    if (!str) return '';
+    const s = String(str);
+    if (s.length <= maxLen) return s;
+    return s.slice(0, maxLen) + '…';
+}
+
+/** Extract domain from URL for display. */
+function _shortDomain(url) {
+    if (!url) return '';
+    try {
+        const u = new URL(url.startsWith('http') ? url : 'https://' + url);
+        return u.hostname.replace(/^www\./, '');
+    } catch (_) {
+        return String(url).replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+    }
+}
+
+/** Format a chiffre_affaires number as "1,2M€" / "350k€" / etc. */
+function _formatCA(val) {
+    if (!val && val !== 0) return '';
+    const n = Number(val);
+    if (isNaN(n)) return String(val);
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace('.', ',')}M€`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k€`;
+    return `${n}€`;
+}
+
+/** Signal key → human label for the final decision row. */
+function _signalDisplayName(key) {
+    const map = {
+        phone: '📞 tél', enseigne: '🏷 enseigne', address: '📍 adresse',
+        siren_website: '🌐 SIREN site', denomination: '📋 dénomination',
+        maps_cp: '📮 CP Maps', naf_section: '🔤 section NAF',
+        siret_naf: '🔬 SIRET NAF', inpi_enseigne: '🏷 enseigne INPI',
+        inpi_address: '📍 adresse INPI',
+    };
+    return map[key] || key;
+}
+
+// ── Format functions per action type ──────────────────────────────────────────
+
+function _formatMapsFinding(detail) {
+    const parts = [];
+    if (typeof detail === 'object' && detail) {
+        if (detail.phone) parts.push(`📞 ${detail.phone}`);
+        if (detail.website) parts.push(`🌐 ${_shortDomain(detail.website)}`);
+        if (detail.rating) parts.push(`⭐ ${detail.rating} (${detail.review_count || '?'} avis)`);
+        if (parts.length === 0 && detail.address) parts.push(`📍 ${detail.address}`);
+    } else if (typeof detail === 'string' && detail) {
+        // Plain text detail — surface as-is compactly
+        return _truncate(detail, 120);
+    }
+    return parts.slice(0, 4).join(' · ');
+}
+
+function _formatWebsiteCrawlFinding(detail) {
+    const parts = [];
+    if (typeof detail === 'object' && detail) {
+        if (detail.emails && detail.emails.length > 0) {
+            parts.push(t('companyDetail.decisionChart.findings.emailsFound', { count: detail.emails.length }));
+        }
+        if (detail.social) {
+            const networks = Object.keys(detail.social).filter(k => detail.social[k]);
+            if (networks.length > 0) parts.push(`📱 ${networks.join(', ')}`);
+        }
+        if (detail.mentions_legales_director) {
+            parts.push(t('companyDetail.decisionChart.findings.mentionsLegalesDirector', { name: detail.mentions_legales_director }));
+        }
+    } else if (typeof detail === 'string' && detail) {
+        return _truncate(detail, 120);
+    }
+    return parts.slice(0, 4).join(' · ');
+}
+
+function _formatFinancialFinding(detail) {
+    const parts = [];
+    if (typeof detail === 'object' && detail) {
+        if (detail.chiffre_affaires) {
+            parts.push(`💶 ${t('companyDetail.decisionChart.findings.ca')} ${_formatCA(detail.chiffre_affaires)}`);
+        }
+        if (detail.effectif) parts.push(`👥 ${detail.effectif} ${t('companyDetail.decisionChart.findings.effectifSuffix')}`);
+        if (detail.last_filing_year) parts.push(`📅 ${t('companyDetail.decisionChart.findings.lastFiling')} ${detail.last_filing_year}`);
+    } else if (typeof detail === 'string' && detail) {
+        // e.g. "Données financières: chiffre_affaires, resultat_net, tranche_effectif"
+        return _truncate(detail, 120);
+    }
+    return parts.slice(0, 4).join(' · ');
+}
+
+function _formatOfficersFinding(detail) {
+    if (typeof detail === 'object' && detail) {
+        if (detail.officers && Array.isArray(detail.officers)) {
+            return detail.officers.slice(0, 3).map(o => {
+                const name = o.full_name || [o.nom, o.prenom].filter(Boolean).join(' ');
+                const role = o.role || 'mandataire';
+                return `👤 ${name} (${role})`;
+            }).join(' · ');
+        }
+        return '';
+    }
+    if (typeof detail === 'string' && detail) {
+        // e.g. "2 dirigeant(s) — Registre National (API)"
+        return _truncate(detail, 120);
+    }
+    return '';
+}
+
+function _formatAutoLinkFinding(action, detail) {
+    const suffix = action.replace('auto_linked_', '');
+    const methodKey = `companyDetail.decisionChart.findings.method_${suffix}`;
+    const translated = t(methodKey);
+    // If translation not found (returns raw key), fall back gracefully
+    const methodLabel = translated !== methodKey ? translated : suffix;
+    const parts = [methodLabel];
+
+    const d = detail;
+    if (typeof d === 'object' && d) {
+        if (d.signals && Array.isArray(d.signals)) {
+            parts.push(`✓ ${d.signals.slice(0, 3).join(', ')}`);
+        }
+        if (d.matched_siren) parts.push(`SIREN ${d.matched_siren}`);
+    } else if (typeof d === 'string' && d) {
+        // e.g. "Auto-confirmé → 977705284 (method=address, naf_status=verified, ...)"
+        const sirenMatch = d.match(/→\s*(\d{9})/);
+        if (sirenMatch) parts.push(`SIREN ${sirenMatch[1]}`);
+        const methodMatch = d.match(/method=(\w+)/);
+        if (methodMatch) parts.push(`via ${methodMatch[1]}`);
+    }
+    return parts.slice(0, 4).join(' · ');
+}
+
+function _formatGeminiJudgeFinding(detail) {
+    const parts = [];
+    const d = typeof detail === 'object' && detail ? detail : (() => {
+        try { return typeof detail === 'string' ? JSON.parse(detail) : null; } catch (_) { return null; }
+    })();
+    if (d) {
+        if (d.verdict !== undefined) {
+            const vKey = `companyDetail.decisionChart.findings.geminiVerdict_${d.verdict}`;
+            const vLabel = t(vKey);
+            parts.push(`🤖 ${vLabel !== vKey ? vLabel : d.verdict}`);
+        }
+        if (d.confidence != null) parts.push(`${Math.round(Number(d.confidence) * 100)}%`);
+        if (d.reasoning) parts.push(`"${_truncate(d.reasoning, 80)}"`);
+    } else if (typeof detail === 'string' && detail) {
+        parts.push(_truncate(detail, 120));
+    }
+    return parts.slice(0, 3).join(' · ');
+}
+
+function _formatGeminiQuarantineFinding(detail) {
+    const d = (() => {
+        if (typeof detail === 'object' && detail) return detail;
+        if (typeof detail === 'string') {
+            try { return JSON.parse(detail); } catch (_) { return null; }
+        }
+        return null;
+    })();
+    const parts = [];
+    if (d) {
+        if (d.quarantined_siren) parts.push(`⚠️ SIREN ${d.quarantined_siren} mis en quarantaine`);
+        if (d.gemini_confidence != null) parts.push(`${Math.round(Number(d.gemini_confidence) * 100)}%`);
+        if (d.gemini_reasoning) parts.push(`"${_truncate(d.gemini_reasoning, 80)}"`);
+    } else if (typeof detail === 'string' && detail) {
+        parts.push(_truncate(detail, 120));
+    }
+    return parts.slice(0, 3).join(' · ');
+}
+
+function _formatA2Finding(action, detail) {
+    if (typeof detail === 'string' && detail) {
+        if (action === 'a2_legal_name_extracted') {
+            // "maps_name=... | legal_name=..." → extract legal name
+            const match = detail.match(/legal_name=([^|]+)/);
+            if (match) {
+                return t('companyDetail.decisionChart.findings.a2LegalNameFound', { name: match[1].trim() });
+            }
+        }
+        if (action === 'a2_match_confirmed') {
+            const methodMatch = detail.match(/method=(\w+)/);
+            if (methodMatch) {
+                return t('companyDetail.decisionChart.findings.a2MatchConfirmed', { method: methodMatch[1] });
+            }
+            return t('companyDetail.decisionChart.findings.a2EntryAttempted');
+        }
+        return _truncate(detail, 120);
+    }
+    return t('companyDetail.decisionChart.findings.a2EntryAttempted');
+}
+
+function _formatRelevanceFilterFinding(detail) {
+    if (detail && typeof detail === 'string') {
+        return _truncate(detail, 120);
+    }
+    return t('companyDetail.decisionChart.findings.relevanceRejected');
+}
+
+/**
+ * Returns a compact translated findings string for a given audit action.
+ * detail is the raw value from the timeline (string or null).
+ * Returns empty string if no extractable findings — never crashes.
+ */
+function getFindingForAction(action, rawDetail) {
+    if (!action) return '';
+    const detail = _parseDetail(rawDetail);
+    if (!detail && detail !== 0) return '';
+
+    try {
+        switch (action) {
+            case 'maps_lookup':
+                return _formatMapsFinding(detail);
+            case 'website_crawl':
+                return _formatWebsiteCrawlFinding(detail);
+            case 'financial_data':
+                return _formatFinancialFinding(detail);
+            case 'officers_found':
+                return _formatOfficersFinding(detail);
+            case 'a2_entry':
+            case 'a2_legal_name_extracted':
+            case 'a2_match_confirmed':
+                return _formatA2Finding(action, detail);
+            case 'auto_linked_verified':
+            case 'auto_linked_expanded':
+            case 'auto_linked_strong_no_filter':
+            case 'auto_linked_inpi_agree':
+            case 'auto_linked_chain':
+            case 'auto_linked_geo_proximity':
+            case 'auto_linked_cp_name_disamb':
+            case 'auto_linked_cp_name_disamb_indiv':
+            case 'auto_linked_siret_address_naf':
+            case 'auto_linked_inpi_validated':
+            case 'auto_linked_mismatch_accepted':
+            case 'auto_linked_gemini_swap':
+            case 'auto_linked_gemini_rescue':
+            case 'auto_linked_strong':
+            case 'auto_linked_mentions_legales':
+            case 'auto_linked_municipal':
+            case 'auto_linked_individual_match':
+            case 'auto_linked_gemini_promoted':
+            case 'auto_linked_gemini_promoted_retroactive':
+                return _formatAutoLinkFinding(action, detail);
+            case 'gemini_quarantine':
+            case 'gemini_frankenstein_protected':
+                return _formatGeminiQuarantineFinding(detail);
+            case 'gemini_shadow_yes':
+            case 'gemini_shadow_no':
+            case 'gemini_shadow_ambiguous':
+            case 'gemini_shadow_no_candidates':
+                return _formatGeminiJudgeFinding(detail);
+            case 'relevance_filter':
+                return _formatRelevanceFilterFinding(detail);
+            case 'siren_website_rejected_franchise_live':
+                return typeof detail === 'string' ? _truncate(detail, 120) :
+                    t('companyDetail.decisionChart.findings.franchiseRejected');
+            default:
+                return '';
+        }
+    } catch (_) {
+        // Never crash the chart — graceful degradation
+        return '';
+    }
+}
+
+/**
+ * Build the summary findings line for the final decision row using link_signals.
+ */
+function _buildDecisionSummary(linkSignals) {
+    if (!linkSignals || typeof linkSignals !== 'object') return '';
+    const agreed = Object.entries(linkSignals)
+        .filter(([, v]) => v === true || (typeof v === 'object' && v && v.agreed === true))
+        .map(([k]) => _signalDisplayName(k));
+    if (agreed.length === 0) return '';
+    return `${t('companyDetail.decisionChart.findings.matchedSignals')} : ${agreed.slice(0, 4).join(', ')}`;
+}
+
 function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkConfidence, rescuedBy, nafStatus, totalDurationMs) {
     // Even if timeline is empty, render the chart skeleton with the synthetic NAF-gate step + final row
     // when there's something meaningful to show (linkConfidence not null OR nafStatus meaningful)
@@ -758,12 +1048,16 @@ function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkC
         ? ` · ${formatDuration(totalDurationMs)}`
         : '';
 
+    // Final decision summary line using link_signals (Change 5)
+    const decisionSummaryFindings = _buildDecisionSummary(linkSignals);
+
     // Return just the inner content (steps + final row + Gemini panel)
     // The outer <details> wrapper is now built by the renderCompany template (Change 4)
     return `
         <div class="decision-chart-content">
             ${allSteps.map(s => {
                 const durationLabel = (s.duration_ms != null && s.duration_ms > 0) ? `<span class="decision-chart-duration">${formatDuration(s.duration_ms)}</span>` : '';
+                const finding = s.isSynthetic ? '' : getFindingForAction(s.action, s.detail);
                 return `
                     <div class="decision-chart-step" data-step="${s.num}">
                         <span class="decision-chart-step-icon">${s.icon}</span>
@@ -775,6 +1069,7 @@ function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkC
                         <div id="decision-tooltip-${s.num}" class="decision-chart-step-tooltip" role="tooltip">
                             ${t(s.tooltipKey, { detail: s.detail || '' })}
                         </div>
+                        ${finding ? `<div class="decision-finding-sub-line">${finding}</div>` : ''}
                     </div>
                 `;
             }).join('')}
@@ -782,6 +1077,7 @@ function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkC
                 <span class="decision-chart-step-icon">${finalIcon}</span>
                 <span class="decision-chart-step-num">→</span>
                 <span class="decision-chart-step-label">${t(finalKey, { method: linkMethod || '-', rescuedBy: rescuedBy || '-' })}</span>
+                ${decisionSummaryFindings ? `<div class="decision-finding-sub-line">${decisionSummaryFindings}</div>` : ''}
             </div>
             ${geminiPanel}
         </div>
