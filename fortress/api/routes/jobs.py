@@ -1,6 +1,8 @@
 """Jobs API routes — job-based views, delete, cancel, and company listing."""
 
-from fastapi import APIRouter, Query, Request
+import json as _json
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from fortress.api.db import fetch_all, fetch_one, get_conn
@@ -8,6 +10,42 @@ from fortress.api.routes.activity import log_activity
 from fortress.api.routes.dashboard import _invalidate_cache
 from fortress.api.sql_helpers import merged_contacts_cte
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_params: tuple = ()):
+    """Load filters_json + strict_naf from batch_data and derive SQL filter snippets.
+
+    Returns (strict_filter_sql, dept_filter_sql, dept_param_tuple, strict_naf_bool).
+    Raises HTTPException(404) if batch not found.
+
+    Added Brief 06 (2026-05-09): used by /summary, /quality, /companies to apply
+    the same strict + dept filter that GET /jobs/{id} applies to hero tiles.
+    """
+    bd_row = await fetch_one(
+        f"SELECT filters_json, COALESCE(strict_naf, FALSE) AS strict_naf "
+        f"FROM batch_data WHERE batch_id = %s {ws_filter}",
+        (batch_id,) + ws_params,
+    )
+    if not bd_row:
+        raise HTTPException(status_code=404, detail="Batch introuvable ou accès refusé")
+
+    filters_json_raw = bd_row.get("filters_json")
+    strict_naf = bd_row.get("strict_naf") or False
+
+    try:
+        filters = _json.loads(filters_json_raw) if isinstance(filters_json_raw, str) else (filters_json_raw or {})
+    except Exception:
+        filters = {}
+
+    dept_filter_value = (filters.get("department") or "").strip()
+    if dept_filter_value in ("FR", "ALL"):
+        dept_filter_value = ""
+
+    _dept_filter = "AND co.departement = %s" if dept_filter_value else ""
+    _dept_param: tuple = (dept_filter_value,) if dept_filter_value else ()
+    _strict_filter = "AND co.strict_match = true" if strict_naf else ""
+
+    return _strict_filter, _dept_filter, _dept_param, bool(strict_naf)
 
 
 @router.get("/timing-baseline")
@@ -630,7 +668,6 @@ async def get_job(batch_id: str, request: Request):
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
     # Parse exhaustive flag from filters_json
-    import json as _json
     fj = job.get("filters_json")
     if fj:
         try:
@@ -646,13 +683,12 @@ async def get_job(batch_id: str, request: Request):
 
     # Parse picked NAFs from batch_data.filters_json — same logic as discovery.py:1601-1613.
     # Accepts new key `naf_codes` (list) or legacy `naf_code` (scalar).
-    import json
     filters_raw = job.get("filters_json")
     picked_nafs: list[str] = []
     _job_dept = ""  # Department filter for tile queries (added 2026-05-07); always in scope
     if filters_raw:
         try:
-            filters = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
+            filters = _json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
             raw_list = filters.get("naf_codes")
             if isinstance(raw_list, list):
                 picked_nafs = [str(c).strip() for c in raw_list if c and str(c).strip()]
@@ -811,13 +847,23 @@ async def get_job(batch_id: str, request: Request):
             ) AS pending_clickable,
             COUNT(DISTINCT co.siren) FILTER (
                 WHERE co.siren LIKE 'MAPS%%' AND co.linked_siren IS NULL
-            ) AS unlinked_clickable
+            ) AS unlinked_clickable,
+            -- Brief 06 (2026-05-09): total strict-confirmed across ALL depts (ignores _dept_filter).
+            -- Scalar subquery so the WHERE dept restriction doesn't affect this count.
+            -- Used to compute cross_dept_count = total_strict_all_depts - confirmed_in_dept.
+            (SELECT COUNT(DISTINCT bt2.siren)
+             FROM batch_tags bt2
+             JOIN companies co2 ON co2.siren = bt2.siren
+             WHERE bt2.batch_id = %s
+               AND co2.link_confidence = 'confirmed'
+               AND co2.strict_match = true
+            ) AS total_strict_all_depts
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
         WHERE bt.batch_id = %s
         {_strict_filter}
         {_dept_filter_sql}
-    """, (batch_id, *_dept_params))
+    """, (batch_id, batch_id, *_dept_params))
     if naf_row:
         link_stats["naf_verified"] = int(naf_row.get("verified") or 0)
         link_stats["naf_mismatch"] = int(naf_row.get("mismatch") or 0)
@@ -830,6 +876,14 @@ async def get_job(batch_id: str, request: Request):
         link_stats["naf_mismatch_clickable"] = int(naf_row.get("mismatch_clickable") or 0)
         link_stats["pending_clickable"] = int(naf_row.get("pending_clickable") or 0)
         link_stats["unlinked_clickable"] = int(naf_row.get("unlinked_clickable") or 0)
+        # Brief 06 (2026-05-09): cross-dept expander count (A2=a).
+        # total_strict_all_depts is a scalar subquery that ignores the dept WHERE filter.
+        # confirmed_in_dept = link_stats["confirmed"] which is already dept-filtered.
+        total_strict_all_depts = int(naf_row.get("total_strict_all_depts") or 0)
+        confirmed_in_dept = int(link_stats.get("confirmed") or 0)
+        link_stats["cross_dept_count"] = max(0, total_strict_all_depts - confirmed_in_dept)
+    else:
+        link_stats["cross_dept_count"] = 0
 
     # Split naf_verified into EXACT (strict prefix / section / method-keyed) vs RELATED (curated sibling).
     #
@@ -865,7 +919,13 @@ async def get_job(batch_id: str, request: Request):
                   'auto_linked_cp_name_disamb',
                   'auto_linked_individual_match',
                   'auto_linked_gemini_swap',
-                  'auto_linked_gemini_rescue'
+                  'auto_linked_gemini_rescue',
+                  'auto_linked_gemini_promoted',
+                  'auto_linked_inpi_validated',
+                  'auto_linked_siret_address_naf',
+                  'auto_linked_strong_no_filter',
+                  'auto_linked_municipal',
+                  'auto_linked_mismatch_accepted'
               )
         ),
         related_sirens AS (
@@ -984,6 +1044,13 @@ async def get_job_summary(batch_id: str, request: Request):
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job introuvable ou accès refusé"})
 
+    # Brief 06 (2026-05-09): load dept filter + strict filter consistently with GET /jobs/{id}.
+    # Previously this endpoint did NOT load filters_json, causing result_breakdown to be
+    # cross-dept (whole batch) while the hero tile was dept-filtered. Bug fixed here.
+    _strict_filter, _dept_filter, _dept_param, _strict_naf = await _load_batch_filter_context(
+        batch_id, ws_filter, ws_params
+    )
+
     # Aggregate batch_log by action + result
     log_rows = await fetch_all(
         "SELECT action, result, COUNT(*) AS cnt FROM batch_log WHERE batch_id = %s GROUP BY action, result",
@@ -999,24 +1066,25 @@ async def get_job_summary(batch_id: str, request: Request):
         return log_counts.get((action, result), 0)
 
     # Result breakdown — single source of truth for "x/y discovered, z strict, w pending, n unmatched"
-    # Strict-mode-aware: when strict_naf=true, all counts filter co.strict_match=true
-    # (matches existing endpoint's strict-filter contract for `qualified`).
-    strict_filter = "AND co.strict_match = true" if job.get("strict_naf") else ""
-
+    # Brief 06 (2026-05-09): apply strict + dept filter so these match the hero tile scope.
+    # Fix: confirmed_rescued drops {_strict_filter} from its FILTER clause to avoid the
+    # self-contradiction "strict_match=false AND strict_match=true" that always returned 0.
+    # Semantic: in strict mode, confirmed_rescued=0 by design (no rescue paths run);
+    # in wide mode, it counts genuinely rescued entities (strict_match=false).
     breakdown_rows = await fetch_one(
         f"""
         SELECT
-          COUNT(DISTINCT bt.siren) FILTER (WHERE TRUE {strict_filter}) AS discovered,
-          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' {strict_filter}) AS confirmed,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE TRUE {_strict_filter}) AS discovered,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' {_strict_filter}) AS confirmed,
           COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' AND co.strict_match = true) AS confirmed_strict,
-          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' AND co.strict_match = false {strict_filter}) AS confirmed_rescued,
-          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'pending' {strict_filter}) AS pending_review,
-          COUNT(DISTINCT bt.siren) FILTER (WHERE co.siren LIKE 'MAPS%%' AND co.link_confidence IS NULL {strict_filter}) AS unmatched_maps
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'confirmed' AND co.strict_match = false) AS confirmed_rescued,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.link_confidence = 'pending' {_strict_filter}) AS pending_review,
+          COUNT(DISTINCT bt.siren) FILTER (WHERE co.siren LIKE 'MAPS%%' AND co.link_confidence IS NULL {_strict_filter}) AS unmatched_maps
         FROM batch_tags bt
         JOIN companies co ON co.siren = bt.siren
-        WHERE bt.batch_id = %s
+        WHERE bt.batch_id = %s {_dept_filter}
         """,
-        (batch_id,),
+        (batch_id,) + _dept_param,
     )
 
     # System health — narrow set of TRUE-failure categories.
@@ -1059,16 +1127,18 @@ async def get_job_summary(batch_id: str, request: Request):
 
     target = job.get("batch_size") or job.get("total_companies") or 0
     found = job.get("companies_scraped") or 0
-    # Strict-mode override: when strict_naf=true, the job page chip "✉️ X contactables"
-    # must show only entities visible on the job page (strict_match=true). Otherwise
-    # it shows raw companies_qualified which includes strict-rejected matches.
-    if job.get("strict_naf"):
+    # Brief 06 (2026-05-09) — Change 2 (C1=b): count entities matching the search criteria
+    # (strict + dept filtered) so the chip scope matches the hero tile.
+    # In strict mode: count strict_match=true entities in the dept-filtered scope.
+    # In wide mode: use companies_qualified (legacy counter, no dept filter — acceptable
+    # since wide mode does not apply dept filtering to the confirmed count either).
+    if _strict_naf:
         _qrow = await fetch_one(
-            """SELECT COUNT(DISTINCT bt.siren) AS n
+            f"""SELECT COUNT(DISTINCT bt.siren) AS n
                FROM batch_tags bt
                JOIN companies co ON co.siren = bt.siren
-               WHERE bt.batch_id = %s AND co.strict_match = true""",
-            (batch_id,),
+               WHERE bt.batch_id = %s AND co.strict_match = true {_dept_filter}""",
+            (batch_id,) + _dept_param,
         )
         qualified = (_qrow or {}).get("n") or 0
     else:
@@ -1096,7 +1166,10 @@ async def get_job_summary(batch_id: str, request: Request):
     return {
         "target": target,
         "found": found,
+        # Brief 06 (2026-05-09): "qualified" kept as backward-compat alias for job.js:514.
+        # Brief 07 will switch frontend to read "matching_search_count" and delete this alias.
         "qualified": qualified,
+        "matching_search_count": qualified,
         "failed": failed,
         "triage": {
             "black": black,
@@ -1159,6 +1232,13 @@ async def get_job_companies(
     qid = batch_id  # Use batch_id for batch-scoped data
     offset = (page - 1) * page_size
 
+    # Brief 06 (2026-05-09) — Change 5: load dept filter so list scope matches hero tile.
+    # Previously this endpoint did NOT load filters_json; list showed all depts even when
+    # the hero tile was dept-filtered.
+    _strict_filter_c, _dept_filter_c, _dept_param_c, _strict_naf_c = await _load_batch_filter_context(
+        batch_id, ws_filter, ws_params
+    )
+
     # Build WHERE clause for search filter
     where_extra = ""
     search_params: list = []
@@ -1199,7 +1279,9 @@ async def get_job_companies(
         """
         sq_params = [qid, search_query]
 
-    where_extra = where_extra + filter_clause + sq_clause + _co_strict_filter
+    # Brief 06 (2026-05-09): append dept filter so companies list is scoped to the
+    # same department as the hero tile (via filters_json.department).
+    where_extra = where_extra + filter_clause + sq_clause + _co_strict_filter + _dept_filter_c
 
     # Determine sort clause
     sort_clause = {
@@ -1215,7 +1297,7 @@ async def get_job_companies(
         FROM batch_tags sa
         JOIN companies co ON co.siren = sa.siren
         WHERE sa.batch_id = %s {where_extra}
-    """, tuple([qid] + search_params + sq_params))
+    """, tuple([qid] + search_params + sq_params + list(_dept_param_c)))
     total = (count_row or {}).get("total", 0)
 
     # Fetch companies with merged contact per SIREN — scoped to this batch.
@@ -1278,7 +1360,7 @@ async def get_job_companies(
         WHERE 1=1 {where_extra}
         ORDER BY {sort_clause}
         LIMIT %s OFFSET %s
-    """, tuple([qid, qid] + search_params + sq_params + [page_size, offset]))
+    """, tuple([qid, qid] + search_params + sq_params + list(_dept_param_c) + [page_size, offset]))
 
     return {"companies": rows, "total": total, "page": page, "page_size": page_size}
 
@@ -1291,6 +1373,10 @@ async def get_job_quality(batch_id: str, request: Request):
     batch_log would also include A2 candidate-lookup audit rows under
     each candidate's real SIREN — those would inflate stats with rows
     that aren't real Maps results.
+
+    Brief 06 (2026-05-09) — Change 3 (A3=a): apply strict + dept filter so gauges
+    match the hero tile scope. Previously gauges showed whole-batch percentages
+    while hero tiles showed strict + dept.
     """
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
@@ -1307,9 +1393,16 @@ async def get_job_quality(batch_id: str, request: Request):
     if not job:
         return JSONResponse(status_code=404, content={"error": "Job not found"})
 
+    # Load dept + strict filter (same logic as GET /jobs/{id} hero tiles).
+    _strict_filter_q, _dept_filter_q, _dept_param_q, _strict_naf_q = await _load_batch_filter_context(
+        batch_id, ws_filter, ws_params
+    )
+
     stats = await fetch_one(f"""
         WITH batch_sirens AS (
-            SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s
+            SELECT DISTINCT bt.siren FROM batch_tags bt
+            JOIN companies co ON co.siren = bt.siren
+            WHERE bt.batch_id = %s {_strict_filter_q} {_dept_filter_q}
         ),
         {merged_contacts_cte('SELECT siren FROM batch_sirens')}
         SELECT
@@ -1321,13 +1414,13 @@ async def get_job_quality(batch_id: str, request: Request):
         FROM batch_sirens sa
         JOIN companies co ON co.siren = sa.siren
         LEFT JOIN merged_contacts mc ON mc.siren = co.siren
-    """, (batch_id,))
+    """, (batch_id,) + _dept_param_q)
 
     if not stats or not stats["total"]:
         return {"total": 0, "phone_pct": 0, "email_pct": 0, "website_pct": 0, "siret_pct": 0}
 
     total = stats["total"]
-    # Source breakdown from batch_log
+    # Source breakdown from batch_log (whole-batch — not dept-filtered, measures pipeline steps)
     sources_raw = await fetch_all("""
         SELECT action,
                COUNT(*) FILTER (WHERE result = 'success') AS success,
@@ -1348,8 +1441,13 @@ async def get_job_quality(batch_id: str, request: Request):
     # Count companies with officers and/or financial data (INPI results).
     # For Maps Discovery batches, officers/financials live on the linked real SIREN,
     # not on the MAPS entity — so we follow linked_siren via COALESCE.
-    inpi_stat = await fetch_one("""
-        WITH bs AS (SELECT DISTINCT siren FROM batch_tags WHERE batch_id = %s)
+    # Apply strict + dept filter consistent with hero tiles.
+    inpi_stat = await fetch_one(f"""
+        WITH bs AS (
+            SELECT DISTINCT bt.siren FROM batch_tags bt
+            JOIN companies co ON co.siren = bt.siren
+            WHERE bt.batch_id = %s {_strict_filter_q} {_dept_filter_q}
+        )
         SELECT
             COUNT(DISTINCT CASE WHEN o.siren IS NOT NULL THEN bs.siren END) AS with_officers,
             COUNT(DISTINCT CASE WHEN real.chiffre_affaires IS NOT NULL THEN bs.siren END) AS with_financials
@@ -1357,7 +1455,7 @@ async def get_job_quality(batch_id: str, request: Request):
         JOIN companies co ON co.siren = bs.siren
         LEFT JOIN companies real ON real.siren = co.linked_siren
         LEFT JOIN officers o ON o.siren = COALESCE(co.linked_siren, co.siren)
-    """, (batch_id,))
+    """, (batch_id,) + _dept_param_q)
     with_officers = (inpi_stat or {}).get("with_officers", 0)
     with_financials = (inpi_stat or {}).get("with_financials", 0)
 
