@@ -205,7 +205,7 @@
     "sireneDataLabel": "🏢 Données SIRENE",
     "sireneCandidateLabel": "🏢 Candidat SIRENE",
     "btnMerge": "✅ Fusionner définitivement",
-    "btnUnlink": "❌ Erreur — dissocier",
+    "btnUnlink": "Annuler le lien",
     "btnLinkYes": "Oui, c'est la même",
     "btnLinkNo": "Non, garder séparé",
     "mergeConfirm": "Fusionner {{maps}} dans {{target}} ? Cette action est irréversible.",
@@ -379,7 +379,28 @@
     "nafMismatchGeminiTitle": "NAF différent — analyse Gemini",
     "nafMismatchGeminiBody": "Le code NAF diffère du filtre. Gemini a analysé l'entreprise en contexte (raison sociale, adresse, secteur) et confirmé l'identité avec une confiance élevée.",
     "badgeInpiValidated": "✓ Validé par INPI",
-    "badgeGeminiPromoted": "✦ Promu par Gemini"
+    "badgeGeminiPromoted": "✦ Promu par Gemini",
+    "rescanShort": "↻ Re-scanner",
+    "officerSourceTooltip": "Source : {{source}}",
+    "sectionNotesCRMNew": "📝 Notes",
+    "actions": {
+      "rescan": "↻ Re-scanner le site",
+      "edit": "✏️ Modifier",
+      "blacklist": "🚫 Liste noire",
+      "removeFromBatch": "🗑️ Retirer du batch"
+    },
+    "rneBanner": {
+      "title": "Entreprise fermée — Cessation d'activité",
+      "description": "Cette entreprise est marquée comme fermée au RNE. Date de fermeture : {{date}}. Ne pas la contacter."
+    },
+    "decisionChart": {
+      "titleNew": "Comment Fortress a vérifié cette entreprise",
+      "steps": "étapes",
+      "statusConfirmed": "✓ Confirmé via {{method}}",
+      "statusPending": "⏳ En attente de validation",
+      "statusUnmatched": "Aucune correspondance",
+      "statusSireneNative": "Donnée registre SIRENE"
+    }
   },
   "contacts": {
     "title": "Contacts",

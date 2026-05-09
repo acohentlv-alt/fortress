@@ -180,10 +180,28 @@ function renderNotesDirect(notes, limit = 2) {
     
     let html = displayNotes.map(n => {
         const canDelete = currentUser && (currentUser.id === n.user_id || currentUser.role === 'admin');
-        const d = new Date(n.created_at);
-        const locale = getLang() === 'fr' ? 'fr-FR' : 'en-US';
-        const dateStr = d.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' }).replace(/\//g, '.');
-        const timeStr = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+        // Change 13: relative timestamps for recent notes (< 7 days), absolute for older
+        const _noteTimestamp = (ts) => {
+            if (!ts) return '';
+            const now = Date.now();
+            const then = new Date(ts).getTime();
+            const diffMs = now - then;
+            const diffDays = diffMs / (1000 * 60 * 60 * 24);
+            const lang = getLang();
+            const locale = lang === 'fr' ? 'fr-FR' : 'en-US';
+            if (diffDays < 7) {
+                const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+                if (diffMs < 1000 * 60 * 60) {
+                    return rtf.format(-Math.floor(diffMs / (1000 * 60)), 'minute');
+                }
+                if (diffDays < 1) {
+                    return rtf.format(-Math.floor(diffMs / (1000 * 60 * 60)), 'hour');
+                }
+                return rtf.format(-Math.floor(diffDays), 'day');
+            }
+            return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(ts));
+        };
+        const timestampStr = _noteTimestamp(n.created_at);
         
         const username = n.username || 'Utilisateur';
         const initials = username.substring(0, 2).toUpperCase();
@@ -198,8 +216,7 @@ function renderNotesDirect(notes, limit = 2) {
                     <div style="font-size:var(--font-xs); color:var(--text-secondary); display:flex; gap:var(--space-xs); align-items:center">
                         <span style="font-weight:600; color:var(--text-primary)" title="${escapeHtml(username)}">${escapeHtml(username)}</span>
                         <span style="opacity:0.5">•</span>
-                        <span>${dateStr}</span>
-                        <span>${timeStr}</span>
+                        <span title="${n.created_at || ''}">${timestampStr}</span>
                     </div>
                 </div>
                 ${canDelete ? `<button class="btn-delete-note" data-note-id="${n.id}" style="background:none; border:none; color:var(--text-disabled); cursor:pointer; padding:4px" title="${t('company.deleteNote')}">🗑️</button>` : ''}
@@ -741,37 +758,33 @@ function buildDecisionChart(timeline, pickerNafs, linkSignals, linkMethod, linkC
         ? ` · ${formatDuration(totalDurationMs)}`
         : '';
 
+    // Return just the inner content (steps + final row + Gemini panel)
+    // The outer <details> wrapper is now built by the renderCompany template (Change 4)
     return `
-        <details class="decision-chart" data-test-id="decision-chart">
-            <summary class="decision-chart-summary">
-                <span class="decision-chart-title">🔍 ${t('companyDetail.decisionChart.title')}</span>
-                <span class="decision-chart-meta">${t('companyDetail.decisionChart.stepCount', { count: allSteps.length })}${elapsed}</span>
-            </summary>
-            <div class="decision-chart-content">
-                ${allSteps.map(s => {
-                    const durationLabel = (s.duration_ms != null && s.duration_ms > 0) ? `<span class="decision-chart-duration">${formatDuration(s.duration_ms)}</span>` : '';
-                    return `
-                        <div class="decision-chart-step" data-step="${s.num}">
-                            <span class="decision-chart-step-icon">${s.icon}</span>
-                            <span class="decision-chart-step-num">${s.num}</span>
-                            <span class="decision-chart-step-label">${s.label}</span>
-                            ${durationLabel}
-                            <span class="decision-chart-step-tooltip-trigger" tabindex="0"
-                                  aria-describedby="decision-tooltip-${s.num}">ⓘ</span>
-                            <div id="decision-tooltip-${s.num}" class="decision-chart-step-tooltip" role="tooltip">
-                                ${t(s.tooltipKey, { detail: s.detail || '' })}
-                            </div>
+        <div class="decision-chart-content">
+            ${allSteps.map(s => {
+                const durationLabel = (s.duration_ms != null && s.duration_ms > 0) ? `<span class="decision-chart-duration">${formatDuration(s.duration_ms)}</span>` : '';
+                return `
+                    <div class="decision-chart-step" data-step="${s.num}">
+                        <span class="decision-chart-step-icon">${s.icon}</span>
+                        <span class="decision-chart-step-num">${s.num}</span>
+                        <span class="decision-chart-step-label">${s.label}</span>
+                        ${durationLabel}
+                        <span class="decision-chart-step-tooltip-trigger" tabindex="0"
+                              aria-describedby="decision-tooltip-${s.num}">ⓘ</span>
+                        <div id="decision-tooltip-${s.num}" class="decision-chart-step-tooltip" role="tooltip">
+                            ${t(s.tooltipKey, { detail: s.detail || '' })}
                         </div>
-                    `;
-                }).join('')}
-                <div class="decision-chart-step decision-chart-final">
-                    <span class="decision-chart-step-icon">${finalIcon}</span>
-                    <span class="decision-chart-step-num">→</span>
-                    <span class="decision-chart-step-label">${t(finalKey, { method: linkMethod || '-', rescuedBy: rescuedBy || '-' })}</span>
-                </div>
-                ${geminiPanel}
+                    </div>
+                `;
+            }).join('')}
+            <div class="decision-chart-step decision-chart-final">
+                <span class="decision-chart-step-icon">${finalIcon}</span>
+                <span class="decision-chart-step-num">→</span>
+                <span class="decision-chart-step-label">${t(finalKey, { method: linkMethod || '-', rescuedBy: rescuedBy || '-' })}</span>
             </div>
-        </details>
+            ${geminiPanel}
+        </div>
     `;
 }
 
@@ -818,8 +831,46 @@ export async function renderCompany(container, siren) {
     _currentContacts = data.contacts || [];
     _currentBatchId = (tags[0] && tags[0].batch_id) || null;
 
+    // Change 5: admin check for extra_data + Change 6: SIREN dedup
+    const currentUser = getCachedUser();
+    const isAdmin = currentUser?.role === 'admin';
+
+    // Change 4: decision chart status pill computation
+    const _decisionPill = (() => {
+        if (!co.siren || !co.siren.startsWith('MAPS')) {
+            return { cls: 'blue', text: t('company.decisionChart.statusSireneNative') };
+        }
+        if (data.link_confidence === 'confirmed') {
+            return { cls: 'green', text: t('company.decisionChart.statusConfirmed', { method: data.link_method || '-' }) };
+        }
+        if (data.link_confidence === 'pending') {
+            return { cls: 'amber', text: t('company.decisionChart.statusPending') };
+        }
+        return { cls: 'grey', text: t('company.decisionChart.statusUnmatched') };
+    })();
+
+    // Change 3: RNE banner closure date
+    const _rneDateStr = co.date_fermeture
+        ? new Intl.DateTimeFormat(getLang() === 'fr' ? 'fr-FR' : 'en-US', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(co.date_fermeture))
+        : '—';
+
     container.innerHTML = `
+        <!-- Change 1: Sticky header -->
+        <div class="company-sticky-header" id="company-sticky-header">
+            <div class="sticky-name">${escapeHtml(co.denomination)}</div>
+            <div class="sticky-siren">${co.siren && co.siren.startsWith('MAPS') && linkedCo ? formatSiren(linkedCo.siren) : formatSiren(co.siren)}</div>
+            <div class="sticky-statut">${statutBadge(co.statut)}</div>
+            <button class="btn-liquid btn-sticky-rescan">${t('company.rescanShort')}</button>
+        </div>
+
         ${_buildBreadcrumb(co, tags)}
+
+        <!-- Change 3: RNE banner — full-width, above entity link banner -->
+        ${co.etat_administratif_inpi === 'F' ? `
+        <div class="company-rne-banner">
+            ⚠️ ${t('company.rneBanner.title')}
+            <p>${t('company.rneBanner.description', { date: _rneDateStr })}</p>
+        </div>` : ''}
 
         ${_buildEntityLinkBanner(Object.assign({}, co, {_merged_contact: mc}), linkedCo, suggestedMatches, data.link_method, data.contacts || [], data.link_confidence)}
 
@@ -830,8 +881,8 @@ export async function renderCompany(container, siren) {
         </div>` : ''}
 
         <!-- Top Header Panel -->
-        <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-2xl)">
-            <div class="company-detail-name-block">
+        <div class="company-detail-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:var(--space-lg)">
+            <div class="company-detail-name-block" style="flex:1">
                 <div class="company-detail-name" style="font-size:2rem; font-weight:800; letter-spacing:-0.03em; margin-bottom:var(--space-xs)">
                     ${escapeHtml(co.denomination)}
                     ${linkedCo && linkedCo.denomination !== co.denomination ? `<span style="font-size:var(--font-sm); font-weight:400; color:var(--text-secondary); margin-left:var(--space-md)">— ${escapeHtml(linkedCo.denomination)}</span>` : ''}
@@ -839,8 +890,8 @@ export async function renderCompany(container, siren) {
                 <!-- Badge row 1: Identity -->
                 <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); margin-top:var(--space-xs)">
                     ${co.siren && co.siren.startsWith('MAPS') && linkedCo
-                        ? `<span class="glass-badge glass-badge--blue">🏢 SIREN\u00a0${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>
-                          <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS\u00a0${escapeHtml(co.siren)}</span>`
+                        ? `<span class="glass-badge glass-badge--blue">🏢 SIREN ${formatSiren(linkedCo.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>
+                          <span class="glass-badge" style="background:var(--bg-elevated); color:var(--text-secondary); font-size:var(--font-xs)">MAPS ${escapeHtml(co.siren)}</span>`
                         : (co.siren && co.siren.startsWith('MAPS')
                             ? `<span class="glass-badge glass-badge--blue">🏢 ${escapeHtml(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.mapsIdTooltip')}</strong><br>${t('company.mapsIdTooltipDesc')}<span class="info-tip-source">${t('company.mapsIdTooltipSource')}</span></span></span></span>`
                             : `<span class="glass-badge glass-badge--blue">🏢 ${formatSiren(co.siren)}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>SIREN</strong><br>${t('company.sirenTooltip')}<span class="info-tip-source">${t('company.sirenTooltipSource')}</span></span></span></span>`)
@@ -848,7 +899,7 @@ export async function renderCompany(container, siren) {
                     ${statutBadge(co.statut)}
                     ${co.forme_juridique ? formeJuridiqueBadge(co.forme_juridique) : ''}
                 </div>
-                <!-- Badge row 2: Activity -->
+                <!-- Badge row 2: Activity (Change 7: removed badgeInpiValidated/badgeGeminiPromoted; Change 3: removed RNE badge; Change 8: glass-badge only) -->
                 <div class="company-detail-siren" style="font-size:var(--font-sm); color:var(--text-secondary); display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-sm); margin-top:var(--space-xs)">
                     ${co.naf_code ? `<span class="glass-badge glass-badge--violet">📋 ${escapeHtml(co.naf_code)}
                         <span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${escapeHtml(co.naf_libelle || co.naf_code)}</strong><br>${t('company.nafTooltip')}<span class="info-tip-source">${t('company.nafTooltipSource')}</span></span></span>
@@ -863,28 +914,48 @@ export async function renderCompany(container, siren) {
                     </span>` : ''}
                     ${mc.rating ? `<span class="glass-badge glass-badge--gold">⭐ ${mc.rating}<span class="info-tip"><span class="info-tip-icon">i</span><span class="info-tip-card"><strong>${t('company.ratingTooltip')}</strong><br>${t('company.ratingTooltipDesc')}<span class="info-tip-source">${t('company.ratingTooltipSource')}</span></span></span></span>` : ''}
                     ${mc.maps_url ? `<a href="${mc.maps_url}" target="_blank" rel="noopener" class="glass-badge glass-badge--lg glass-badge--cyan" style="text-decoration:none">🗺️ Google Maps ↗</a>` : ''}
-                    ${data.rescued_by === 'inpi_validated' ? `<span class="badge badge-success">${t('company.badgeInpiValidated')}</span>` : ''}
-                    ${data.rescued_by === 'gemini_promoted' ? `<span class="badge badge-info">${t('company.badgeGeminiPromoted')}</span>` : ''}
-                    ${co.etat_administratif_inpi === 'F' ? `<span class="badge badge-danger">⚠ Entreprise fermée (RNE)</span>` : ''}
                 </div>
-                ${buildDecisionChart(
-                    data.decision_timeline,
-                    data.picker_nafs,
-                    data.link_signals,
-                    data.link_method,
-                    data.link_confidence,
-                    data.rescued_by,
-                    co.naf_status,
-                    data.total_duration_ms
-                )}
             </div>
-            <div class="company-detail-actions">
-                ${enrichmentPanelHTML()}
-            </div>
+        </div>
+
+        <!-- Change 2: Action bar -->
+        <div class="company-action-bar">
+            <button class="action-btn action-btn--primary" id="rescan-btn">${t('company.actions.rescan')}</button>
+            <button class="action-btn" id="edit-mode-btn">${t('company.actions.edit')}</button>
+            <button class="action-btn action-btn--warning" id="blacklist-btn">${t('company.actions.blacklist')}</button>
+            <button class="action-btn action-btn--danger" id="remove-from-batch-btn">${t('company.actions.removeFromBatch')}</button>
         </div>
 
         <!-- ALERT BANNER — unified mismatch/conflict alerts -->
         ${_renderAlertBanner(data.alerts || [], co.siren)}
+
+        <!-- Change 4: Decision chart — full-width section (D3=a), default collapsed -->
+        ${(() => {
+            const allStepCount = (data.decision_timeline || []).length + (co.naf_status && co.naf_status !== 'maps_only' ? 1 : 0);
+            const chartContent = buildDecisionChart(
+                data.decision_timeline,
+                data.picker_nafs,
+                data.link_signals,
+                data.link_method,
+                data.link_confidence,
+                data.rescued_by,
+                co.naf_status,
+                data.total_duration_ms
+            );
+            if (!chartContent) return '';
+            return `
+            <section class="company-decision-section">
+                <details class="decision-chart" data-test-id="decision-chart">
+                    <summary class="decision-chart-summary">
+                        <span class="decision-chart-icon">🔍</span>
+                        <span class="decision-chart-title">${t('company.decisionChart.titleNew')}</span>
+                        <span class="decision-chart-status-pill decision-chart-status-pill--${_decisionPill.cls}">${_decisionPill.text}</span>
+                        <span class="decision-chart-step-count">${allStepCount} ${t('company.decisionChart.steps')}</span>
+                    </summary>
+                    ${chartContent}
+                </details>
+            </section>`;
+        })()}
 
         <!-- HERO SECTION: Bento Grid 60/40 -->
         <div class="crm-bento-grid" style="gap:var(--space-xl); margin-bottom:var(--space-2xl)">
@@ -898,7 +969,7 @@ export async function renderCompany(container, siren) {
                         ? `<a href="tel:${mc.phone}" style="color:var(--success); font-weight:600">${escapeHtml(mc.phone)}</a>`
                         : unenrichedField(), sourceLabel(mc.phone_source), 'phone', mc.phone || '')}
                     ${detailRow(t('company.labelEmail'), mc.email
-                        ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}${mc.email_type ? ` <span class="badge badge-muted">${mc.email_type}</span>` : ''}</a>`
+                        ? `<a href="mailto:${mc.email}">${escapeHtml(mc.email)}${mc.email_type ? ` <span class="glass-badge glass-badge--grey" style="font-size:var(--font-xs)">${mc.email_type}</span>` : ''}</a>`
                         : unenrichedField(), sourceLabel(mc.email_source), 'email', mc.email || '')}
                     ${detailRow(t('company.labelWebsite'), mc.website
                         ? `<a href="${mc.website.startsWith('http') ? mc.website : 'https://' + mc.website}" target="_blank" rel="noopener" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; min-width:0">${escapeHtml(mc.website)}</a>`
@@ -910,7 +981,7 @@ export async function renderCompany(container, siren) {
 
             <!-- Right Column: Dirigeants + Notes -->
             <div class="bento-col-right" style="display:flex; flex-direction:column; gap:var(--space-xl)">
-                <!-- Dirigeants Card -->
+                <!-- Dirigeants Card (Change 14: officer source → tooltip on role badge) -->
                 <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">${t('company.sectionOfficers')}</h3>
                     ${officers.length > 0 ? officers.map(o => `
@@ -919,8 +990,7 @@ export async function renderCompany(container, siren) {
                                 <span style="font-weight:600">
                                     ${o.civilite ? escapeHtml(o.civilite) + ' ' : ''}${escapeHtml(o.prenom ? `${o.prenom} ${o.nom}` : o.nom)}
                                 </span>
-                                <span class="badge" style="font-size:var(--font-xs)">${escapeHtml(o.role || 'Dirigeant')}</span>
-                                ${o.source ? `<span style="font-size:var(--font-xs); color:var(--text-disabled); margin-left:4px">${sourceLabel(o.source)}</span>` : ''}
+                                <span class="glass-badge glass-badge--grey" style="font-size:var(--font-xs)" title="${o.source ? t('company.officerSourceTooltip', { source: sourceLabel(o.source) }) : ''}">${escapeHtml(o.role || 'Dirigeant')}</span>
                             </div>
                             ${o.email_direct || o.ligne_directe ? `
                                 <div style="display:flex; gap:var(--space-md); font-size:var(--font-sm); color:var(--text-secondary)">
@@ -936,9 +1006,9 @@ export async function renderCompany(container, siren) {
                     `}
                 </div>
 
-                <!-- Notes Card -->
+                <!-- Notes Card (Change 11: "Notes CRM" → "Notes") -->
                 <div class="detail-section" style="display:flex; flex-direction:column; margin-bottom:0">
-                    <h3 class="detail-section-title">${t('company.sectionNotesCRM')}</h3>
+                    <h3 class="detail-section-title">${t('company.sectionNotesCRMNew')}</h3>
                     <div id="notes-list" style="margin-bottom:var(--space-md)">
                         ${renderNotesDirect(data.notes || [], 3)}
                     </div>
@@ -980,14 +1050,12 @@ export async function renderCompany(container, siren) {
                     // siren: system ID for MAPS entities, SIRENE for real SIREN
                     const sirenSource = isMaps ? sourceSystemId : sourceRegistre;
 
-                    // When linked+confirmed, show the REAL SIREN (from registre) first,
-                    // then the internal Maps ID as a secondary row. Before the fix this
-                    // section only surfaced co.siren which for MAPS entities is the
-                    // system-generated "MAPS01649" — confusing for Cindy.
+                    // Change 6: SIREN dedup — header shows SIREN already; Identity section drops
+                    // the plain SIREN row. For linked MAPS entities: only admin sees Identifiant Maps row.
+                    // For unlinked MAPS entities: show single SIREN row (the MAPS ID). For real SIRENs: drop duplicate.
                     const sirenRows = isLinked
-                        ? `${detailRow(t('company.labelSiren'), formatSiren(linkedCo.siren), sourceRegistre)}
-                           ${detailRow(t('company.mapsId'), `<span style="color:var(--text-muted); font-family:var(--font-mono, monospace); font-size:var(--font-sm)">${escapeHtml(co.siren)}</span>`, sourceSystemId)}`
-                        : `${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}`;
+                        ? `${isAdmin ? detailRow(t('company.mapsId'), `<span style="color:var(--text-muted); font-family:var(--font-mono, monospace); font-size:var(--font-sm)">${escapeHtml(co.siren)}</span>`, sourceSystemId) : ''}`
+                        : (isMaps ? `${detailRow(t('company.labelSiren'), formatSiren(co.siren), sirenSource)}` : '');
 
                     return `
                 ${detailRow(t('company.labelDenomination'), `<span style="font-weight:700">${escapeHtml(co.denomination)}</span>`, denomSource, 'denomination', co.denomination || '')}
@@ -1037,8 +1105,8 @@ export async function renderCompany(container, siren) {
                     ${detailRow(t('company.labelEffectif'), effectifLabel(co.tranche_effectif) || '<span style="color:var(--text-disabled)">—</span>', t('company.sourceRegistre'))}
                 </div>
 
-                <!-- Données supplémentaires (extra_data JSONB) -->
-                ${co.extra_data && Object.keys(co.extra_data).length > 0 ? `
+                <!-- Données supplémentaires (extra_data JSONB) — Change 5: admin only -->
+                ${isAdmin && co.extra_data && Object.keys(co.extra_data).length > 0 ? `
                 <div class="detail-section" style="margin-bottom:0">
                     <h3 class="detail-section-title">${t('company.sectionExtraData')}</h3>
                     ${Object.entries(co.extra_data).map(([k, v]) => `
@@ -1211,6 +1279,12 @@ export async function renderCompany(container, siren) {
 
     // ── Notes system ────────────────────────────────────────────
     _initNotes(siren);
+
+    // ── Change 1: Sticky header IntersectionObserver ─────────────
+    _initStickyHeader(container, siren);
+
+    // ── Change 2: Action bar buttons ────────────────────────────
+    _initActionBar(container, siren, co);
 }
 
 // ── Spider Crawl Logic ───────────────────────────────────────────
@@ -1253,6 +1327,142 @@ function _initSpiderCrawl(siren, container) {
             spiderBtn.disabled = false;
         }
     });
+}
+
+// ── Change 1: Sticky header ───────────────────────────────────────
+function _initStickyHeader(container, siren) {
+    const headerEl = container.querySelector('.company-detail-header');
+    const stickyEl = container.querySelector('#company-sticky-header');
+    if (!headerEl || !stickyEl) return;
+
+    const observer = new IntersectionObserver(
+        ([entry]) => stickyEl.classList.toggle('visible', !entry.isIntersecting),
+        { threshold: 0 }
+    );
+    observer.observe(headerEl);
+
+    // Wire sticky re-scan button to the same endpoint as main rescan
+    const stickyRescan = stickyEl.querySelector('.btn-sticky-rescan');
+    if (stickyRescan) {
+        stickyRescan.addEventListener('click', async () => {
+            const originalText = stickyRescan.textContent;
+            stickyRescan.disabled = true;
+            stickyRescan.textContent = '⏳...';
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${siren}/crawl-website`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || t('company.crawlDone'), 'success');
+                    await renderCompany(container, siren);
+                } else {
+                    showToast(data.error || t('company.crawlError'), 'error');
+                    stickyRescan.textContent = originalText;
+                    stickyRescan.disabled = false;
+                }
+            } catch (err) {
+                showToast(t('company.crawlNetworkError'), 'error');
+                stickyRescan.textContent = originalText;
+                stickyRescan.disabled = false;
+            }
+        });
+    }
+}
+
+// ── Change 2: Action bar ─────────────────────────────────────────
+function _initActionBar(container, siren, co) {
+    // Re-scan button
+    const rescanBtn = container.querySelector('#rescan-btn');
+    if (rescanBtn) {
+        rescanBtn.addEventListener('click', async () => {
+            const originalText = rescanBtn.textContent;
+            rescanBtn.disabled = true;
+            rescanBtn.textContent = '⏳...';
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${siren}/crawl-website`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || t('company.crawlDone'), 'success');
+                    await renderCompany(container, siren);
+                } else {
+                    showToast(data.error || t('company.crawlError'), 'error');
+                    rescanBtn.textContent = originalText;
+                    rescanBtn.disabled = false;
+                }
+            } catch (err) {
+                showToast(t('company.crawlNetworkError'), 'error');
+                rescanBtn.textContent = originalText;
+                rescanBtn.disabled = false;
+            }
+        });
+    }
+
+    // Edit button — toggle pencil visibility for affordance
+    const editModeBtn = container.querySelector('#edit-mode-btn');
+    if (editModeBtn) {
+        editModeBtn.addEventListener('click', () => {
+            const pencils = container.querySelectorAll('.btn-inline-edit');
+            const isActive = editModeBtn.classList.toggle('active');
+            pencils.forEach(p => { p.style.opacity = isActive ? '1' : ''; });
+        });
+    }
+
+    // Blacklist button → POST /api/blacklist
+    const blacklistBtn = container.querySelector('#blacklist-btn');
+    if (blacklistBtn) {
+        blacklistBtn.addEventListener('click', async () => {
+            if (!confirm(t('company.confirmBlacklist'))) return;
+            blacklistBtn.disabled = true;
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/blacklist`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ siren: siren, reason: 'Mis en liste noire depuis fiche entreprise' }),
+                });
+                if (res.ok) {
+                    showToast(t('company.blacklist'), 'success');
+                    window.location.hash = '#/';
+                } else {
+                    const data = await res.json();
+                    showToast(data.error || 'Erreur lors du blacklistage', 'error');
+                    blacklistBtn.disabled = false;
+                }
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+                blacklistBtn.disabled = false;
+            }
+        });
+    }
+
+    // Remove from batch button → DELETE /api/companies/{siren}/tags/
+    const removeBtn = container.querySelector('#remove-from-batch-btn');
+    if (removeBtn) {
+        removeBtn.addEventListener('click', async () => {
+            if (!confirm(t('company.confirmDelete'))) return;
+            removeBtn.disabled = true;
+            try {
+                const res = await fetch(`${window.__API_BASE || ''}/api/companies/${siren}/tags/`, {
+                    method: 'DELETE',
+                });
+                if (res.ok) {
+                    showToast('Retiré de tous les batchs', 'success');
+                    window.location.hash = '#/';
+                } else {
+                    const data = await res.json().catch(() => ({}));
+                    showToast(data.error || 'Erreur lors de la suppression', 'error');
+                    removeBtn.disabled = false;
+                }
+            } catch (err) {
+                showToast(`Erreur: ${err.message}`, 'error');
+                removeBtn.disabled = false;
+            }
+        });
+    }
 }
 
 // ── Notes System ─────────────────────────────────────────────────
@@ -1659,47 +1869,7 @@ function altValueRow(alt) {
     </div>`;
 }
 
-function conflictRow(alt, field, siren, currentValue, currentSource) {
-    if (!alt || !alt.value) return '';
-    const altSrc = sourceLabel(alt.source) || alt.source;
-    const curSrc = sourceLabel(currentSource) || currentSource || '?';
-    const dismissedKey = `dismissed_conflict_${siren}_${field}`;
-    if (localStorage.getItem(dismissedKey)) return '';
-    const reason = t('company.conflictReason', { src1: curSrc, src2: altSrc });
-    return `<div class="detail-row conflict-row" id="conflict-${field}" style="
-        font-size:var(--font-sm);
-        background: rgba(255,193,7,0.06); border-left: 3px solid var(--warning);
-        padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm);
-        margin: var(--space-xs) 0;
-    ">
-        <div style="display:flex; align-items:center; gap:var(--space-sm); margin-bottom:var(--space-xs)">
-            <span style="color:var(--warning); font-weight:600">${t('company.conflictDetected')}</span>
-            <span style="color:var(--text-muted); font-size:var(--font-xs)">— ${reason}</span>
-        </div>
-        <div style="display:flex; gap:var(--space-md); margin-bottom:var(--space-sm); flex-wrap:wrap">
-            <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(16,185,129,0.08); border-radius:var(--radius-sm); border:1px solid rgba(16,185,129,0.2)">
-                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelCurrent')} — ${curSrc}</div>
-                <div style="color:var(--text-primary); font-weight:500">${escapeHtml(currentValue || '—')}</div>
-            </div>
-            <div style="flex:1; min-width:160px; padding:var(--space-xs) var(--space-sm); background:rgba(255,193,7,0.08); border-radius:var(--radius-sm); border:1px solid rgba(255,193,7,0.2)">
-                <div style="font-size:var(--font-xs); color:var(--text-muted); margin-bottom:2px">${t('company.labelAlternative')} — ${altSrc}</div>
-                <div style="color:var(--text-primary); font-weight:500">${escapeHtml(alt.value)}</div>
-            </div>
-        </div>
-        <div style="display:flex; gap:var(--space-sm); justify-content:flex-end">
-            <button class="btn-merge-use" data-field="${field}" data-value="${alt.value.replace(/"/g, '&quot;')}" data-siren="${siren}"
-                data-rejected-value="${escapeHtml(currentValue || '')}" data-rejected-source="${currentSource || ''}" data-chosen-source="${alt.source || ''}"
-                style="background:var(--success); color:#fff; border:none; padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs); font-weight:600;">
-                ${t('company.btnUseAlternative')}
-            </button>
-            <button class="btn-merge-dismiss" data-field="${field}" data-siren="${siren}"
-                data-rejected-value="${alt.value.replace(/"/g, '&quot;')}" data-rejected-source="${alt.source || ''}"
-                style="background:var(--surface-elevated); color:var(--text-secondary); border:1px solid var(--border); padding:5px 14px; border-radius:var(--radius-sm); cursor:pointer; font-size:var(--font-xs);">
-                ${t('company.btnDismiss')}
-            </button>
-        </div>
-    </div>`;
-}
+// conflictRow() removed (Change 10) — had zero call sites; alert banner is the canonical conflict UX
 
 function formatSocial(url, label) {
     if (!url) return '<span style="color:var(--text-disabled)">—</span>';
@@ -1740,9 +1910,21 @@ function _loadEnrichHistory(siren, history) {
         return;
     }
 
+    // Change 9: filter notes out of Historique — they show in the Notes section
+    const filteredHistory = history.filter(h => h.type !== 'note');
+
+    if (filteredHistory.length === 0) {
+        container.innerHTML = `
+            <div style="color:var(--text-muted); font-style:italic; padding:var(--space-sm) 0; font-size:var(--font-sm)">
+                ${t('company.noHistoryFull')}
+            </div>
+        `;
+        return;
+    }
+
     container.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:var(--space-sm)">
-            ${history.map(h => {
+            ${filteredHistory.map(h => {
                 if (h.type === 'note') {
                     return `
                         <div style="display:flex; gap:var(--space-md); padding:var(--space-sm); background:var(--surface-raised); border-radius:var(--radius-sm); border-left:3px solid var(--accent)">

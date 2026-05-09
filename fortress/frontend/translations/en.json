@@ -205,7 +205,7 @@
     "sireneDataLabel": "🏢 SIRENE data",
     "sireneCandidateLabel": "🏢 SIRENE candidate",
     "btnMerge": "✅ Finalize merge",
-    "btnUnlink": "❌ Wrong match — unlink",
+    "btnUnlink": "Cancel link",
     "btnLinkYes": "Yes, it's the same",
     "btnLinkNo": "No, keep separate",
     "mergeConfirm": "Merge {{maps}} into {{target}}? This action is irreversible.",
@@ -376,7 +376,28 @@
     "nafMismatchGeminiTitle": "NAF differs — Gemini analysis",
     "nafMismatchGeminiBody": "The NAF code differs from the filter. Gemini analyzed the company in context (legal name, address, sector) and confirmed the identity with high confidence.",
     "badgeInpiValidated": "✓ INPI-validated",
-    "badgeGeminiPromoted": "✦ Gemini-promoted"
+    "badgeGeminiPromoted": "✦ Gemini-promoted",
+    "rescanShort": "↻ Re-scan",
+    "officerSourceTooltip": "Source: {{source}}",
+    "sectionNotesCRMNew": "📝 Notes",
+    "actions": {
+      "rescan": "↻ Re-scan website",
+      "edit": "✏️ Edit",
+      "blacklist": "🚫 Blacklist",
+      "removeFromBatch": "🗑️ Remove from batches"
+    },
+    "rneBanner": {
+      "title": "Business closed — Operations ceased",
+      "description": "This business is marked as closed in the RNE. Closure date: {{date}}. Do not contact."
+    },
+    "decisionChart": {
+      "titleNew": "How Fortress verified this business",
+      "steps": "steps",
+      "statusConfirmed": "✓ Confirmed via {{method}}",
+      "statusPending": "⏳ Awaiting validation",
+      "statusUnmatched": "No match found",
+      "statusSireneNative": "SIRENE registry data"
+    }
   },
   "contacts": {
     "title": "Contacts",
