@@ -900,7 +900,10 @@
       "forceConfirmText": "Cela peut consommer du budget Maps pour peu de nouveaux résultats. Continuer ?",
       "forceConfirmYes": "Confirmer",
       "empty": "Aucune commune ne correspond à ce filtre dans ce département"
-    }
+    },
+    "deptWarningFranceWide": "Aucun département détecté — cette recherche couvrira toute la France.",
+    "deptWarningHint": "Ajoutez un code postal (ex : 33000) ou un code département (ex : 33) à votre requête pour cibler une zone.",
+    "deptResolvedHint": "Département détecté : {{dept}}"
   },
   "upload": {
     "title": "Import / Export",

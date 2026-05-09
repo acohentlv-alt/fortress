@@ -872,7 +872,10 @@
       "forceConfirmText": "This may consume Maps budget for few new results. Continue?",
       "forceConfirmYes": "Confirm",
       "empty": "No communes match this filter in this department"
-    }
+    },
+    "deptWarningFranceWide": "No department detected — this search will cover all of France.",
+    "deptWarningHint": "Add a postal code (e.g., 33000) or a department code (e.g., 33) to your query to narrow the search.",
+    "deptResolvedHint": "Department detected: {{dept}}"
   },
   "upload": {
     "title": "Import / Export",

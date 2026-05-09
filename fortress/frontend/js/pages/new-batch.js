@@ -1137,10 +1137,40 @@ export async function renderNewBatch(container) {
             summaryEl.textContent = t('newBatch.summaryEmptyState');
             return;
         }
-        summaryEl.textContent = t('newBatch.summaryLiveExhaustive', {
+
+        // Resolve dept across ALL queries — same logic as launch handler at line 1376-1380
+        let resolvedDept = '';
+        for (const q of queries) {
+            const hint = parseDeptHint(q);
+            if (hint) { resolvedDept = hint; break; }
+        }
+        const isFranceWide = !resolvedDept;  // null/undefined → would default to 'FR' at launch
+
+        // Render: main summary line + (if applicable) amber warning or green resolved hint
+        const baseText = t('newBatch.summaryLiveExhaustive', {
             count: queries.length,
             plural: queries.length > 1 ? 's' : '',
         });
+
+        if (isFranceWide) {
+            summaryEl.innerHTML = `
+                ${baseText}
+                <div class="dept-warning" style="margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(255, 165, 0, 0.1); border-left: 3px solid #ff9500; border-radius: 4px; color: #ffb84d; font-size: 0.875rem;">
+                    ⚠️ ${t('newBatch.deptWarningFranceWide')}
+                    <div style="font-size: 0.8rem; opacity: 0.8; margin-top: 0.25rem;">
+                        ${t('newBatch.deptWarningHint')}
+                    </div>
+                </div>
+            `;
+        } else {
+            // Show resolved dept as positive confirmation (small green hint)
+            summaryEl.innerHTML = `
+                ${baseText}
+                <div class="dept-resolved" style="margin-top: 0.25rem; font-size: 0.8rem; color: #6ee7b7;">
+                    📍 ${t('newBatch.deptResolvedHint', { dept: resolvedDept })}
+                </div>
+            `;
+        }
     }
 
     // Wire primary row validation and summary
