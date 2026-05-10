@@ -3216,6 +3216,46 @@ async def run(batch_id: str) -> None:
                         prior_stats_kept=len(_query_stats),
                     )
 
+                # ── Entity cap counter rehydration ───────────────────────────
+                # Brief 03: counter was in-memory-only, reset on each subprocess
+                # spawn → batch could overshoot cap by N× restarts. Now query
+                # durable state on startup. Strict-mode mirrors the increment-site
+                # gating (only strict_match=True rows count).
+                if entity_cap_confirmed is not None:
+                    async with pool.connection() as conn:
+                        if strict_naf:
+                            cap_cur = await conn.execute(
+                                """SELECT COUNT(*)
+                                     FROM companies co
+                                     JOIN batch_tags bt ON bt.siren = co.siren
+                                    WHERE bt.batch_id = %s
+                                      AND co.link_confidence = 'confirmed'
+                                      AND co.strict_match = TRUE""",
+                                (batch_id,),
+                            )
+                        else:
+                            cap_cur = await conn.execute(
+                                """SELECT COUNT(*)
+                                     FROM companies co
+                                     JOIN batch_tags bt ON bt.siren = co.siren
+                                    WHERE bt.batch_id = %s
+                                      AND co.link_confidence = 'confirmed'""",
+                                (batch_id,),
+                            )
+                        cap_row = await cap_cur.fetchone()
+                        _confirmed_for_cap = int(cap_row[0] or 0) if cap_row else 0
+                        if _confirmed_for_cap >= entity_cap_confirmed:
+                            _entity_cap_reached = True
+
+                    log.info(
+                        "discovery.cap_rehydrated",
+                        batch_id=batch_id,
+                        confirmed=_confirmed_for_cap,
+                        cap=entity_cap_confirmed,
+                        strict_naf=strict_naf,
+                        cap_already_reached=_entity_cap_reached,
+                    )
+
                 # HTTP client for website crawl — polite delays to avoid anti-bot blocks
                 curl_client = CurlClient(timeout=5, delay_min=0.2, delay_max=0.4, max_retries=1)
 
@@ -3238,6 +3278,12 @@ async def run(batch_id: str) -> None:
 
                     # Stop collecting once we've reached the user's target
                     if batch_size > 0 and companies_discovered >= batch_size:
+                        return False  # Signal scraper to stop extracting cards
+
+                    # Brief 03: stop extracting NEW cards once cap fired (reduces
+                    # overshoot from ~5-10% to ~1-3%). Worker-pool queue may still
+                    # drain a few buffered items — that's acknowledged as residual.
+                    if _entity_cap_reached:
                         return False  # Signal scraper to stop extracting cards
 
                     maps_name = maps_result.get("maps_name", "")
@@ -6479,9 +6525,13 @@ async def run(batch_id: str) -> None:
                     _dept_msg = ""
 
                 # M6 — log audit when entity cap was reached
+                # Brief 03 fix: was `get_conn()` (NameError, never imported in discovery.py)
+                # → `pool.connection()` (consistent with all 10+ other call sites in this file).
+                # Pre-existing bug — cap-fire audit rows have been silently failing since
+                # the cap feature shipped. Caught during Brief 03 QA (1.5.c).
                 if _entity_cap_reached and entity_cap_confirmed is not None:
                     try:
-                        async with get_conn() as _cap_conn:
+                        async with pool.connection() as _cap_conn:
                             await log_audit(
                                 _cap_conn, batch_id=batch_id, siren=None,
                                 action="abort_entity_cap_reached", result="success",
