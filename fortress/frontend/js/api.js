@@ -161,8 +161,22 @@ export async function getJobs() {
     return await request('/jobs');
 }
 
+// 2026-05-10 hotfix: read ?override_dept=ALL from the page URL hash and forward
+// as ?dept=ALL to the API so the cross-dept "Voir tout" link works end-to-end.
+function _deptOverrideFromHash() {
+    try {
+        const h = window.location.hash || '';
+        const q = h.indexOf('?');
+        if (q === -1) return '';
+        const params = new URLSearchParams(h.substring(q + 1));
+        return (params.get('override_dept') || '').trim();
+    } catch { return ''; }
+}
+
 export async function getJob(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}`);
+    const dept = _deptOverrideFromHash();
+    const qs = dept ? `?dept=${encodeURIComponent(dept)}` : '';
+    return await request(`/jobs/${encodeURIComponent(batchId)}${qs}`);
 }
 
 export async function deleteJob(batchId, options = {}) {
@@ -209,15 +223,21 @@ export async function getJobCompanies(batchId, { page = 1, pageSize = 20, search
     });
     if (filter) params.set('state_filter', filter);  // URL key matches Python param name
     if (searchQuery) params.set('search_query', searchQuery);
+    const dept = _deptOverrideFromHash();
+    if (dept) params.set('dept', dept);
     return await request(`/jobs/${encodeURIComponent(batchId)}/companies?${params}`);
 }
 
 export async function getJobQuality(batchId) {
-    return await request(`/jobs/${encodeURIComponent(batchId)}/quality`);
+    const dept = _deptOverrideFromHash();
+    const qs = dept ? `?dept=${encodeURIComponent(dept)}` : '';
+    return await request(`/jobs/${encodeURIComponent(batchId)}/quality${qs}`);
 }
 
 export async function getJobSummary(batchId) {
-    const res = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/summary`, { credentials: 'include' });
+    const dept = _deptOverrideFromHash();
+    const qs = dept ? `?dept=${encodeURIComponent(dept)}` : '';
+    const res = await fetch(`/api/jobs/${encodeURIComponent(batchId)}/summary${qs}`, { credentials: 'include' });
     if (!res.ok) return null;
     return res.json();
 }

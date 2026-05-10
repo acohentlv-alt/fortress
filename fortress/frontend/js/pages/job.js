@@ -516,19 +516,35 @@ function buildScoreboardCard(job, linkStats, summary) {
     const scopeLabel = computeScopeLabel(job);
 
     // Change 2 (A2=a): cross-dept expander when there are confirmed entities outside the dept filter.
-    // 2026-05-10 hotfix: changed the "Voir tout" link to navigate to the Dashboard (which shows
-    // batches across all departments) rather than a backend dept-override that doesn't exist yet.
-    // Proper dept-override (frontend ?override_dept=ALL → backend dept query param across 4
-    // endpoints) is deferred to its own brief — this hotfix just makes the link non-broken.
+    // 2026-05-10 hotfix #3: the "Voir tout" link now actually works end-to-end.
+    //   - api.js wrappers parse ?override_dept=ALL from the page URL hash and forward as ?dept=ALL
+    //   - 4 jobs.py endpoints accept dept query param
+    //   - _load_batch_filter_context honors dept_override="ALL" by suppressing the stored dept filter
+    // When override is active, render a "Revenir à la vue filtrée" link instead.
     const crossDeptCount = linkStats.cross_dept_count || 0;
-    const crossDeptHtml = crossDeptCount > 0 ? `
-        <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
-            ${t('job.crossDeptExpander', { count: crossDeptCount })}
-            <span style="color:var(--text-muted); margin-left:var(--space-xs); font-style:italic">
-                ${t('job.crossDeptHint')}
-            </span>
-        </div>
-    ` : '';
+    const _hashQ = (window.location.hash || '').indexOf('?');
+    const _hashParams = _hashQ === -1 ? new URLSearchParams() : new URLSearchParams(window.location.hash.substring(_hashQ + 1));
+    const _isOverrideActive = (_hashParams.get('override_dept') || '').toUpperCase() === 'ALL';
+    let crossDeptHtml = '';
+    if (_isOverrideActive) {
+        crossDeptHtml = `
+            <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
+                <span style="font-style:italic">${t('job.crossDeptOverrideActive')}</span>
+                <a href="#/job/${encodeURIComponent(job.batch_id || '')}" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
+                    ${t('job.crossDeptBackToFiltered')}
+                </a>
+            </div>
+        `;
+    } else if (crossDeptCount > 0) {
+        crossDeptHtml = `
+            <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
+                ${t('job.crossDeptExpander', { count: crossDeptCount })}
+                <a href="#/job/${encodeURIComponent(job.batch_id || '')}?override_dept=ALL" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
+                    ${t('job.crossDeptViewAll')}
+                </a>
+            </div>
+        `;
+    }
 
     const heroGridHtml = `
         <div style="display:grid; grid-template-columns:${_gridCols}; gap:var(--space-xl); margin-bottom:var(--space-lg)" class="scoreboard-hero-grid">
@@ -902,8 +918,9 @@ export async function renderJob(container, batchId) {
         <details class="advanced-section" id="advanced-section" ${_advancedOpen ? 'open' : ''} style="margin-top:var(--space-xl)">
             <summary class="advanced-section-summary">${t('job.advancedSection')}</summary>
             <div class="advanced-section-body">
-                <!-- Recherches effectuées — foldable card; opens by default. 2026-05-10 hotfix per Alan -->
-                <details class="card" id="queries-card" open style="margin-bottom:var(--space-xl)">
+                <!-- Recherches effectuées — foldable card; collapsed by default per Alan
+                     (don't need to see it every time you visit). 2026-05-10 hotfix. -->
+                <details class="card" id="queries-card" style="margin-bottom:var(--space-xl)">
                     <summary style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg); cursor:pointer; list-style:revert">
                         ${t('job.queriesCardTitle')}
                     </summary>

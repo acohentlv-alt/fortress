@@ -4646,7 +4646,10 @@
     .company-sticky-header { display: none !important; }
 }
 
-/* Action bar — horizontal toolbar below company name */
+/* Action bar — horizontal toolbar below company name.
+   IMPORTANT: this uses .company-action-btn (NOT .action-btn — there's a pre-existing
+   .action-btn class at line 3031 that's a 28x28 icon button. Sharing the name caused
+   buttons to be jammed into 28px boxes — visible bug 2026-05-10.) */
 .company-action-bar {
     display: flex;
     gap: 0.5rem;
@@ -4655,7 +4658,10 @@
     margin-bottom: 1rem;
     flex-wrap: wrap;
 }
-.action-btn {
+.company-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     padding: 0.5rem 1rem;
     border-radius: 6px;
     border: 1px solid var(--border-default);
@@ -4663,12 +4669,14 @@
     color: var(--text-primary);
     cursor: pointer;
     font-size: 0.875rem;
+    line-height: 1.2;
+    white-space: nowrap;
     transition: opacity 0.15s;
 }
-.action-btn:hover { opacity: 0.85; }
-.action-btn--primary { background: var(--accent); color: white; border-color: var(--accent); }
-.action-btn--warning { color: var(--warning); border-color: var(--warning); }
-.action-btn--danger  { color: var(--danger);  border-color: var(--danger); }
+.company-action-btn:hover { opacity: 0.85; }
+.company-action-btn--primary { background: var(--accent); color: white; border-color: var(--accent); }
+.company-action-btn--warning { color: var(--warning); border-color: var(--warning); }
+.company-action-btn--danger  { color: var(--danger);  border-color: var(--danger); }
 
 /* RNE banner — full-width red banner for closed businesses */
 .company-rne-banner {

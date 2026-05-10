@@ -803,6 +803,8 @@
     "crossDeptExpander": "{{count}} confirmed entity(ies) in other departments",
     "crossDeptViewAll": "View all (multi-department mode)",
     "crossDeptHint": "(multi-department navigation coming soon — use the Dashboard to explore all batches)",
+    "crossDeptOverrideActive": "Multi-department view active",
+    "crossDeptBackToFiltered": "Back to filtered view",
     "advancedSection": "🔬 Technical details",
     "qualifiedChipMain": "{{count}} matching",
     "searchCriteriaSubtitleStrict": "match your strict NAF filter",

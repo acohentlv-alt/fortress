@@ -1214,12 +1214,13 @@ export async function renderCompany(container, siren) {
             </div>
         </div>
 
-        <!-- Change 2: Action bar -->
+        <!-- Change 2: Action bar — uses company-action-btn class (NOT action-btn — that's a
+             pre-existing 28×28 icon button class at components.css:3031 that would collide). -->
         <div class="company-action-bar">
-            <button class="action-btn action-btn--primary" id="rescan-btn">${t('company.actions.rescan')}</button>
-            <button class="action-btn" id="edit-mode-btn">${t('company.actions.edit')}</button>
-            <button class="action-btn action-btn--warning" id="blacklist-btn">${t('company.actions.blacklist')}</button>
-            <button class="action-btn action-btn--danger" id="remove-from-batch-btn">${t('company.actions.removeFromBatch')}</button>
+            <button class="company-action-btn company-action-btn--primary" id="rescan-btn">${t('company.actions.rescan')}</button>
+            <button class="company-action-btn" id="edit-mode-btn">${t('company.actions.edit')}</button>
+            <button class="company-action-btn company-action-btn--warning" id="blacklist-btn">${t('company.actions.blacklist')}</button>
+            <button class="company-action-btn company-action-btn--danger" id="remove-from-batch-btn">${t('company.actions.removeFromBatch')}</button>
         </div>
 
         <!-- ALERT BANNER — unified mismatch/conflict alerts -->

@@ -12,7 +12,12 @@ from fortress.api.sql_helpers import merged_contacts_cte
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
-async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_params: tuple = ()):
+async def _load_batch_filter_context(
+    batch_id: str,
+    ws_filter: str = "",
+    ws_params: tuple = (),
+    dept_override: str = "",
+):
     """Load filters_json + strict_naf from batch_data and derive SQL filter snippets.
 
     Returns (strict_filter_sql, dept_filter_sql, dept_param_tuple, strict_naf_bool).
@@ -20,6 +25,10 @@ async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_para
 
     Added Brief 06 (2026-05-09): used by /summary, /quality, /companies to apply
     the same strict + dept filter that GET /jobs/{id} applies to hero tiles.
+
+    2026-05-10 hotfix: dept_override="ALL" suppresses the dept filter entirely
+    so the "Voir tout (mode multi-départements)" cross-dept expander on the Job
+    page can show entities outside the batch's stored dept filter.
     """
     # NOTE: alias `batch_data AS sj` because callers pass ws_filter containing
     # `AND sj.workspace_id = %s` (their own SELECTs use `sj` as the alias).
@@ -42,6 +51,11 @@ async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_para
 
     dept_filter_value = (filters.get("department") or "").strip()
     if dept_filter_value in ("FR", "ALL"):
+        dept_filter_value = ""
+
+    # 2026-05-10 hotfix: dept_override="ALL" suppresses the stored dept filter,
+    # so the cross-dept "Voir tout" expander can show all-departments view.
+    if (dept_override or "").strip().upper() == "ALL":
         dept_filter_value = ""
 
     # Leading space ensures correct concatenation when callers do
@@ -631,7 +645,7 @@ async def resume_job(batch_id: str, request: Request):
 
 
 @router.get("/{batch_id}")
-async def get_job(batch_id: str, request: Request):
+async def get_job(batch_id: str, request: Request, dept: str = Query("", description="2026-05-10 dept override; 'ALL' suppresses the batch's stored dept filter so cross-dept entities are visible")):
     """Single job detail with progress info."""
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
@@ -1027,7 +1041,7 @@ async def get_job(batch_id: str, request: Request):
 
 
 @router.get("/{batch_id}/summary")
-async def get_job_summary(batch_id: str, request: Request):
+async def get_job_summary(batch_id: str, request: Request, dept: str = Query("", description="2026-05-10 dept override; 'ALL' = cross-dept view")):
     """Batch summary — why results were low, triage breakdown, shortfall reason."""
     user = getattr(request.state, "user", None)
     if user and not user.is_admin:
@@ -1052,8 +1066,9 @@ async def get_job_summary(batch_id: str, request: Request):
     # Brief 06 (2026-05-09): load dept filter + strict filter consistently with GET /jobs/{id}.
     # Previously this endpoint did NOT load filters_json, causing result_breakdown to be
     # cross-dept (whole batch) while the hero tile was dept-filtered. Bug fixed here.
+    # 2026-05-10: dept_override allows ?dept=ALL cross-dept view via Voir tout link.
     _strict_filter, _dept_filter, _dept_param, _strict_naf = await _load_batch_filter_context(
-        batch_id, ws_filter, ws_params
+        batch_id, ws_filter, ws_params, dept_override=dept
     )
 
     # Aggregate batch_log by action + result
@@ -1225,6 +1240,7 @@ async def get_job_companies(
     sort: str = Query("completude", description="Sort by: completude | name | date"),
     state_filter: str = Query("", description="Filter: naf_confirmed | naf_sibling | pending | unlinked"),
     search_query: str = Query("", description="Filter to entities found by exactly this Maps query"),
+    dept: str = Query("", description="2026-05-10 dept override; 'ALL' = cross-dept view"),
 ):
     """Paginated companies for a job with merged contact data."""
     user = getattr(request.state, "user", None)
@@ -1252,7 +1268,7 @@ async def get_job_companies(
     # Previously this endpoint did NOT load filters_json; list showed all depts even when
     # the hero tile was dept-filtered.
     _strict_filter_c, _dept_filter_c, _dept_param_c, _strict_naf_c = await _load_batch_filter_context(
-        batch_id, ws_filter, ws_params
+        batch_id, ws_filter, ws_params, dept_override=dept
     )
 
     # Build WHERE clause for search filter
@@ -1382,7 +1398,7 @@ async def get_job_companies(
 
 
 @router.get("/{batch_id}/quality")
-async def get_job_quality(batch_id: str, request: Request):
+async def get_job_quality(batch_id: str, request: Request, dept: str = Query("", description="2026-05-10 dept override; 'ALL' = cross-dept view")):
     """Data quality breakdown scoped to THIS specific batch only.
 
     Uses batch_tags (one row per actual Maps result, keyed by batch_id).
@@ -1411,7 +1427,7 @@ async def get_job_quality(batch_id: str, request: Request):
 
     # Load dept + strict filter (same logic as GET /jobs/{id} hero tiles).
     _strict_filter_q, _dept_filter_q, _dept_param_q, _strict_naf_q = await _load_batch_filter_context(
-        batch_id, ws_filter, ws_params
+        batch_id, ws_filter, ws_params, dept_override=dept
     )
 
     stats = await fetch_one(f"""
