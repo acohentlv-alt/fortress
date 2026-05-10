@@ -44,9 +44,11 @@ async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_para
     if dept_filter_value in ("FR", "ALL"):
         dept_filter_value = ""
 
-    _dept_filter = "AND co.departement = %s" if dept_filter_value else ""
+    # Leading space ensures correct concatenation when callers do
+    # `where_extra = ... + _co_strict_filter + _dept_filter` (avoids "trueAND" syntax error).
+    _dept_filter = " AND co.departement = %s" if dept_filter_value else ""
     _dept_param: tuple = (dept_filter_value,) if dept_filter_value else ()
-    _strict_filter = "AND co.strict_match = true" if strict_naf else ""
+    _strict_filter = " AND co.strict_match = true" if strict_naf else ""
 
     return _strict_filter, _dept_filter, _dept_param, bool(strict_naf)
 
