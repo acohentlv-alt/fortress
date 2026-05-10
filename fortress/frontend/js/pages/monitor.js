@@ -824,12 +824,25 @@ async function renderJobMonitor(container, batchId) {
                  </div>
              `;
         } else if (!isRunning && job.status === 'interrupted') {
+            // 2026-05-10: bridge the interrupted message to the metrics shown above.
+            // Old message only said "64 / 2000 traitées" without explaining the
+            // 35 CONFIRMÉES tile. New message reconciles both numbers in one sentence.
+            const _scrapedI = job.companies_scraped || 0;
+            const _confirmedI = qualified;  // already mode-aware (link_stats.total in strict, etc.)
+            const _targetI = job.batch_size || 0;
+            const _bridgeMsg = (_scrapedI > 0 && _confirmedI >= 0)
+                ? t('monitor.interruptedBridge', {
+                    scraped: _scrapedI,
+                    target: _targetI,
+                    confirmed: _confirmedI,
+                  })
+                : (job.shortfall_reason || t('monitor.interruptedSubtext'));
             $.completion.style.display = 'block';
             $.completion.innerHTML = `
                 <div class="completion-card" style="border-left: 4px solid #F97316; background: color-mix(in srgb, var(--bg-surface) 90%, #F97316);">
                     <div class="completion-icon" style="background:rgba(249,115,22,0.1); color:#F97316">⚠️</div>
                     <div class="completion-title" style="color:#F97316">${t('monitor.interruptedTitle')}</div>
-                    <div class="completion-subtitle">${job.shortfall_reason || t('monitor.interruptedSubtext')}</div>
+                    <div class="completion-subtitle">${_bridgeMsg}</div>
                     <a href="#/job/${encodeURIComponent(batchId)}" class="btn" style="border:1px solid #F97316; color:var(--text)">${t('monitor.interruptedCta')}</a>
                 </div>
             `;

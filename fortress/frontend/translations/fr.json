@@ -564,6 +564,7 @@
     "gaugeFinancials": "💰 Chiffre d'affaires",
     "gaugeSocial": "🔗 Réseaux sociaux",
     "interruptedTitle": "Batch interrompu",
+    "interruptedBridge": "Le pipeline s'est arrêté après {{scraped}} entreprises traitées sur {{target}} prévues. Parmi celles-ci, {{confirmed}} sont déjà confirmées et visibles ci-dessus. Cliquez sur Reprendre pour continuer.",
     "interruptedSubtext": "Le processus s'est arrêté de manière inattendue.",
     "interruptedCta": "Voir les résultats partiels",
     "ringLabelNoResult": "Batch sans résultat",
