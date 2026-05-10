@@ -556,7 +556,8 @@ async function renderJobMonitor(container, batchId) {
             jobStartMs = new Date(job.created_at).getTime();
         }
         const terminalStatuses = new Set(['completed', 'failed', 'interrupted', 'cancelled']);
-        if (terminalStatuses.has(job.status)) {
+        const isStuckQueued = Boolean(job.stuck_queued);
+        if (terminalStatuses.has(job.status) || isStuckQueued) {
             jobEndMs = job.updated_at ? new Date(job.updated_at).getTime() : Date.now();
         } else {
             jobEndMs = null;
@@ -587,7 +588,12 @@ async function renderJobMonitor(container, batchId) {
         // Change 4: Ring = confirmed / total_discovered; label changes per mode
         // Divide-by-zero guarded by null pct when scraped == 0.
         const qualRate = scraped > 0 ? Math.round((confirmedValue / scraped) * 100) : null;
-        isRunning = job.status === 'in_progress' || job.status === 'queued' || job.status === 'triage';
+        // Treat stuck queued (idle > 5min) as NOT running so the live badge / cancel button /
+        // "Recherche en cours" indicator all hide.
+        isRunning = (
+            (job.status === 'in_progress' || job.status === 'triage') ||
+            (job.status === 'queued' && !job.stuck_queued)
+        );
         jobWorkspaceId = job.workspace_id == null ? null : job.workspace_id;
         const isUpload = job.mode === 'upload';
 

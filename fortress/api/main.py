@@ -187,16 +187,40 @@ async def _auto_resume_spawn(batch_id: str, workspace_id: "int | None") -> bool:
     launcher = _Path("/tmp/fortress_launcher.py")
     if launcher.exists():
         runner_cmd = [_sys.executable, str(launcher), "runner", batch_id]
+    import asyncio as _asyncio_ar
     try:
-        _sp.Popen(
+        # IMPORTANT: stdout=None (inherit parent) — discovery.py emits 156+ structlog
+        # calls per batch to stdout. PIPE'd stdout would fill the 64KB OS pipe buffer
+        # and BLOCK the child on `print()` once full, with no parent reader. Only
+        # PIPE stderr where we WANT to capture the (rare) failure-mode output.
+        _proc = _sp.Popen(
             runner_cmd, cwd=str(fortress_root),
-            stdout=None, stderr=None,
+            stdout=None, stderr=_sp.PIPE,
             close_fds=False, start_new_session=True,
         )
-        logger.info(
-            "auto_resume.spawned batch=%s ws=%s attempt=%d",
-            batch_id, workspace_id, attempt_n,
-        )
+        # Post-spawn poll — catch immediate import errors / cwd bugs that
+        # leave status='queued' silently (today 2026-05-10 fix).
+        await _asyncio_ar.sleep(1.0)
+        _rc = _proc.poll()
+        if _rc is not None:
+            try:
+                _stderr_bytes = _proc.stderr.read() if _proc.stderr else b''
+                _stderr_text = _stderr_bytes.decode('utf-8', errors='replace')[:500]
+            except Exception:
+                _stderr_text = '<stderr_read_failed>'
+            logger.error(
+                "auto_resume.spawn_failed batch=%s ws=%s rc=%d stderr=%r",
+                batch_id, workspace_id, _rc, _stderr_text,
+            )
+        else:
+            logger.info(
+                "auto_resume.spawned batch=%s ws=%s attempt=%d pid=%d",
+                batch_id, workspace_id, attempt_n, _proc.pid,
+            )
+            # Detach stderr fd so child stderr writes don't fill our pipe buffer.
+            # (stdout was never PIPE'd, so no action needed there.)
+            if _proc.stderr:
+                _proc.stderr.close()
     except Exception as exc:
         logger.warning(
             "auto_resume.popen_failed batch=%s err=%s", batch_id, exc
@@ -828,13 +852,35 @@ async def lifespan(app: FastAPI):
                                     logger.info("Catch-up: skip respawn (guard) batch=%s", _bid)
                                     continue
                                 try:
-                                    subprocess.Popen(
+                                    # IMPORTANT: stdout=None (inherit parent) — discovery.py emits
+                                    # 156+ structlog calls to stdout; PIPE'd stdout would deadlock.
+                                    _catchup_proc = subprocess.Popen(
                                         _runner_cmd,
                                         cwd=str(_fortress_root),
-                                        stdout=None, stderr=None,
+                                        stdout=None, stderr=subprocess.PIPE,
                                         close_fds=False, start_new_session=True,
                                     )
-                                    logger.info("✅ Catch-up: spawned orphaned queued batch %s (ws=%s)", _bid, _ws)
+                                    # Post-spawn poll — catch immediate import/cwd errors.
+                                    import asyncio as _asyncio_catchup
+                                    await _asyncio_catchup.sleep(1.0)
+                                    _catchup_rc = _catchup_proc.poll()
+                                    if _catchup_rc is not None:
+                                        try:
+                                            _err_bytes = _catchup_proc.stderr.read() if _catchup_proc.stderr else b''
+                                            _err_text = _err_bytes.decode('utf-8', errors='replace')[:500]
+                                        except Exception:
+                                            _err_text = '<stderr_read_failed>'
+                                        logger.error(
+                                            "catchup.spawn_failed batch=%s ws=%s rc=%d stderr=%r",
+                                            _bid, _ws, _catchup_rc, _err_text,
+                                        )
+                                    else:
+                                        logger.info(
+                                            "✅ Catch-up: spawned orphaned queued batch %s (ws=%s) pid=%d",
+                                            _bid, _ws, _catchup_proc.pid,
+                                        )
+                                        if _catchup_proc.stderr:
+                                            _catchup_proc.stderr.close()
                                 except Exception as _e:
                                     logger.warning("Catch-up spawn failed for %s: %s", _bid, _e)
         except Exception as _e:
@@ -903,12 +949,33 @@ async def lifespan(app: FastAPI):
                         logger.info("🔄 Sweeper: skip respawn (guard) batch=%s", _next_bid)
                         continue
                     try:
-                        _subprocess.Popen(
+                        # IMPORTANT: stdout=None (inherit parent) — discovery.py emits
+                        # 156+ structlog calls to stdout; PIPE'd stdout would deadlock.
+                        _swp_proc = _subprocess.Popen(
                             _cmd, cwd=str(_fr),
-                            stdout=None, stderr=None,
+                            stdout=None, stderr=_subprocess.PIPE,
                             close_fds=False, start_new_session=True,
                         )
-                        logger.info("🔄 Sweeper: spawned orphan queued batch %s (ws=%s)", _next_bid, _ws_id)
+                        # Post-spawn poll — catch immediate import/cwd errors.
+                        await _asyncio.sleep(1.0)
+                        _swp_rc = _swp_proc.poll()
+                        if _swp_rc is not None:
+                            try:
+                                _swp_err = _swp_proc.stderr.read() if _swp_proc.stderr else b''
+                                _swp_err_text = _swp_err.decode('utf-8', errors='replace')[:500]
+                            except Exception:
+                                _swp_err_text = '<stderr_read_failed>'
+                            logger.error(
+                                "sweeper.spawn_failed batch=%s ws=%s rc=%d stderr=%r",
+                                _next_bid, _ws_id, _swp_rc, _swp_err_text,
+                            )
+                        else:
+                            logger.info(
+                                "🔄 Sweeper: spawned orphan queued batch %s (ws=%s) pid=%d",
+                                _next_bid, _ws_id, _swp_proc.pid,
+                            )
+                            if _swp_proc.stderr:
+                                _swp_proc.stderr.close()
                     except Exception as _e:
                         logger.warning("Sweeper spawn failed for %s: %s", _next_bid, _e)
             except Exception as _e:

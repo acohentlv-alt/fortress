@@ -487,7 +487,8 @@ async def resume_job(batch_id: str, request: Request):
     async with get_conn() as conn:
         # SELECT FOR UPDATE locks the row so two simultaneous clicks can't both pass
         row = await (await conn.execute(
-            f"""SELECT status, workspace_id, batch_name, batch_size, companies_scraped
+            f"""SELECT status, workspace_id, batch_name, batch_size, companies_scraped,
+                       EXTRACT(EPOCH FROM (NOW() - updated_at)) AS idle_seconds
                 FROM batch_data
                 WHERE batch_id = %s {ws_scope}
                 FOR UPDATE""",
@@ -502,6 +503,7 @@ async def resume_job(batch_id: str, request: Request):
         batch_name = row[2]
         batch_size_row = row[3] or 0
         companies_scraped_row = row[4] or 0
+        idle_sec = float(row[5] or 0)  # NEW — seconds since last updated_at
 
         # ── Cross-workspace typed-confirmation gate ──────────────────────────
         # Mirror of delete_job (jobs.py:158-183) and cancel_job (this PR):
@@ -541,8 +543,16 @@ async def resume_job(batch_id: str, request: Request):
                 },
             )
 
-        # Only 'interrupted' is resumable — never 'failed', 'completed', or anything else
-        if current_status != 'interrupted':
+        # Resumable statuses:
+        #   - 'interrupted' (normal path: subprocess died unexpectedly)
+        #   - 'cancelled' (user explicitly stopped — but we let them change their mind;
+        #     2026-05-10 incident proved cancel-vs-running is ambiguous when UI lies,
+        #     so we trust the user to know whether they want to continue)
+        #   - 'queued' when idle > 5min (silent auto-resume failure — Brief 02 incident)
+        # Never resumable: 'failed', 'completed', 'in_progress', 'triage', 'deleted'.
+        is_stuck_queued = current_status == 'queued' and idle_sec > 300
+        resumable_statuses = {'interrupted', 'cancelled'}
+        if current_status not in resumable_statuses and not is_stuck_queued:
             return JSONResponse(
                 status_code=409,
                 content={
@@ -754,8 +764,12 @@ async def get_job(batch_id: str, request: Request, dept: str = Query("", descrip
         except Exception:
             pass  # Non-fatal — just show stale data
 
-    # Remove internal field from response
-    job = {k: v for k, v in job.items() if k != "idle_seconds"}
+    # Compute stuck_queued for FE rendering: a 'queued' batch sitting idle for
+    # > 5 min is presumed stuck (auto-resume sweeper failed to spawn or the spawn
+    # died with an import error — see Brief 02 incident 2026-05-10).
+    _idle_for_stuck = float(job.get("idle_seconds") or 0)
+    job["stuck_queued"] = bool(job.get("status") == "queued" and _idle_for_stuck > 300)
+    # idle_seconds stays in the response — FE may render "Inactif depuis Xm" later.
 
     # Strict-mode filter: when batch was launched with strict_naf=true, all stat queries
     # must filter to co.strict_match=true so counts/tiles reflect the visible entities only.

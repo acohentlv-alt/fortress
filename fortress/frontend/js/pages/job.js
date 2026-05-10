@@ -265,7 +265,16 @@ function buildScoreboardCard(job, linkStats, summary) {
                     <button id="btn-download-dropdown" class="btn btn-primary" title="${t('job.download')}">${t('job.download')}</button>
                 </div>
                 ${(() => {
-                    if (job.status !== 'interrupted') return '';
+                    // Reprendre is shown for any state where resume API will accept (Change C.2):
+                    // - 'interrupted' (subprocess died unexpectedly)
+                    // - 'cancelled' (user explicitly stopped — but they can change their mind;
+                    //   per Alan 2026-05-10: "let the user decide". Today's incident proved
+                    //   cancel-vs-running is ambiguous when UI lies.)
+                    // - 'queued' AND stuck_queued===true (sweeper silent-failure case)
+                    const isInterrupted = job.status === 'interrupted';
+                    const isCancelled = job.status === 'cancelled';
+                    const isStuckQueued = Boolean(job.stuck_queued);
+                    if (!isInterrupted && !isCancelled && !isStuckQueued) return '';
                     const size = job.batch_size || 0;
                     const done = job.companies_scraped || 0;
                     if (size > 0 && done >= size) return '';
