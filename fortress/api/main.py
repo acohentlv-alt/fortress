@@ -179,7 +179,10 @@ async def _auto_resume_spawn(batch_id: str, workspace_id: "int | None") -> bool:
         return False
 
     # ── Spawn subprocess (same pattern as catch-up + sweeper above) ──
-    fortress_root = _Path(__file__).resolve().parent.parent
+    # cwd MUST be the repo root (/app) so that `python -m fortress.discovery` resolves.
+    # main.py lives at /app/fortress/api/main.py — three .parent walks land on /app.
+    # Fixed 2026-05-10 (was .parent.parent which landed on /app/fortress and broke imports).
+    fortress_root = _Path(__file__).resolve().parent.parent.parent
     runner_cmd = [_sys.executable, "-m", "fortress.discovery", batch_id]
     launcher = _Path("/tmp/fortress_launcher.py")
     if launcher.exists():
@@ -812,7 +815,8 @@ async def lifespan(app: FastAPI):
                         )
                         _orphaned = await _cur.fetchall()
                         if _orphaned:
-                            _fortress_root = _Path(__file__).resolve().parent.parent
+                            # cwd = /app (repo root) for `python -m fortress.discovery`. Fixed 2026-05-10.
+                            _fortress_root = _Path(__file__).resolve().parent.parent.parent
                             for _row in _orphaned:
                                 _bid = _row[0] if isinstance(_row, tuple) else _row["batch_id"]
                                 _ws = _row[1] if isinstance(_row, tuple) else _row["workspace_id"]
@@ -886,7 +890,8 @@ async def lifespan(app: FastAPI):
                     _orphan_rows = await _swp_cur.fetchall()
                 if not _orphan_rows:
                     continue
-                _fr = _Path(__file__).resolve().parent.parent
+                # cwd = /app (repo root) for `python -m fortress.discovery`. Fixed 2026-05-10.
+                _fr = _Path(__file__).resolve().parent.parent.parent
                 for _pr in _orphan_rows:
                     _next_bid = _pr[0] if isinstance(_pr, tuple) else _pr.get("batch_id")
                     _ws_id = _pr[1] if isinstance(_pr, tuple) else _pr.get("workspace_id")
