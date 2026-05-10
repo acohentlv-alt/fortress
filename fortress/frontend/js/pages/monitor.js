@@ -319,15 +319,16 @@ async function renderJobMonitor(container, batchId) {
             <div style="display:flex; gap:var(--space-2xl); justify-content:center" id="mon-gauges">—</div>
         </div>
 
-        <!-- Queries Panel (Lever E1 — Apr 30): live done/running/queued breakdown -->
-        <div class="card" style="margin-bottom:var(--space-xl)">
-            <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+        <!-- Queries Panel — foldable card; collapsed by default per Alan 2026-05-10 (you don't
+             need to see the full query list every time you watch a live batch) -->
+        <details class="card" id="mon-queries-card" style="margin-bottom:var(--space-xl)">
+            <summary style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; cursor:pointer; list-style:revert">
                 ${t('monitor.queriesPanel')}
-            </h3>
-            <div id="mon-queries-list">
+            </summary>
+            <div id="mon-queries-list" style="margin-top:var(--space-lg)">
                 <span style="color:var(--text-muted); font-style:italic">${t('monitor.loading')}</span>
             </div>
-        </div>
+        </details>
 
         <!-- Completion CTA (hidden by default) -->
         <div id="mon-completion" style="display:none; margin-bottom:var(--space-xl)"></div>

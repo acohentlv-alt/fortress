@@ -515,36 +515,12 @@ function buildScoreboardCard(job, linkStats, summary) {
     // Change 1 (A1=c): scope label below confirmed count; drop tautological denom/pct.
     const scopeLabel = computeScopeLabel(job);
 
-    // Change 2 (A2=a): cross-dept expander when there are confirmed entities outside the dept filter.
-    // 2026-05-10 hotfix #3: the "Voir tout" link now actually works end-to-end.
-    //   - api.js wrappers parse ?override_dept=ALL from the page URL hash and forward as ?dept=ALL
-    //   - 4 jobs.py endpoints accept dept query param
-    //   - _load_batch_filter_context honors dept_override="ALL" by suppressing the stored dept filter
-    // When override is active, render a "Revenir à la vue filtrée" link instead.
-    const crossDeptCount = linkStats.cross_dept_count || 0;
-    const _hashQ = (window.location.hash || '').indexOf('?');
-    const _hashParams = _hashQ === -1 ? new URLSearchParams() : new URLSearchParams(window.location.hash.substring(_hashQ + 1));
-    const _isOverrideActive = (_hashParams.get('override_dept') || '').toUpperCase() === 'ALL';
-    let crossDeptHtml = '';
-    if (_isOverrideActive) {
-        crossDeptHtml = `
-            <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
-                <span style="font-style:italic">${t('job.crossDeptOverrideActive')}</span>
-                <a href="#/job/${encodeURIComponent(job.batch_id || '')}" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
-                    ${t('job.crossDeptBackToFiltered')}
-                </a>
-            </div>
-        `;
-    } else if (crossDeptCount > 0) {
-        crossDeptHtml = `
-            <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
-                ${t('job.crossDeptExpander', { count: crossDeptCount })}
-                <a href="#/job/${encodeURIComponent(job.batch_id || '')}?override_dept=ALL" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
-                    ${t('job.crossDeptViewAll')}
-                </a>
-            </div>
-        `;
-    }
+    // Cross-dept hint REMOVED 2026-05-10 per Alan's Option A decision: the Job page shows
+    // only entities matching the batch's stored dept filter — no clutter about cross-dept
+    // entities. Users who want cross-dept exploration navigate via Dashboard.
+    // Backend dept_override (jobs.py + api.js _deptOverrideFromHash) is left in place as a
+    // dormant escape hatch — bookmarked URLs with ?override_dept=ALL still work.
+    const crossDeptHtml = '';
 
     const heroGridHtml = `
         <div style="display:grid; grid-template-columns:${_gridCols}; gap:var(--space-xl); margin-bottom:var(--space-lg)" class="scoreboard-hero-grid">
