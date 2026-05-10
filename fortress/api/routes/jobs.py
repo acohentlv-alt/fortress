@@ -21,9 +21,12 @@ async def _load_batch_filter_context(batch_id: str, ws_filter: str = "", ws_para
     Added Brief 06 (2026-05-09): used by /summary, /quality, /companies to apply
     the same strict + dept filter that GET /jobs/{id} applies to hero tiles.
     """
+    # NOTE: alias `batch_data AS sj` because callers pass ws_filter containing
+    # `AND sj.workspace_id = %s` (their own SELECTs use `sj` as the alias).
+    # Without the alias here, psycopg raises "missing FROM-clause entry for sj".
     bd_row = await fetch_one(
-        f"SELECT filters_json, COALESCE(strict_naf, FALSE) AS strict_naf "
-        f"FROM batch_data WHERE batch_id = %s {ws_filter}",
+        f"SELECT sj.filters_json, COALESCE(sj.strict_naf, FALSE) AS strict_naf "
+        f"FROM batch_data sj WHERE sj.batch_id = %s {ws_filter}",
         (batch_id,) + ws_params,
     )
     if not bd_row:

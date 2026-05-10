@@ -811,6 +811,7 @@
     "scopeAllBatch": "Batch entier",
     "crossDeptExpander": "{{count}} entité(s) confirmée(s) dans d'autres départements",
     "crossDeptViewAll": "Voir tout (mode multi-départements)",
+    "crossDeptHint": "(navigation multi-départements à venir — utilisez le Tableau de bord pour explorer tous les lots)",
     "advancedSection": "🔬 Détails techniques",
     "strictMode": {
       "badge": "MODE STRICT",

@@ -516,13 +516,17 @@ function buildScoreboardCard(job, linkStats, summary) {
     const scopeLabel = computeScopeLabel(job);
 
     // Change 2 (A2=a): cross-dept expander when there are confirmed entities outside the dept filter.
+    // 2026-05-10 hotfix: changed the "Voir tout" link to navigate to the Dashboard (which shows
+    // batches across all departments) rather than a backend dept-override that doesn't exist yet.
+    // Proper dept-override (frontend ?override_dept=ALL → backend dept query param across 4
+    // endpoints) is deferred to its own brief — this hotfix just makes the link non-broken.
     const crossDeptCount = linkStats.cross_dept_count || 0;
     const crossDeptHtml = crossDeptCount > 0 ? `
         <div class="hero-cross-dept-expander" style="margin-top:var(--space-sm); font-size:var(--font-sm); color:var(--text-muted)">
             ${t('job.crossDeptExpander', { count: crossDeptCount })}
-            <a href="#/job/${encodeURIComponent(job.batch_id || '')}?override_dept=ALL" class="text-link" style="color:var(--accent); text-decoration:underline; margin-left:var(--space-xs)">
-                ${t('job.crossDeptViewAll')}
-            </a>
+            <span style="color:var(--text-muted); margin-left:var(--space-xs); font-style:italic">
+                ${t('job.crossDeptHint')}
+            </span>
         </div>
     ` : '';
 
@@ -898,13 +902,13 @@ export async function renderJob(container, batchId) {
         <details class="advanced-section" id="advanced-section" ${_advancedOpen ? 'open' : ''} style="margin-top:var(--space-xl)">
             <summary class="advanced-section-summary">${t('job.advancedSection')}</summary>
             <div class="advanced-section-body">
-                <!-- Recherches effectuées — always visible; placeholder until data arrives -->
-                <div class="card" id="queries-card" style="margin-bottom:var(--space-xl)">
-                    <h3 style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg)">
+                <!-- Recherches effectuées — foldable card; opens by default. 2026-05-10 hotfix per Alan -->
+                <details class="card" id="queries-card" open style="margin-bottom:var(--space-xl)">
+                    <summary style="font-size:var(--font-xs); font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:var(--space-lg); cursor:pointer; list-style:revert">
                         ${t('job.queriesCardTitle')}
-                    </h3>
-                    <div id="queries-card-list"><span style="color:var(--text-muted)">${t('common.loading')}</span></div>
-                </div>
+                    </summary>
+                    <div id="queries-card-list" style="margin-top:var(--space-md)"><span style="color:var(--text-muted)">${t('common.loading')}</span></div>
+                </details>
 
                 ${buildTimingPanel(job)}
             </div>
