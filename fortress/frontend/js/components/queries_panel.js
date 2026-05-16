@@ -30,6 +30,8 @@ export function stopReasonText(reason, cumulative, capMin) {
             return t('monitor.queriesStopPrimaryTimeCap').replace('{{n}}', capMin != null ? capMin : '?');
         case 'antibot_block':
             return t('monitor.queriesStopAntibot');
+        case 'empty_query':
+            return t('monitor.queriesStopEmptyQuery');
         default:
             return t('monitor.queriesStopGeneric');
     }

@@ -624,6 +624,7 @@
     "queriesStopTotalTimeCap": "Plafond temps total atteint ({{n}} min)",
     "queriesStopPrimaryTimeCap": "Plafond temps requête atteint ({{n}} min)",
     "queriesStopAntibot": "Bloqué par anti-bot Maps",
+    "queriesStopEmptyQuery": "Aucun résultat sur Maps pour cette recherche",
     "queriesStateDone": "Recherche terminée",
     "queriesStateRunning": "Recherche en cours",
     "queriesStateQueued": "En file d'attente",

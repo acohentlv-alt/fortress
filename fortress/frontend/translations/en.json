@@ -619,6 +619,7 @@
     "queriesStopTotalTimeCap": "Total time cap reached ({{n}} min)",
     "queriesStopPrimaryTimeCap": "Per-query time cap reached ({{n}} min)",
     "queriesStopAntibot": "Blocked by Maps anti-bot",
+    "queriesStopEmptyQuery": "No Maps results for this query",
     "queriesStateDone": "Search complete",
     "queriesStateRunning": "Search running",
     "queriesStateQueued": "Queued",

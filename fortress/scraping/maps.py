@@ -200,6 +200,7 @@ class PlaywrightMapsScraper:
         self._lock = asyncio.Lock()
         self._consent_done = False
         self._search_count = 0  # Track searches to force reload
+        self._last_search_was_empty: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -526,6 +527,9 @@ class PlaywrightMapsScraper:
         instead of search box interaction which fails on Render.
         max_results: stop after collecting this many results (0=unlimited).
         """
+        # Brief 05: reset the empty-search flag at the start of every query.
+        self._last_search_was_empty = False
+
         import urllib.parse
         from pathlib import Path
 
@@ -600,6 +604,7 @@ class PlaywrightMapsScraper:
             await page.wait_for_selector('a.hfpxzc', timeout=10000)
         except Exception:
             log.info("maps_discovery.no_results", query=query)
+            self._last_search_was_empty = True
             # Save diagnostic screenshot for debugging
             try:
                 debug_dir = Path("data/logs")

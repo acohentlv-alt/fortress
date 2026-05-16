@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata as _uc
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -22,6 +23,60 @@ from fortress.api.db import fetch_all, fetch_one, get_conn
 from fortress.api.routes.activity import log_activity
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
+
+
+_ST_RE = re.compile(r'\bST\b')
+_STE_RE = re.compile(r'\bSTE\b')
+_STS_RE = re.compile(r'\bSTS\b')
+_HYPHEN_OR_SPACE_RUN_RE = re.compile(r'[-\s]+')
+_APOSTROPHE_RE = re.compile("[\u0027\u2018\u2019]")  # straight U+0027 + curly-left U+2018 + curly-right U+2019
+
+
+def _canonicalize_query(q: str) -> str:
+    """Canonical form for dedup ONLY (display preserves original).
+
+    Steps (order matters):
+      1. NFKD decompose + drop combining marks (accent strip)
+      2. Uppercase
+      3. Replace apostrophes (straight + curly U+2019/U+2018) with SPACE.
+         (Space, not empty — so "L'AGLY" and "L AGLY" both canonicalize
+         to "L AGLY". Dropping to empty would produce "LAGLY" vs "L AGLY"
+         and they wouldn't dedup, defeating the brief's primary purpose.)
+      4. Expand ST -> SAINT, STE -> SAINTE, STS -> SAINTS (whole-word, ASCII only)
+      5. Replace any run of [- ] with a single space
+      6. Strip + collapse whitespace
+    """
+    if not q:
+        return ""
+    nfkd = _uc.normalize("NFKD", q)
+    ascii_q = "".join(c for c in nfkd if not _uc.combining(c))
+    ascii_q = ascii_q.upper()
+    ascii_q = _APOSTROPHE_RE.sub(" ", ascii_q)  # space, not empty — so L'AGLY <-> L AGLY canonicalize equal
+    ascii_q = _ST_RE.sub("SAINT", ascii_q)
+    ascii_q = _STE_RE.sub("SAINTE", ascii_q)
+    ascii_q = _STS_RE.sub("SAINTS", ascii_q)
+    ascii_q = _HYPHEN_OR_SPACE_RUN_RE.sub(" ", ascii_q)
+    return ascii_q.strip()
+
+
+def _dedup_queries(queries: list[str]) -> tuple[list[str], int]:
+    """Return (deduped_in_original_order, removed_count).
+
+    First occurrence wins (preserves user's intent / original casing).
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for q in queries:
+        if not q or not q.strip():
+            continue
+        canon = _canonicalize_query(q)
+        if not canon:
+            continue
+        if canon in seen:
+            continue
+        seen.add(canon)
+        out.append(q)
+    return out, len(queries) - len(out)
 
 
 class BatchRunRequest(BaseModel):
@@ -133,10 +188,24 @@ async def run_batch(body: BatchRunRequest, request: Request):
         filters_dict["bulk_discovery"] = body.bulk_discovery_meta
     filters_json = json.dumps(filters_dict) if filters_dict else None
 
-    # Build search_queries JSON for Maps-first mode
+    # Build search_queries JSON for Maps-first mode.
+    # Brief 05: dedupe by canonical form (NFKD ASCII + uppercase + ST->SAINT
+    # + hyphen/space collapse) so "BANYULS-SUR-MER" + "BANYULS SUR MER" run once.
+    # Original casing preserved in display — only the in-pipeline list shrinks.
     search_queries_json = None
+    dedup_removed = 0
     if body.strategy == "maps" and body.search_queries:
-        search_queries_json = json.dumps(body.search_queries)
+        deduped, dedup_removed = _dedup_queries(body.search_queries)
+        search_queries_json = json.dumps(deduped)
+        if dedup_removed > 0:
+            # Will surface in activity log below; logged here for observability too.
+            import structlog
+            structlog.get_logger(__name__).info(
+                "batch.queries_deduped",
+                submitted=len(body.search_queries),
+                kept=len(deduped),
+                removed=dedup_removed,
+            )
 
     # Determine batch number + insert in ONE atomic connection
     # to prevent TOCTOU race where two requests get the same number.
@@ -290,13 +359,16 @@ async def run_batch(body: BatchRunRequest, request: Request):
     # The currently-running batch's discovery.py finally-block will pick this up
     # (or the periodic sweeper in api/main.py if the running batch's process died).
     if blocking and body.queue:
+        _queued_details = f"En file d'attente (position {queue_position}) — {sector} {dept}"
+        if dedup_removed > 0:
+            _queued_details += f" ({dedup_removed} requête(s) en doublon supprimée(s))"
         await log_activity(
             user_id=getattr(request.state.user, 'id', None) if getattr(request.state, 'user', None) else None,
             username=getattr(request.state.user, 'username', 'system') if getattr(request.state, 'user', None) else 'system',
             action='batch_queued',
             target_type='batch',
             target_id=batch_id,
-            details=f"En file d'attente (position {queue_position}) — {sector} {dept}",
+            details=_queued_details,
         )
         return {
             "batch_id": batch_id,
@@ -342,13 +414,16 @@ async def run_batch(body: BatchRunRequest, request: Request):
 
     # Log activity
     user = getattr(request.state, 'user', None)
+    _details = f"Recherche {sector} {dept} — jusqu'à 2000 entités"
+    if dedup_removed > 0:
+        _details += f" ({dedup_removed} requête(s) en doublon supprimée(s))"
     await log_activity(
         user_id=getattr(user, 'id', None) if user else None,
         username=getattr(user, 'username', 'system') if user else 'system',
         action='batch_launched',
         target_type='batch',
         target_id=batch_id,
-        details=f"Recherche {sector} {dept} — jusqu'à 2000 entités",
+        details=_details,
     )
 
     return {

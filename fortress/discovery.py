@@ -5986,8 +5986,16 @@ async def run(batch_id: str) -> None:
                     # Z — compute hard deadline before any await
                     _query_deadline_sec: float | None = (_time_cap_min * 60) if _time_cap_min else None
 
-                    # W — anti-bot watchdog: cancel scrape if no first card within 90 sec
-                    _ANTIBOT_FIRST_CARD_TIMEOUT_SEC = 90
+                    # Brief 05: cut from 90s to 60s. With the empty_query
+                    # relabel in place (Change C), 90s is wasted on communes
+                    # that simply have no businesses. Real Maps cards render
+                    # in 5-15s; the 60s ceiling leaves ~12s headroom over the
+                    # worst-case consent-redirect path (~48s observed worst
+                    # case on Render with consent click + re-navigation).
+                    # Forensic basis: 14 days of ws1+ws174 antibot rows all
+                    # had duration_sec ~= 90.0 (exactly the watchdog wall) --
+                    # zero real bot blocks observed.
+                    _ANTIBOT_FIRST_CARD_TIMEOUT_SEC = 60
 
                     _scraper_task = asyncio.create_task(maps_scraper.search_all(
                         clean_query, on_result=_persist_result,
@@ -6044,9 +6052,23 @@ async def run(batch_id: str) -> None:
                             except asyncio.TimeoutError:
                                 pass
                     except asyncio.CancelledError:
-                        # Anti-bot watchdog cancelled the scrape (W)
-                        _query_abort_reason = "antibot_block"
-                        log.warning("discovery.antibot_query_aborted", query=search_query)
+                        # Anti-bot watchdog cancelled the scrape (W).
+                        # Brief 05: distinguish "scraper sat at empty-results page"
+                        # from "scraper truly hung" — if maps_scraper saw the
+                        # no-results signal before the watchdog axe fell, label
+                        # this as empty_query, not antibot_block.
+                        if getattr(maps_scraper, "_last_search_was_empty", False):
+                            _query_abort_reason = "empty_query"
+                            log.info(
+                                "discovery.empty_query_aborted",
+                                query=search_query,
+                            )
+                        else:
+                            _query_abort_reason = "antibot_block"
+                            log.warning(
+                                "discovery.antibot_query_aborted",
+                                query=search_query,
+                            )
                     finally:
                         _watchdog_task.cancel()
                         try:
@@ -6541,11 +6563,29 @@ async def run(batch_id: str) -> None:
                     except Exception as _cap_exc:
                         log.debug("discovery.entity_cap_audit_failed", error=str(_cap_exc))
 
-                # Z/W — surface query-level abort reasons (time-cap-hit-on-primary, anti-bot)
+                # Z/W — surface query-level abort reasons grouped by kind.
+                # Brief 05: distinguish empty_query (commune has no businesses)
+                # from antibot_block (Maps blocked us / scraper truly hung) so
+                # the user sees an accurate diagnosis on the job page.
                 _abort_reasons = [qs.get("abort_reason") for qs in _query_stats if qs.get("abort_reason")]
                 if _abort_reasons:
-                    _first_abort = _abort_reasons[0]
-                    _abort_prefix = f"Abandon: {_first_abort} ({len(_abort_reasons)} requête(s)). "
+                    from collections import Counter
+                    _reason_counts = Counter(_abort_reasons)
+                    # French wording per reason kind. Unknown reasons fall back
+                    # to the raw key for safety.
+                    _REASON_FR = {
+                        "empty_query": "Recherches vides",
+                        "antibot_block": "Blocage anti-bot Maps",
+                        "time_cap_reached_primary": "Plafond temps requête atteint",
+                        "total_time_cap_reached": "Plafond temps total atteint",
+                        "entity_cap_reached": "Cap d'entités atteint",
+                    }
+                    _parts = []
+                    # Show in descending count order, then alphabetical for stable output
+                    for _r, _c in sorted(_reason_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                        _label = _REASON_FR.get(_r, _r)
+                        _parts.append(f"{_label} ({_c} requête(s))")
+                    _abort_prefix = "Abandon: " + ", ".join(_parts) + ". "
                 else:
                     _abort_prefix = ""
 
