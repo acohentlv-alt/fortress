@@ -1496,7 +1496,7 @@ async def get_job_quality(batch_id: str, request: Request, dept: str = Query("",
         )
         SELECT
             COUNT(DISTINCT CASE WHEN o.siren IS NOT NULL THEN bs.siren END) AS with_officers,
-            COUNT(DISTINCT CASE WHEN real.chiffre_affaires IS NOT NULL THEN bs.siren END) AS with_financials
+            COUNT(DISTINCT CASE WHEN COALESCE(co.chiffre_affaires, real.chiffre_affaires) IS NOT NULL THEN bs.siren END) AS with_financials
         FROM bs
         JOIN companies co ON co.siren = bs.siren
         LEFT JOIN companies real ON real.siren = co.linked_siren
