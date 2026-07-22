@@ -40,7 +40,7 @@ async def init_pool() -> None:
             num_workers=2,
             open=False,
         )
-        await _pool.open(wait=True, timeout=5.0)
+        await _pool.open(wait=True, timeout=15.0)
         _pool_error = None
         logger.info("✅ Database pool initialized: %s", settings.db_url.split("@")[-1])
     except Exception as exc:
