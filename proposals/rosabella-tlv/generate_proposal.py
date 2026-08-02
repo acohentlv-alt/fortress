@@ -124,8 +124,8 @@ def signoff(width):
                textColor=colors.HexColor("#D9D0C9"), spaceAfter=8)),
         Paragraph(
             "Next step: a 30-minute call to run through the five questions "
-            "above. Answers in hand, I'll send a fixed quote and a dated "
-            "plan for the April launch.",
+            "above. Answers in hand, I'll send the signed revenue-share "
+            "agreement and a dated plan for the April launch.",
             st("so_cta", fontName="Helvetica-Bold", fontSize=10, leading=14,
                textColor=colors.white)),
     ]
@@ -267,8 +267,9 @@ def build():
             "automation so day-to-day operations stay manageable for a small "
             "team. The goal is simple: turn Instagram attention into orders, "
             "keep inventory honest between the floor and the site, and do it "
-            "on an indie budget — no bloated retainers, no six-month "
-            "roadmaps.", S["body"]),
+            "with no money down — no build fee, no bloated retainers, no "
+            "six-month roadmaps. I get paid out of what the store "
+            "earns, or not at all.", S["body"]),
         Paragraph("What success looks like", S["h2"]),
     ] + bullets([
         "A live, mobile-first Shopify store carrying the boutique's curated look.",
@@ -368,7 +369,7 @@ def build():
 
     # ---- 4. costs
     el += [
-        Spacer(1, 8),
+        PageBreak(),
         KeepTogether([
             kicker("04 · Monthly cost breakdown"),
             Paragraph("Running costs, itemized", S["h1"]),
@@ -404,17 +405,105 @@ def build():
             [W * 0.24, W * 0.28, W * 0.16, W * 0.32],
             highlight_last=True),
         Paragraph(
-            "Not included above: Shopify payment processing fees (a "
-            "percentage per transaction, varies by provider and region) and "
-            "my one-time build fee, which I'll quote after the discovery "
-            "questions are answered.", S["muted"]),
+            "These are Rosabella's own accounts, paid directly to each "
+            "vendor — they are not routed through me and not part of the "
+            "revenue share described in the next section. Shopify payment "
+            "processing fees (a percentage per transaction, varying by "
+            "provider and region) sit outside this table.", S["muted"]),
     ]
 
-    # ---- 5. inventory
+    # ---- 5. commercial model
+    el += [
+        PageBreak(),
+        KeepTogether([
+            kicker("05 · Commercial model"),
+            Paragraph("No build fee — I take 25% of what the store earns",
+                      S["h1"]),
+            rule(),
+            Paragraph(
+                "I am not charging for time. There is no hourly rate, no day "
+                "rate, and no fixed build fee. I design, build, and launch "
+                "the store at my own cost, and in exchange I take "
+                "<b>25% of the revenue the store generates</b>. If the site "
+                "earns nothing, I earn nothing.", S["body"]),
+            Paragraph("How the 25% is calculated", S["h2"]),
+        ]),
+        data_table(
+            ["Term", "Definition"],
+                [
+                    ["Basis", "Net revenue from orders placed through the "
+                     "Shopify store."],
+                    ["Baseline", "Zero. Rosabella has no online sales today, "
+                     "so every order the site takes is new revenue. In-store "
+                     "and walk-in sales are excluded entirely — I have no "
+                     "claim on the boutique's existing trade."],
+                    ["Deducted first", "VAT, shipping charged to the "
+                     "customer, payment processing fees, and any refunds, "
+                     "returns, or chargebacks. The split applies to what "
+                     "actually settles."],
+                    ["My share", "25% of that net figure. Rosabella keeps 75%."],
+                    ["Source of truth", "Shopify's own admin reports — the "
+                     "same dashboard we both look at. No separate accounting "
+                     "and nothing for Rosabella to compile."],
+                    ["Paid", "Monthly, within 14 days of month end, on the "
+                     "previous month's settled orders."],
+                    ["Term", "12 months from public launch, renewable only "
+                     "by mutual agreement."],
+                    ["Early exit", "From month 6 onward Rosabella can end "
+                     "the share by paying 3× the trailing three-month "
+                     "average. This caps the total exposure at any point."],
+                ],
+            [W * 0.22, W * 0.78]),
+        Spacer(1, 6),
+        KeepTogether([
+            Paragraph("What the split looks like in practice", S["h2"]),
+            data_table(
+                ["Net monthly online revenue", "My 25%", "Rosabella keeps"],
+                    [
+                        ["NIS 10,000", "NIS 2,500", "NIS 7,500"],
+                        ["NIS 25,000", "NIS 6,250", "NIS 18,750"],
+                        ["NIS 50,000", "NIS 12,500", "NIS 37,500"],
+                        ["NIS 100,000", "NIS 25,000", "NIS 75,000"],
+                    ],
+                [W * 0.40, W * 0.28, W * 0.32]),
+            Paragraph(
+                "Illustrative figures, not a forecast — actual volume "
+                "depends on catalog size, pricing, and how hard the "
+                "Instagram audience converts.", S["muted"]),
+        ]),
+        Spacer(1, 6),
+        KeepTogether([
+            Paragraph("Why this model, honestly", S["h2"]),
+        ] + bullets([
+            "<b>Rosabella carries no build risk.</b> Nothing is owed for the "
+            "design, build, or launch. If the store underperforms, the only "
+            "money spent is roughly $50/month of vendor subscriptions.",
+            "<b>My incentive matches yours.</b> I am paid only when the "
+            "store sells, so I am motivated to keep it converting rather "
+            "than hand over the keys and disappear.",
+            "<b>The honest trade-off:</b> if the store performs strongly, "
+            "25% across twelve months will come to more than a fixed build "
+            "fee would have. That is the price of my carrying the build "
+            "risk instead of Rosabella — and the early-exit clause exists "
+            "so there is always a way to cap it.",
+        ])),
+        Spacer(1, 6),
+        KeepTogether([
+            Paragraph("What stays included for the whole term", S["h2"]),
+            Paragraph(
+                "The ongoing share is not passive. For as long as it runs I "
+                "keep the store maintained: automation fixes, theme and "
+                "checkout adjustments, catalog and import support, and a "
+                "monthly review of what is converting and what is not. No "
+                "separate support invoice.", S["body"]),
+        ]),
+    ]
+
+    # ---- 6. inventory
     el += [
         Spacer(1, 8),
         KeepTogether([
-            kicker("05 · Inventory strategy"),
+            kicker("06 · Inventory strategy"),
             Paragraph("CSV-first, with a scraping fallback", S["h1"]),
             rule(),
             Paragraph("Primary path: the CSV workflow", S["h2"]),
@@ -447,11 +536,11 @@ def build():
         "a brand's catalog next season is a one-command job.",
     ])
 
-    # ---- 6. communication
+    # ---- 7. communication
     el += [
         Spacer(1, 8),
         KeepTogether([
-            kicker("06 · Customer communication workflow"),
+            kicker("07 · Customer communication workflow"),
             Paragraph("WhatsApp + email, automated via Zapier", S["h1"]),
             rule(),
             Paragraph(
@@ -486,11 +575,11 @@ def build():
             "Nothing sends that the team hasn't approved.", S["muted"]),
     ]
 
-    # ---- 7. next steps
+    # ---- 8. next steps
     el += [
         Spacer(1, 8),
         KeepTogether([
-            kicker("07 · Next steps"),
+            kicker("08 · Next steps"),
             Paragraph("Path to an April launch", S["h1"]),
             rule(),
             Paragraph(
@@ -504,8 +593,8 @@ def build():
                     ["This week", "Rosabella reviews this proposal; "
                      "30-minute call to walk through the discovery "
                      "questions (next page).", "Both"],
-                    ["Within 1 week", "Answers in hand — fixed quote and "
-                     "signed scope. Shopify + domain accounts opened.",
+                    ["Within 1 week", "Answers in hand — revenue-share terms "
+                     "and scope signed. Shopify + domain accounts opened.",
                      "Alan"],
                     ["Early–mid March", "Build Weeks 1–2: storefront, "
                      "catalog import, automations.", "Alan"],
@@ -524,7 +613,7 @@ def build():
             "keys over fully.", S["body"]),
     ]
 
-    # ---- 8. discovery questions
+    # ---- 9. discovery questions
     q_items = [
         ("1. What inventory system does the boutique use today?",
          "Point-of-sale software, a spreadsheet, or paper — this determines "
@@ -542,9 +631,11 @@ def build():
          "on day one and how to pace the new-arrivals email that mirrors "
          "the feed."),
         ("5. What are the budget constraints?",
-         "Both for the one-time build and the monthly running costs — this "
-         "decides whether the optional add-ons (WhatsApp API, Klaviyo) are "
-         "in scope now or later."),
+         "The build itself costs nothing up front, so this is about the "
+         "roughly $50/month of vendor subscriptions and whether the "
+         "optional add-ons (WhatsApp API, Klaviyo) are affordable now or "
+         "later — and whether a 25% revenue share is a shape the business "
+         "is comfortable with at all."),
     ]
     q_flow = []
     for q, why in q_items:
@@ -556,12 +647,12 @@ def build():
     el += [
         PageBreak(),
         KeepTogether([
-            kicker("08 · Before we start"),
+            kicker("09 · Before we start"),
             Paragraph("Five discovery questions for Rosabella", S["h1"]),
             rule(),
             Paragraph(
                 "Answers to these five questions turn this proposal into a "
-                "fixed quote and a locked timeline:", S["body"]),
+                "signed agreement and a locked timeline:", S["body"]),
         ]),
     ] + q_flow + [
         Spacer(1, 12),
