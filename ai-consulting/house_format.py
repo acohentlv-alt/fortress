@@ -20,9 +20,12 @@ for RTL or lang="en" for LTR and the alignment, callout accent edge, list
 indent and table column flush all mirror.
 """
 
+import glob
 import html
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 
 # ---------------------------------------------------------------- tokens
@@ -49,21 +52,67 @@ BUSINESS = "Alan Cohen"
 BUSINESS_TAG = "AI CONSULTING"
 CONTACT = "Alan Cohen · AI Consulting · acohen.tlv@gmail.com"
 
-CHROME_CANDIDATES = [
+MAC_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    os.path.expanduser(
+        "~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+]
+
+LINUX_CANDIDATES = [
     "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell",
     "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+]
+
+# Playwright caches browsers per-user; the version dir varies, so glob it
+PW_GLOBS = [
+    os.path.expanduser("~/Library/Caches/ms-playwright/chromium*/chrome-mac/"
+                       "Chromium.app/Contents/MacOS/Chromium"),
+    os.path.expanduser("~/.cache/ms-playwright/chromium*/chrome-linux/chrome"),
+    "/opt/pw-browsers/chromium*/chrome-linux/chrome",
+    "/opt/pw-browsers/chromium*/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
 ]
 
 
 def find_chrome():
-    for p in CHROME_CANDIDATES:
+    """Locate a Chromium-family binary that can drive --print-to-pdf.
+
+    Any Chromium-based browser works — Chrome, Chromium, Edge and Brave all
+    accept --print-to-pdf and render identically for this stylesheet. Set
+    CHROME_BIN to override when the browser lives somewhere unusual.
+    """
+    override = os.environ.get("CHROME_BIN")
+    if override:
+        if not os.path.exists(override):
+            raise RuntimeError(f"CHROME_BIN is set but does not exist: "
+                               f"{override}")
+        return override
+
+    for p in (MAC_CANDIDATES if sys.platform == "darwin" else LINUX_CANDIDATES):
         if os.path.exists(p):
             return p
-    for root, _, files in os.walk("/opt/pw-browsers"):
-        for f in files:
-            if f in ("headless_shell", "chrome"):
-                return os.path.join(root, f)
-    raise RuntimeError("no chromium binary found")
+
+    for pattern in PW_GLOBS:
+        hits = sorted(glob.glob(pattern))
+        if hits:
+            return hits[-1]
+
+    for name in ("google-chrome", "google-chrome-stable", "chromium",
+                 "chromium-browser", "microsoft-edge"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    raise RuntimeError(
+        "No Chromium-family browser found. Install Google Chrome, or point "
+        "CHROME_BIN at an existing binary, e.g.\n"
+        "  export CHROME_BIN='/Applications/Google Chrome.app/Contents/"
+        "MacOS/Google Chrome'")
 
 
 # ---------------------------------------------------------------- blocks

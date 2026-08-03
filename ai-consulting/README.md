@@ -81,6 +81,24 @@ They will bite again if the format is ever reimplemented elsewhere:
 
 ## Building
 
-Requires headless Chromium (already present in the dev container at
-`/opt/pw-browsers/`) and the Liberation fonts. No Python packages beyond the
-standard library.
+No Python packages beyond the standard library — just a Chromium-family
+browser. `find_chrome()` looks in this order:
+
+1. `$CHROME_BIN`, if set
+2. platform defaults — on macOS, Chrome / Chromium / Edge / Brave under
+   `/Applications`; on Linux, the container's `/opt/pw-browsers` and the usual
+   `/usr/bin` names
+3. a Playwright browser cache
+4. anything Chromium-shaped on `PATH`
+
+Any Chromium-based browser works; they all accept `--print-to-pdf` and render
+this stylesheet identically. If yours lives somewhere unusual:
+
+```bash
+export CHROME_BIN='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+```
+
+**Fonts.** The stack is `Liberation Sans, Arial, Helvetica`. Liberation Sans
+ships on most Linux systems; macOS has no Liberation but does have Arial,
+which is metric-compatible and carries Hebrew — so output is identical either
+way. Do not swap in a font without Hebrew and shekel coverage.
