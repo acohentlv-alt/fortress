@@ -75,7 +75,7 @@ def table(headers, rows, widths=None, first_bold=True):
             cls = ' class="lead"' if (first_bold and i == 0) else ""
             cells += f"<td{cls}>{c}</td>"
         body += f"<tr>{cells}</tr>"
-    return (f'<table>{cols}<thead><tr>{head}</tr></thead>'
+    return (f'<table class="data">{cols}<thead><tr>{head}</tr></thead>'
             f"<tbody>{body}</tbody></table>")
 
 
@@ -357,22 +357,25 @@ body {
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 
-/* running header + footer repeat on every printed page */
-.band  { position: fixed; top: 0; left: 0; right: 0; height: 3pt;
-         background: #ECCF9F; }
-.head  { position: fixed; top: 3pt; left: 0; right: 0; height: 46pt;
-         background: #0B0805; padding: 9pt 25pt 0; }
+/* Running header/footer as thead/tfoot of a document-wide table.
+   position:fixed was wrong here: it overlays rather than reserves, so
+   continuation pages slid their first lines under the header band. A
+   repeating thead both prints on every page and pushes content down. */
+table.doc { width: 100%; border-collapse: collapse; }
+.doc > thead > tr > td, .doc > tfoot > tr > td { padding: 0; }
+.band  { height: 3pt; background: #ECCF9F; }
+.head  { height: 46pt; background: #0B0805; padding: 9pt 25pt 0; }
+.headgap { height: 30pt; }
 .head .mark { float: left; text-align: left; }
 .head .name { color: #ECCF9F; font-size: 10.5pt; letter-spacing: 3.2pt; }
 .head .tag  { color: #958F87; font-size: 6.6pt; letter-spacing: 2.1pt;
               margin-top: 2pt; }
 .head .who  { color: #A8A198; font-size: 7pt; line-height: 1.5; }
-.foot  { position: fixed; bottom: 0; left: 0; right: 0; height: 30pt;
-         padding: 6pt 25pt 0; border-top: 0.6pt solid #EFE7DA;
+.foot  { padding: 6pt 25pt 10pt; border-top: 0.6pt solid #EFE7DA;
          color: #8A7F72; font-size: 6.6pt; }
 .foot .l { float: left; text-align: left; direction: ltr; }
 
-.page { padding: 66pt 25pt 40pt; }
+.page { padding: 0 25pt 16pt; }
 
 h1.title { font-size: 15pt; line-height: 1.3; margin: 0 0 4pt;
            color: #1A130D; }
@@ -390,20 +393,21 @@ p.note { color: #8A7F72; font-size: 7.4pt; margin: 6pt 0 0;
            padding: 9pt 12pt; margin: 10pt 0; line-height: 1.6;
            break-inside: avoid; }
 
-table { width: 100%; border-collapse: collapse; margin: 9pt 0 0;
-        font-size: 7.8pt; }
-thead { display: table-header-group; }
-th { text-align: right; font-weight: bold; color: #6B5D4F;
-     font-size: 7.4pt; padding: 0 0 5pt; border-bottom: 1pt solid #D9CBB8; }
+table.data { width: 100%; border-collapse: collapse; margin: 9pt 0 0;
+             font-size: 7.8pt; }
+.data thead { display: table-header-group; }
+.data th { text-align: right; font-weight: bold; color: #6B5D4F;
+           font-size: 7.4pt; padding: 0 0 5pt;
+           border-bottom: 1pt solid #D9CBB8; }
 /* left-align the trailing column like the reference, but never flip its
    base direction — `direction: ltr` reorders mixed Hebrew runs and
    scrambles any cell holding prose rather than a bare duration. */
-th:last-child, td:last-child { text-align: left; }
-td { padding: 6pt 0; border-bottom: 0.6pt solid #EFE7DA;
-     vertical-align: top; line-height: 1.5; }
-th + th, td + td { padding-right: 10pt; }
-td.lead { font-weight: bold; white-space: nowrap; }
-tr { break-inside: avoid; }
+.data th:last-child, .data td:last-child { text-align: left; }
+.data td { padding: 6pt 0; border-bottom: 0.6pt solid #EFE7DA;
+           vertical-align: top; line-height: 1.5; }
+.data th + th, .data td + td { padding-right: 10pt; }
+.data td.lead { font-weight: bold; white-space: nowrap; }
+.data tr { break-inside: avoid; }
 
 ul { margin: 8pt 0; padding: 0 14pt 0 0; }
 li { margin: 0 0 5pt; line-height: 1.6; }
@@ -418,21 +422,28 @@ def build():
 <html lang="he" dir="rtl"><head><meta charset="utf-8">
 <title>רוזבלה תל אביב — הצעת עבודה</title>
 <style>{CSS}</style></head><body>
-<div class="band"></div>
-<div class="head">
-  <div class="mark">
-    <div class="name">ALAN COHEN</div>
-    <div class="tag">AI CONSULTING</div>
+<table class="doc">
+<thead><tr><td>
+  <div class="band"></div>
+  <div class="head">
+    <div class="mark">
+      <div class="name">ALAN COHEN</div>
+      <div class="tag">AI CONSULTING</div>
+    </div>
+    <div class="who">{e(CLIENT)}<br>{e(DATE)}</div>
   </div>
-  <div class="who">{e(CLIENT)}<br>{e(DATE)}</div>
-</div>
-<div class="foot">
-  <div class="l">Alan Cohen · AI Consulting · acohen.tlv@gmail.com</div>
-  <div>הצעת עבודה · הוכנה עבור {e(CLIENT)} · {e(DATE)}</div>
-</div>
-<div class="page">
+  <div class="headgap"></div>
+</td></tr></thead>
+<tfoot><tr><td>
+  <div class="foot">
+    <div class="l">Alan Cohen · AI Consulting · acohen.tlv@gmail.com</div>
+    <div>הצעת עבודה · הוכנה עבור {e(CLIENT)} · {e(DATE)}</div>
+  </div>
+</td></tr></tfoot>
+<tbody><tr><td class="page">
 {content()}
-</div>
+</td></tr></tbody>
+</table>
 </body></html>"""
 
     with tempfile.TemporaryDirectory() as td:
