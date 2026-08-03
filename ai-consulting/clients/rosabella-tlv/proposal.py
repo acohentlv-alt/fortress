@@ -1,104 +1,29 @@
 #!/usr/bin/env python3
-"""Rosabella TLV proposal — Hebrew and English, in the NZP house format.
+"""Rosabella TLV — e-commerce launch proposal (Hebrew + English).
 
-The NZP reference (Neve Tzedek Properties work plan) was a Chrome
-print-to-PDF of an HTML page — Skia/PDF producer, Arial only. This
-reproduces that pipeline rather than approximating it in ReportLab, which
-also yields native bidi instead of hand-rolled RTL line-breaking.
+Content only. Everything about how this document looks lives in
+ai-consulting/house_format.py; keep it that way so the house style stays
+consistent across clients.
 
-Design tokens were sampled from the reference render, not guessed:
-  gold band / section rules  #ECCF9F      header band       #0B0805
-  callout accent             #C98F5E      callout fill      #FAF5EC
-  table header rule          #D9CBB8      table hairline    #EFE7DA
-  title ink                  #1A130D      muted body        #6B5D4F
-  content margin 25pt · gold band 3pt · header band 46pt · Arial metrics
-
-Usage:  python3 generate_proposal.py
-        -> Rosabella-TLV-Proposal-HE.pdf, Rosabella-TLV-Proposal-EN.pdf
+Usage:  python3 proposal.py
 """
 
-import html
 import os
-import subprocess
-import tempfile
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+
+from house_format import (  # noqa: E402
+    b, bullets, callout, h3, ltr, note, para, render, section, subtitle,
+    table, title,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLIENT = "Rosabella TLV"
 DATE = "03.08.2026"
 
-CHROME_CANDIDATES = [
-    "/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell",
-    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
-]
 
-
-def find_chrome():
-    for p in CHROME_CANDIDATES:
-        if os.path.exists(p):
-            return p
-    for root, _, files in os.walk("/opt/pw-browsers"):
-        for f in files:
-            if f in ("headless_shell", "chrome"):
-                return os.path.join(root, f)
-    raise RuntimeError("no chromium binary found")
-
-
-# ---------------------------------------------------------------- helpers
-def e(s):
-    return html.escape(s, quote=False)
-
-
-def section(title, *blocks):
-    return f'<h2 class="sec">{e(title)}</h2>\n' + "\n".join(blocks)
-
-
-def para(text, cls="body"):
-    return f'<p class="{cls}">{text}</p>'
-
-
-def callout(text):
-    return f'<div class="callout">{text}</div>'
-
-
-def h3(text):
-    return f"<h3>{e(text)}</h3>"
-
-
-def table(headers, rows, widths=None, first_bold=True, flush_last=True):
-    """flush_last mirrors the reference, where the trailing column is a short
-    duration pinned to the far edge. Turn it off when that column carries
-    prose — flushing it just leaves the paragraph ragged."""
-    cols = ""
-    if widths:
-        cols = "<colgroup>" + "".join(
-            f'<col style="width:{w}">' for w in widths) + "</colgroup>"
-    head = "".join(f"<th>{e(h)}</th>" for h in headers)
-    body = ""
-    for r in rows:
-        cells = ""
-        for i, c in enumerate(r):
-            cls = ' class="lead"' if (first_bold and i == 0) else ""
-            cells += f"<td{cls}>{c}</td>"
-        body += f"<tr>{cells}</tr>"
-    cls = "data" if flush_last else "data noflush"
-    return (f'<table class="{cls}">{cols}<thead><tr>{head}</tr></thead>'
-            f"<tbody>{body}</tbody></table>")
-
-
-def bullets(items):
-    return "<ul>" + "".join(f"<li>{t}</li>" for t in items) + "</ul>"
-
-
-def b(t):
-    return f"<b>{e(t)}</b>"
-
-
-def ltr(t):
-    """Isolate a Latin/numeric run so RTL reordering leaves it intact."""
-    return f'<span dir="ltr">{e(t)}</span>'
-
-
-# ---------------------------------------------------------------- hebrew
 def content_he():
     el = ['<h1 class="title">הצעת עבודה — הקמת חנות אונליין</h1>',
           '<p class="subtitle">רוזבלה תל אביב · בוטיק אופנה רב-מותגי, '
@@ -337,7 +262,6 @@ def content_he():
     return "\n".join(el)
 
 
-# ---------------------------------------------------------------- english
 def content_en():
     el = ['<h1 class="title">Work Proposal — E-Commerce Launch</h1>',
           '<p class="subtitle">Rosabella TLV · multi-brand fashion boutique, '
@@ -619,129 +543,11 @@ def content_en():
     return "\n".join(el)
 
 
-# ---------------------------------------------------------------- template
-def css(rtl):
-    start, end = ("right", "left") if rtl else ("left", "right")
-    return f"""
-@page {{ size: A4; margin: 0; }}
-* {{ box-sizing: border-box; }}
-html, body {{ margin: 0; padding: 0; }}
-body {{
-  font-family: 'Liberation Sans', Arial, Helvetica, sans-serif;
-  font-size: 8.4pt; line-height: 1.55; color: #1A130D;
-  direction: {'rtl' if rtl else 'ltr'}; text-align: {start};
-  -webkit-print-color-adjust: exact; print-color-adjust: exact;
-}}
-
-/* Running header/footer as thead/tfoot of a document-wide table.
-   position:fixed was wrong here: it overlays rather than reserves, so
-   continuation pages slid their first lines under the header band. A
-   repeating thead both prints on every page and pushes content down. */
-table.doc {{ width: 100%; border-collapse: collapse; }}
-.doc > thead > tr > td, .doc > tfoot > tr > td {{ padding: 0; }}
-.band {{ height: 3pt; background: #ECCF9F; }}
-.head {{ height: 46pt; background: #0B0805; padding: 9pt 25pt 0;
-        direction: ltr; display: flex; justify-content: space-between; }}
-.headgap {{ height: 30pt; }}
-.head .name {{ color: #ECCF9F; font-size: 10.5pt; letter-spacing: 3.2pt; }}
-.head .tag  {{ color: #958F87; font-size: 6.6pt; letter-spacing: 2.1pt;
-              margin-top: 2pt; }}
-.head .who  {{ color: #A8A198; font-size: 7pt; line-height: 1.5;
-              text-align: right; }}
-.foot {{ padding: 6pt 25pt 10pt; border-top: 0.6pt solid #EFE7DA;
-        color: #8A7F72; font-size: 6.6pt;
-        direction: ltr; display: flex; justify-content: space-between; }}
-.page {{ padding: 0 25pt 16pt; }}
-
-h1.title {{ font-size: 15pt; line-height: 1.3; margin: 0 0 4pt;
-           color: #1A130D; }}
-p.subtitle {{ color: #6B5D4F; font-size: 8pt; margin: 0 0 16pt;
-             line-height: 1.6; }}
-
-h2.sec {{ font-size: 9.6pt; margin: 17pt 0 0; padding-bottom: 4pt;
-         border-bottom: 1.2pt solid #ECCF9F; break-after: avoid; }}
-h3 {{ font-size: 8.6pt; margin: 12pt 0 4pt; break-after: avoid; }}
-p.body {{ margin: 8pt 0; }}
-p.note {{ color: #8A7F72; font-size: 7.4pt; margin: 6pt 0 0;
-         line-height: 1.55; }}
-
-.callout {{ background: #FAF5EC; border-{start}: 3pt solid #C98F5E;
-           padding: 9pt 12pt; margin: 10pt 0; line-height: 1.6;
-           break-inside: avoid; }}
-
-table.data {{ width: 100%; border-collapse: collapse; margin: 9pt 0 0;
-             font-size: 7.8pt; }}
-.data thead {{ display: table-header-group; }}
-.data th {{ text-align: {start}; font-weight: bold; color: #6B5D4F;
-           font-size: 7.4pt; padding: 0 0 5pt;
-           border-bottom: 1pt solid #D9CBB8; }}
-/* trailing column sits flush to the far edge, as in the reference; never
-   set `direction` here — it reorders mixed runs and scrambles prose */
-.data th:last-child, .data td:last-child {{ text-align: {end}; }}
-.data.noflush th:last-child, .data.noflush td:last-child
-  {{ text-align: {start}; }}
-.data td {{ padding: 6pt 0; border-bottom: 0.6pt solid #EFE7DA;
-           vertical-align: top; line-height: 1.5; }}
-.data th + th, .data td + td {{ padding-{start}: 10pt; }}
-.data td.lead {{ font-weight: bold; white-space: nowrap; }}
-.data tr {{ break-inside: avoid; }}
-
-ul {{ margin: 8pt 0; padding-{start}: 14pt; padding-{end}: 0; }}
-li {{ margin: 0 0 5pt; line-height: 1.6; }}
-li::marker {{ color: #C98F5E; }}
-b {{ font-weight: bold; }}
-i {{ font-style: italic; color: #8A7F72; }}
-"""
-
-
-def build(lang):
-    rtl = lang == "he"
-    body = content_he() if rtl else content_en()
-    title = ("רוזבלה תל אביב — הצעת עבודה" if rtl
-             else "Rosabella TLV — Work Proposal")
-    foot_r = (f'<span dir="rtl">הצעת עבודה · הוכנה עבור {e(CLIENT)} · '
-              f"{e(DATE)}</span>" if rtl
-              else f"Work proposal · prepared for {e(CLIENT)} · {e(DATE)}")
-    out = os.path.join(HERE, f"Rosabella-TLV-Proposal-{lang.upper()}.pdf")
-
-    doc = f"""<!doctype html>
-<html lang="{lang}" dir="{'rtl' if rtl else 'ltr'}"><head><meta charset="utf-8">
-<title>{e(title)}</title><style>{css(rtl)}</style></head><body>
-<table class="doc">
-<thead><tr><td>
-  <div class="band"></div>
-  <div class="head">
-    <div class="mark">
-      <div class="name">ALAN COHEN</div>
-      <div class="tag">AI CONSULTING</div>
-    </div>
-    <div class="who">{e(CLIENT)}<br>{e(DATE)}</div>
-  </div>
-  <div class="headgap"></div>
-</td></tr></thead>
-<tfoot><tr><td>
-  <div class="foot">
-    <div>Alan Cohen · AI Consulting · acohen.tlv@gmail.com</div>
-    <div>{foot_r}</div>
-  </div>
-</td></tr></tfoot>
-<tbody><tr><td class="page">
-{body}
-</td></tr></tbody>
-</table>
-</body></html>"""
-
-    with tempfile.TemporaryDirectory() as td:
-        src = os.path.join(td, f"proposal_{lang}.html")
-        with open(src, "w", encoding="utf-8") as fh:
-            fh.write(doc)
-        subprocess.run(
-            [find_chrome(), "--headless", "--disable-gpu", "--no-sandbox",
-             "--no-pdf-header-footer", f"--print-to-pdf={out}", src],
-            check=True, capture_output=True)
-    print(f"Wrote {out}")
-
-
 if __name__ == "__main__":
-    build("he")
-    build("en")
+    for lang, body, doc_title in (
+        ("he", content_he(), "רוזבלה תל אביב — הצעת עבודה"),
+        ("en", content_en(), "Rosabella TLV — Work Proposal"),
+    ):
+        render(body,
+               os.path.join(HERE, f"Rosabella-TLV-Proposal-{lang.upper()}.pdf"),
+               lang=lang, client=CLIENT, date=DATE, doc_title=doc_title)
