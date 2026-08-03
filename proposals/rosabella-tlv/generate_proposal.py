@@ -277,7 +277,8 @@ def build():
         "Inventory synced from a simple CSV workflow the team can run weekly.",
         "Order, shipping, and follow-up messages sent automatically via "
         "WhatsApp and email.",
-        "A store the team can run independently after a single handover session.",
+        "A store the team runs day-to-day without me — while I stay on to "
+        "maintain and improve it for the term of the revenue share.",
     ])
 
     # ---- 2. timeline
@@ -608,9 +609,12 @@ def build():
                 ],
             [W * 0.22, W * 0.62, W * 0.16]),
         Paragraph(
-            "After launch I stay available for a light support window — "
-            "fixes and tweaks as real orders come in — before handing the "
-            "keys over fully.", S["body"]),
+            "Launch is the start of the revenue-share term, not the end of "
+            "the engagement. For the twelve months that follow I keep the "
+            "store maintained and converting, at no additional charge. The "
+            "Shopify account, the domain, the customer list, and the "
+            "catalog are Rosabella's property throughout and stay that way "
+            "if the share ends.", S["body"]),
     ]
 
     # ---- 9. discovery questions
