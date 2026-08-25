@@ -95,6 +95,35 @@ async def _load_dept_postal_codes(pool) -> dict[str, list[str]]:
     return result
 
 
+async def _load_sector_communes(pool, dept: str, naf_codes: list[str]) -> list[str]:
+    """Return communes in `dept` ranked by count of ACTIVE companies matching
+    any of `naf_codes`, for widening candidate selection when a batch has a
+    NAF filter. Mirrors the shape of get_dept_coverage's sirene_per_commune
+    CTE (fortress/api/routes/departments.py) but scoped to one department.
+    ceiling: capped at settings.cp_widening_max_per_primary (12) candidates —
+    dense departments with sector companies spread across >12 communes will
+    have their long tail unsearched. Upgrade path: per-sector dynamic cap.
+    """
+    async with pool.connection() as conn:
+        rows = await conn.execute(
+            """
+            SELECT ville, COUNT(*) AS n
+            FROM companies
+            WHERE departement = %s
+              AND naf_code = ANY(%s)
+              AND statut = 'A'
+              AND siren NOT LIKE 'MAPS%%'
+              AND ville IS NOT NULL AND ville != ''
+            GROUP BY ville
+            ORDER BY n DESC, ville
+            LIMIT %s
+            """,
+            (dept, naf_codes, settings.cp_widening_max_per_primary),
+        )
+        result = await rows.fetchall()
+    return [r[0] if isinstance(r, tuple) else r["ville"] for r in result]
+
+
 def _wid_slug(value: str) -> str:
     """Slug for batch_log.siren sentinel: ASCII alnum + dashes, <=30 chars."""
     s = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").upper()
@@ -3138,8 +3167,12 @@ async def run(batch_id: str) -> None:
                                 )
                                 if _prior_dept:
                                     _depts_widened.add(_prior_dept)
-                        # Delta 1: drop expansion entries so rerun-expansion doesn't duplicate
-                        _query_stats = [s for s in _query_stats if not s.get("is_expansion")]
+                        # Change 4b: prior expansion rows are kept in _query_stats (no longer
+                        # stripped here) so a process restart doesn't erase the batch's
+                        # widening history from queries_json. Safe because _depts_widened
+                        # (rebuilt above, from these same rows, before this point) is the
+                        # actual duplicate-widening guard — see the `_effective_dept not in
+                        # _depts_widened` check before each widening pass starts.
                     except Exception:
                         _query_stats = []
 
@@ -3273,6 +3306,13 @@ async def run(batch_id: str) -> None:
                 # without nonlocal. Reset to [None] at the top of each per-query iteration.
                 _first_card_seen_at: list[float | None] = [None]
 
+                # Change 4a — per-query streamed-card counter. List wrapper (same technique
+                # as _first_card_seen_at above) so _persist_result can mutate it without
+                # nonlocal. Reset to [0] at the top of each primary query AND at the start
+                # of each widening iteration, so an aborted/timed-out query can still report
+                # the true number of cards streamed via the callback (results stays [] on abort).
+                _query_cards_seen: list[int] = [0]
+
                 async def _persist_result(maps_result: dict[str, Any]) -> bool | None:
                     nonlocal companies_discovered, qualified, _query_dedup_count, _query_filtered_count, _gemini_cap_logged, _query_geo_capture_count, _effective_dept
 
@@ -3287,6 +3327,9 @@ async def run(batch_id: str) -> None:
                         return False  # Signal scraper to stop extracting cards
 
                     maps_name = maps_result.get("maps_name", "")
+                    # Change 4a — count every card the scraper streams in, so abort/timeout
+                    # paths can report real progress instead of len(results) == 0.
+                    _query_cards_seen[0] += 1
                     # W — record first card timestamp for anti-bot watchdog
                     if _first_card_seen_at[0] is None:
                         _first_card_seen_at[0] = time.monotonic()
@@ -5982,6 +6025,7 @@ async def run(batch_id: str) -> None:
                     except Exception as _ck_exc:
                         log.debug("discovery.queries_checkpoint_failed", error=str(_ck_exc))
                     _first_card_seen_at[0] = None   # W — reset for new query (var defined near _persist_result)
+                    _query_cards_seen[0] = 0   # Change 4a — reset streamed-card counter for new primary query
 
                     # Z — compute hard deadline before any await
                     _query_deadline_sec: float | None = (_time_cap_min * 60) if _time_cap_min else None
@@ -6085,7 +6129,9 @@ async def run(batch_id: str) -> None:
                         )
                         _query_stats.append({
                             "query": search_query,
-                            "cards_found": len(results),
+                            # Change 4a — abort/timeout fires before `results` gets assigned,
+                            # but cards may have already streamed in via _persist_result.
+                            "cards_found": max(len(results), _query_cards_seen[0]),
                             "new_companies": companies_discovered - _pre_query_discovered,
                             "filtered_count": _query_filtered_count,
                             "dedup_count": _query_dedup_count,
@@ -6144,13 +6190,6 @@ async def run(batch_id: str) -> None:
                             pass
 
                         if not _widen_cancelled:
-                            # Load density-ranked postal codes (one-shot cache)
-                            _dept_cps = (await _load_dept_postal_codes(pool)).get(_effective_dept, [])
-                            _postal_codes_candidates = _dept_cps[:settings.cp_widening_postal_codes_max]
-
-                            # Skip index 0 (prefecture, already covered by primary query)
-                            _cities_candidates = DEPT_CITIES.get(_effective_dept, [])[1:]
-
                             # Per-primary yield at start of widening
                             _primary_yield_at_start = companies_discovered - _pre_query_discovered
                             _primary_pre_widening = _pre_query_discovered
@@ -6160,11 +6199,32 @@ async def run(batch_id: str) -> None:
                             _codes_tried: list[str] = []
                             _widen_stop_reason = None
 
-                            # Pass 1: secondary cities — Pass 2: postal codes by SIRENE density
-                            _widen_candidates = (
-                                [("city", c) for c in _cities_candidates]
-                                + [("postal_code", cp) for cp in _postal_codes_candidates]
-                            )
+                            # Sector-aware widening: when the batch has a NAF filter, rank
+                            # candidate communes by where THIS sector's active companies
+                            # actually are (not all-sector postal-code density) — see
+                            # _load_sector_communes. Falls back to the old dept-density
+                            # postal-code + DEPT_CITIES candidate list when there's no NAF
+                            # filter, or when the sector query returns nothing to widen into.
+                            if picked_nafs:
+                                _sector_communes = await _load_sector_communes(pool, _effective_dept, picked_nafs)
+                            else:
+                                _sector_communes = []
+
+                            if _sector_communes:
+                                _widen_candidates = [("city", commune) for commune in _sector_communes]
+                            else:
+                                # Load density-ranked postal codes (one-shot cache)
+                                _dept_cps = (await _load_dept_postal_codes(pool)).get(_effective_dept, [])
+                                _postal_codes_candidates = _dept_cps[:settings.cp_widening_postal_codes_max]
+
+                                # Skip index 0 (prefecture, already covered by primary query)
+                                _cities_candidates = DEPT_CITIES.get(_effective_dept, [])[1:]
+
+                                # Pass 1: secondary cities — Pass 2: postal codes by SIRENE density
+                                _widen_candidates = (
+                                    [("city", c) for c in _cities_candidates]
+                                    + [("postal_code", cp) for cp in _postal_codes_candidates]
+                                )
 
                             # Drain workers before reading companies_discovered for widening
                             # — otherwise dry-streak detection misfires because the counter
@@ -6272,6 +6332,7 @@ async def run(batch_id: str) -> None:
                                 _pre_widen_count = companies_discovered
                                 _w_cards_found = 0
                                 _w_abort_reason: str | None = None
+                                _query_cards_seen[0] = 0   # Change 4a — reset streamed-card counter for this widening sub-query
 
                                 # Compute effective per-widening deadline anchored to PRIMARY start.
                                 # Whichever cap fires first (per-query budget OR total batch budget) wins.
@@ -6342,7 +6403,10 @@ async def run(batch_id: str) -> None:
                                         await asyncio.wait_for(_entity_queue.join(), timeout=30.0)
                                     except asyncio.TimeoutError:
                                         log.warning("discovery.widening_drain_timeout", query=_widened_query)
-                                    _w_cards_found = 0
+                                    # Change 4a — abort/timeout fires before `_w_results` gets
+                                    # assigned, but cards may have already streamed in via
+                                    # _persist_result during this widening sub-query.
+                                    _w_cards_found = max(0, _query_cards_seen[0])
                                 except Exception as _w_exc:
                                     log.warning("discovery.widening_query_failed", query=_widened_query, error=str(_w_exc))
                                     _w_cards_found = 0

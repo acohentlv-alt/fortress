@@ -11,6 +11,8 @@ Unknown categories (not matching either list) ALWAYS pass through.
 We only reject what we are certain is wrong.
 """
 
+import re
+
 SECTOR_RULES: dict[str, dict[str, frozenset[str]]] = {
     "transport": {
         "relevant": frozenset({
@@ -281,7 +283,7 @@ def is_irrelevant_name(sector_word: str, business_name: str) -> bool:
     for brand in GLOBAL_BRAND_BLACKLIST:
         brand_nfkd = unicodedata.normalize("NFKD", brand.lower())
         brand_clean = "".join(c for c in brand_nfkd if not unicodedata.combining(c))
-        if brand_clean in name_lower:
+        if re.search(rf"\b{re.escape(brand_clean)}\b", name_lower):
             return True
 
     # Sector-specific lookup (same cascade as is_irrelevant_category)
@@ -310,7 +312,7 @@ def is_irrelevant_name(sector_word: str, business_name: str) -> bool:
     for banned in blacklist:
         banned_nfkd = unicodedata.normalize("NFKD", banned.lower())
         banned_clean = "".join(c for c in banned_nfkd if not unicodedata.combining(c))
-        if banned_clean in name_lower:
+        if re.search(rf"\b{re.escape(banned_clean)}\b", name_lower):
             return True
 
     return False
